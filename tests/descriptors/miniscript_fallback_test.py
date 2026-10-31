@@ -20,14 +20,13 @@ from btclib.key import PrvKeyData
 from bip32_descriptors.descriptors import parse
 from bip32_descriptors.descriptors.miniscript import P2WSH, TAPSCRIPT, Miniscript
 from bip32_descriptors.descriptors.miniscript import parse as parse_miniscript
+from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
 
 K = PrvKeyData(1).pub.sec.hex()
 K2 = PrvKeyData(2).pub.sec.hex()
 X, X2 = K[2:], K2[2:]
 # of the network parse reads by default
 WIF = wif_from_prv_key(1, "mainnet")
-_P2WSH_FAULT = "^A function is needed within P2WSH$"
-_TR_LEAF_FAULT = r"^tr\(\) leaf is not a valid descriptor function$"
 _KEY_FAULT = "^invalid key expression$"
 _TOO_LARGE = "and_v(v:sha256(" + "00" * 32 + "),"
 
@@ -76,7 +75,7 @@ def test_wsh_names_the_p2wsh_fallback(expression: str) -> None:
     """Core names its fallback for wsh(), whatever its parser failed on."""
     text = _written_for(expression, P2WSH)
     for descriptor in (f"wsh({text})", f"sh(wsh({text}))"):
-        with pytest.raises(BTClibValueError, match=_P2WSH_FAULT):
+        with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
             parse(descriptor)
 
 
@@ -85,22 +84,22 @@ def test_a_tr_leaf_names_the_leaf_fallback(expression: str) -> None:
     """Core names its fallback for a leaf, whatever its parser failed on."""
     text = _written_for(expression, TAPSCRIPT)
     for descriptor in (f"tr({X},{text})", f"tr({X},{{pk({X2}),{text}}})"):
-        with pytest.raises(BTClibValueError, match=_TR_LEAF_FAULT):
+        with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
             parse(descriptor)
 
 
 def test_an_empty_expression_is_the_fallback() -> None:
     """Core reads no fragment in an empty argument, and names its fallback."""
-    with pytest.raises(BTClibValueError, match=_P2WSH_FAULT):
+    with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
         parse("wsh()")
-    with pytest.raises(BTClibValueError, match=_TR_LEAF_FAULT):
+    with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
         parse(f"tr({X},)")
 
 
 def test_a_script_past_the_p2wsh_size_is_the_fallback() -> None:
     """Core counts the size as it reads, and stops at the limit."""
     text = _TOO_LARGE * 100 + "1" + ")" * 100
-    with pytest.raises(BTClibValueError, match=_P2WSH_FAULT):
+    with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
         parse(f"wsh(and_v(v:pk({K}),{text}))")
 
 

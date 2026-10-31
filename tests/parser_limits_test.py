@@ -21,6 +21,7 @@ from btclib.exceptions import BTClibValueError
 from bip32_descriptors import descriptors
 from bip32_descriptors.bip32.der_path import int_from_index_str
 from bip32_descriptors.descriptors import miniscript
+from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
 from tests.exception_family_test import VALUE_ERRORS
 
 _KEY = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"  # pragma: allowlist secret
@@ -200,9 +201,7 @@ def test_nested_thresh_is_refused_by_the_running_total_of_size(
     inner = _thresh(60, _KEY)
     miniscript.parse(inner)  # one alone is within the limit
     calls.clear()
-    with pytest.raises(
-        BTClibValueError, match="^A function is needed within P2WSH$"
-    ) as caught:
+    with pytest.raises(BTClibValueError, match=P2WSH_FAULT) as caught:
         descriptors.parse(f"wsh({_nested_thresh(200, inner)})")
     assert "too large for P2WSH" in str(caught.value.__cause__)
     assert calls == ["_thresh_ops", "_thresh_stack"]
@@ -220,9 +219,7 @@ def test_nested_thresh_is_refused_by_the_running_total_in_tapscript(
     inner = _thresh(300, _XONLY)
     assert miniscript.parse(inner, miniscript.TAPSCRIPT).script_size < 15_000
     calls = _count_the_quadratic_step(monkeypatch)
-    with pytest.raises(
-        BTClibValueError, match=r"^tr\(\) leaf is not a valid descriptor function$"
-    ) as caught:
+    with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT) as caught:
         descriptors.parse(f"tr({_XONLY},{_nested_thresh(50, inner)})")
     assert "too large for tapscript" in str(caught.value.__cause__)
     assert calls == ["_thresh_ops", "_thresh_stack"]

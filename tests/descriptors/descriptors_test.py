@@ -92,13 +92,9 @@ from bip32_descriptors.descriptors.descriptors import __descsum_expand
 from bip32_descriptors.descriptors.key_expression import _read_split
 from bip32_descriptors.descriptors.miniscript import _ARITY, Miniscript
 from tests import load, vector_id
+from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
 from tests.exception_family_test import VALUE_ERRORS
 from tests.secret_free import assert_secret_free
-
-# what Bitcoin Core v31.1 names where its miniscript parser fails without
-# naming a key, inside wsh() and in a tr() leaf
-P2WSH_FAULT = "^A function is needed within P2WSH$"
-TR_LEAF_FAULT = r"^tr\(\) leaf is not a valid descriptor function$"
 
 DOC_DESCRIPTORS = [
     descriptor_data["desc"]

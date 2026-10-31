@@ -1849,12 +1849,11 @@ _NAME_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz_0123456789")
 class _CoreFallbackError(BTClibValueError):
     """A fault on which Core's miniscript parser stops without naming a key.
 
-    Text it reads as no fragment, a number, a hash or a multisig it
-    refuses, or a script past the size of its context. Core's descriptor
-    reader then names its own fallback, which the descriptor reader here
-    names too: inside ``wsh()`` and in a ``tr()`` leaf. A key it refuses,
-    and a type or sanity fault, which Core finds on the expression it
-    built, are not one. The standalone parser keeps this diagnostic.
+    Core's descriptor reader then names its own fallback, which the
+    descriptor reader here names too: inside ``wsh()`` and in a ``tr()``
+    leaf. A key Core refuses, and a type or sanity fault Core finds on
+    the expression it built, are not one. The standalone parser keeps
+    this diagnostic.
     """
 
 
