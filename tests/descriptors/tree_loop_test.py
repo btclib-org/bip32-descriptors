@@ -4,8 +4,7 @@
 
 """A tr() tree read leaf by leaf, in the order `_parse_tree` gives.
 
-Issue btclib-org/bip32-descriptors#19. Every row was checked against
-``getdescriptorinfo`` on an offline regtest bitcoind v31.1.0.
+Issue btclib-org/bip32-descriptors#19.
 """
 
 import pytest
