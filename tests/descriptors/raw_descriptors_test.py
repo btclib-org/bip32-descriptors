@@ -36,10 +36,13 @@ package accepts it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 from btclib.alias import Octets
-from btclib.exceptions import BTClibValueError
+from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.hashes import hash160
+from btclib.script.limits import MAX_SCRIPT_ELEMENT_SIZE, MAX_SCRIPT_SIZE
 from btclib.script.taproot import check_output_pubkey
 
 from bip32_descriptors.descriptors import (
@@ -1034,3 +1037,90 @@ def test_a_hand_built_tree_too_deep_for_a_control_block_is_refused() -> None:
         deep = (deep, RawLeaf(b"\x51"))
     with pytest.raises(BTClibValueError, match="^script tree deeper than 128$"):
         TrDescriptor(key, deep).script_pub_key()  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "wrap, limit",
+    [
+        ("sh({})", MAX_SCRIPT_ELEMENT_SIZE),
+        ("wsh({})", MAX_SCRIPT_SIZE),
+        ("sh(wsh({}))", MAX_SCRIPT_SIZE),
+    ],
+)
+def test_a_raw_over_the_limit_of_what_embeds_it_is_refused_at_parse(
+    wrap: str, limit: int
+) -> None:
+    """Refused where it is written, and the limit itself still parses."""
+    largest = parse(wrap.format(f"raw({'00' * limit})"))
+    expansion = largest.expansion()
+    assert bytes(limit) in (expansion.redeem_script, expansion.witness_script)
+    assert largest.script_pub_key().script
+    with pytest.raises(BTClibValueError, match=f"over the {limit}-byte limit$"):
+        parse(wrap.format(f"raw({'00' * (limit + 1)})"))
+
+
+def test_a_raw_at_the_top_level_or_in_a_tree_has_no_size_limit() -> None:
+    """Nothing embeds these: a leaf and an output are as long as they are."""
+    script = "00" * (MAX_SCRIPT_SIZE + 1)
+    assert parse(f"raw({script})").script_pub_key().script
+    assert parse(f"tr({XONLY},raw({script}))").script_pub_key().script
+    assert parse(f"tr({XONLY},rawleaf({script},c0))").script_pub_key().script
+
+
+@pytest.mark.parametrize("wrap", ["sh({})", "wsh({})", "sh(wsh({}))"])
+def test_a_rawpkh_fits_every_position_that_embeds_it(wrap: str) -> None:
+    """Its script is 25 bytes, so only the hash's own size is refused."""
+    text = wrap.format(f"rawpkh({'ab' * 20})")
+    descriptor = parse(text)
+    assert descriptor.script_pub_key().script
+    expansion = descriptor.expansion()
+    assert expansion.redeem_script or expansion.witness_script
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    [
+        ShDescriptor(RawDescriptor(bytes(MAX_SCRIPT_ELEMENT_SIZE + 1))),
+        WshDescriptor(RawDescriptor(bytes(MAX_SCRIPT_SIZE + 1))),
+        ShDescriptor(WshDescriptor(RawDescriptor(bytes(MAX_SCRIPT_SIZE + 1)))),
+    ],
+)
+def test_a_hand_built_raw_over_the_limit_answers_nothing(
+    descriptor: ShDescriptor | WshDescriptor,
+) -> None:
+    """Every question fails as `script_pub_key` does, on the one fault."""
+    for question in (
+        descriptor.script_pub_key,
+        descriptor.expansion,
+        descriptor.provider,
+    ):
+        with pytest.raises(BTClibValueError, match="exceeds size limit"):
+            question()
+
+
+@pytest.mark.parametrize(
+    "build, what",
+    [
+        (lambda: RawLeaf("51"), "leaf script"),  # type: ignore[arg-type]
+        (lambda: RawLeaf(b"Q", "c0"), "leaf version"),  # type: ignore[arg-type]
+        (lambda: RawLeaf(b"Q", None), "leaf version"),  # type: ignore[arg-type]
+        (lambda: RawLeaf(b"Q", True), "leaf version"),
+        (lambda: RawLeaf(b"Q", bare=1), "bare"),  # type: ignore[arg-type]
+        (lambda: RawNode("ab" * 16), "node hash"),  # type: ignore[arg-type]
+        (lambda: RawNode(5), "node hash"),  # type: ignore[arg-type]
+        (lambda: RawPkhDescriptor("ab" * 10), "key hash"),  # type: ignore[arg-type]
+        (lambda: RawPkhDescriptor(5), "key hash"),  # type: ignore[arg-type]
+    ],
+)
+def test_a_field_of_the_wrong_type_is_refused_when_built(
+    build: Callable[[], object], what: str
+) -> None:
+    """A `BTClibTypeError`, not a builtin's complaint later on."""
+    with pytest.raises(BTClibTypeError, match=f"^invalid {what} type: "):
+        build()
+
+
+def test_a_raw_pkh_descriptor_still_normalizes_its_network() -> None:
+    """Its `__post_init__` adds to the one every descriptor runs."""
+    built = RawPkhDescriptor(bytes(20), network="MainNet")
+    assert built.network == "mainnet"

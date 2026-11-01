@@ -146,7 +146,11 @@ from btclib.network import (
     normalized_network_name,
     validated_network_name,
 )
-from btclib.script.limits import MAX_PUBKEYS_PER_MULTISIG, MAX_SCRIPT_ELEMENT_SIZE
+from btclib.script.limits import (
+    MAX_PUBKEYS_PER_MULTISIG,
+    MAX_SCRIPT_ELEMENT_SIZE,
+    MAX_SCRIPT_SIZE,
+)
 from btclib.script.script import op_code_spans, op_int, serialize
 from btclib.script.script_pub_key import ScriptPubKey, script_from_script_pub_key
 from btclib.script.taproot import (
@@ -544,6 +548,11 @@ class RawLeaf:
         A version is one byte, and an even one: the low bit of a control
         block's first byte is the parity of the output key.
         """
+        assert_type(self.script, bytes, "leaf script")
+        if not is_integer(self.version):
+            err_msg = f"invalid leaf version type: {type(self.version).__name__}"
+            raise BTClibTypeError(err_msg)
+        assert_type(self.bare, bool, "bare")
         if not 0 <= self.version <= 0xFF or self.version & 1:
             raise BTClibValueError("Leaf Version is invalid")
         if self.bare and self.version != _TAPSCRIPT_LEAF_VERSION:
@@ -570,6 +579,10 @@ class RawNode:
     """
 
     digest: bytes
+
+    def __post_init__(self) -> None:
+        """Refuse a hash that is not bytes; `_tree_walk` refuses its size."""
+        assert_type(self.digest, bytes, "node hash")
 
     @override
     def __str__(self) -> str:
@@ -1524,7 +1537,7 @@ class ShDescriptor(Descriptor):
         """
         return replace(
             _inner_expansion(self.inner, index, prv_keys),
-            redeem_script=self.inner.redeem_script(index, prv_keys),
+            redeem_script=_embedded(self, index, prv_keys),
         )
 
 
@@ -1578,7 +1591,7 @@ class WshDescriptor(Descriptor):
         """
         return replace(
             _inner_expansion(self.inner, index, prv_keys),
-            witness_script=self.inner.redeem_script(index, prv_keys),
+            witness_script=_embedded(self, index, prv_keys),
         )
 
 
@@ -1907,6 +1920,11 @@ class RawPkhDescriptor(Descriptor):
     key_hash: bytes
 
     @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.key_hash, bytes, "key hash")
+
+    @override
     def __str__(self) -> str:
         return _expression("rawpkh", self.key_hash.hex())
 
@@ -1957,6 +1975,18 @@ class RawPkhDescriptor(Descriptor):
 # the fragments that are a script and nothing else: what ``sh()`` and
 # ``wsh()`` embed as it is, with no key origin of its own to write
 _SCRIPT_ONLY = (RawDescriptor, RawPkhDescriptor)
+
+
+def _embedded(
+    descriptor: ShDescriptor | WshDescriptor, index: int, prv_keys: PrvKeys | None
+) -> bytes:
+    """Return the script a ``sh()`` or a ``wsh()`` embeds.
+
+    Refused where the descriptor has no script for it, so that a
+    hand-built one over the size limit answers nothing else either.
+    """
+    descriptor._scripts(index, prv_keys)
+    return descriptor.inner.redeem_script(index, prv_keys)
 
 
 def _inner_expansion(
@@ -2718,10 +2748,19 @@ def _hex_bytes(text: str, fault: str) -> bytes:
     return bytes.fromhex(text)
 
 
+# what a script may weigh where the descriptor embeds it, as
+# `ScriptPubKey.p2sh` and `ScriptPubKey.p2wsh` refuse it
+_EMBEDDED_SCRIPT_SIZE = {_P2SH: MAX_SCRIPT_ELEMENT_SIZE, _P2WSH: MAX_SCRIPT_SIZE}
+
+
 def _parse_raw(
     args: list[str], context: str, network: str, prv_keys: dict[str, str]
 ) -> Descriptor:
     script = _hex_bytes(_one_argument(args, "raw"), "Raw script is not hex")
+    limit = _EMBEDDED_SCRIPT_SIZE.get(context)
+    if limit is not None and len(script) > limit:
+        err_msg = f"raw() inside {context} is {len(script)} bytes"
+        raise BTClibValueError(f"{err_msg}, over the {limit}-byte limit")
     return RawDescriptor(script, network=network)
 
 
@@ -3162,7 +3201,7 @@ def _expand(
     network = descriptor.network
     if isinstance(descriptor, (ShDescriptor, WshDescriptor)):
         _expand(descriptor.inner, index, prv_keys, keys, scripts, trees)
-        scripts[descriptor.inner.redeem_script(index, prv_keys)] = None
+        scripts[_embedded(descriptor, index, prv_keys)] = None
         return
     if isinstance(descriptor, TrDescriptor):
         _expanded_keys((descriptor.internal_key,), index, network, prv_keys, keys)
@@ -3795,7 +3834,8 @@ def infer_descriptor(
     `parse` refuses, is a ``rawleaf()``, and a leaf with no script, or a
     subtree none of whose leaves is proven, is a ``rawnode()``. So is the
     whole tree where the records contradict each other, which only a hash
-    collision does. So a ``tr()`` answered here parses, to the same script.
+    collision does. So a ``tr()`` answered here parses, to the same script,
+    where `parse` reads the origin the provider gives its internal key.
 
     Two equal subtrees share their control blocks, so one is rebuilt. The
     other is written out in a tree Core rebuilds with no raw form in it,
