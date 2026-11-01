@@ -2361,9 +2361,7 @@ def _assert_no_trailing_text(expression: str, pos: int) -> None:
 
     Core's descriptor reader hands its miniscript parser the text up to
     the first ",", ")" or "}" outside brackets, so text from one of them
-    on is no fault of the miniscript's. No "}" reaches here from the
-    descriptor reader, which refuses it first in `_assert_no_closing_brace`
-    (issue btclib-org/bip32-descriptors#13).
+    on is no fault of the miniscript's.
     """
     if pos == len(expression):
         return
