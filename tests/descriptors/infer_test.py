@@ -28,7 +28,13 @@ from btclib.key import PubKeyData
 from btclib.network import NETWORKS
 from btclib.script.script import serialize
 from btclib.script.script_pub_key import ScriptPubKey
-from btclib.script.taproot import input_script_sig, output_pubkey, tree_helper
+from btclib.script.taproot import (
+    input_script_sig,
+    output_pubkey,
+    output_pubkey_from_merkle_root_var,
+    tree_helper,
+)
+from ecc.hashes import tagged_hash
 
 from bip32_descriptors.bip32 import derive, xpub_from_xprv
 from bip32_descriptors.bip32.bip32 import rootxprv_from_seed
@@ -554,6 +560,26 @@ def test_a_branch_with_no_known_leaf_is_a_rawnode() -> None:
     none = replace(provider, trees={output_key: (internal, root, {})})
     inferred = infer_descriptor(script, none, "regtest")
     assert inferred == add_checksum(f"tr({X1},rawnode({root.hex()}))")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+def test_a_leaf_of_the_annex_version_is_the_node_of_its_hash() -> None:
+    """A record of version 50 proves no leaf ``rawleaf()`` can write.
+
+    btclib's taproot functions refuse that version, so the tree is folded
+    here with BIP341's tagged hash.
+    """
+    x_only = bytes.fromhex(X1)
+    hashed = tagged_hash(b"TapLeaf", b"\x50\x01\x51")
+    output_key, parity = output_pubkey_from_merkle_root_var(x_only, hashed)
+    control = bytes([0x50 + parity]) + x_only
+    provider = Provider(
+        keys={bytes.fromhex(K1): None},
+        trees={output_key: (x_only, hashed, {control: (b"\x51", 0x50)})},
+    )
+    script = b"\x51\x20" + output_key
+    inferred = infer_descriptor(script, provider, "regtest")
+    assert inferred == add_checksum(f"tr({X1},rawnode({hashed.hex()}))")
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 
