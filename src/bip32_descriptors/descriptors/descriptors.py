@@ -388,9 +388,6 @@ _KEY_HASH_SIZE = 20
 # rawleaf() takes a script and a leaf version of one byte
 _RAWLEAF_ARGUMENTS = 2
 _LEAF_VERSION_DIGITS = 2
-# the first byte of an annex, which BIP341 says no leaf version can be: a
-# witness whose last element starts with it is read as having an annex
-_ANNEX_TAG = 0x50
 
 _THRESHOLD = re.compile(r"[0-9]+")
 # a multipath step. A text that `parse` has read, each step on its first
@@ -541,7 +538,13 @@ class RawLeaf:
     bare: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
-        """Refuse a ``raw()`` leaf of a version other than c0."""
+        """Refuse a version `parse` refuses, and a ``raw()`` leaf not of c0.
+
+        A version is one byte, and an even one: the low bit of a control
+        block's first byte is the parity of the output key.
+        """
+        if not 0 <= self.version <= 0xFF or self.version & 1:
+            raise BTClibValueError("Leaf Version is invalid")
         if self.bare and self.version != _TAPSCRIPT_LEAF_VERSION:
             raise BTClibValueError("a raw() leaf has the leaf version c0")
 
@@ -2753,9 +2756,10 @@ def _parse_rawleaf(args: list[str]) -> RawLeaf:
     not hex.
 
     The version is one byte, and an odd one is refused: its low bit is the
-    parity of the output key in a control block. So is 50, which BIP341
-    rules out as the annex tag. This is where the parser departs from PR
-    30243, which refuses odd versions only.
+    parity of the output key in a control block. Version 50 is accepted, as
+    PR 30243 accepts it: consensus spends it, through a control block
+    starting with 51, or with 50 when an annex follows, and BIP341 rules it
+    out of a script tree only in a footnote.
     """
     script = _hex_bytes(args[0], "Leaf Script is not hex")
     if len(args) == 1:
@@ -2770,8 +2774,6 @@ def _parse_rawleaf(args: list[str]) -> RawLeaf:
     version = int(text, 16)
     if version & 1:
         raise BTClibValueError("Leaf Version is invalid")
-    if version == _ANNEX_TAG:
-        raise BTClibValueError("Leaf Version is invalid: 50 is the annex tag")
     if len(args) > _RAWLEAF_ARGUMENTS:
         err_msg = f"rawleaf() takes a script and a leaf version, {len(args)} given"
         raise BTClibValueError(err_msg)
@@ -3471,13 +3473,8 @@ def _proved_leaf(
     """Return the leaf hash a control block proves under the root, or None.
 
     Core skips a record that proves nothing, rather than refusing the tree.
-    A record of version 50, the annex tag, is skipped too, the leaf it
-    claims being one no ``rawleaf()`` can write: the node of its hash takes
-    its place.
     """
     if not 0 <= leaf_version <= 0xFF or leaf_version & 1:
-        return None
-    if leaf_version == _ANNEX_TAG:
         return None
     levels, rest = divmod(len(control) - _CONTROL_BASE_SIZE, 32)
     if not 0 <= levels <= MAX_TREE_DEPTH or rest or control[0] & 0xFE != leaf_version:

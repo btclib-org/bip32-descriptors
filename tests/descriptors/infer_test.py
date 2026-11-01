@@ -563,11 +563,11 @@ def test_a_branch_with_no_known_leaf_is_a_rawnode() -> None:
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 
-def test_a_leaf_of_the_annex_version_is_the_node_of_its_hash() -> None:
-    """A record of version 50 proves no leaf ``rawleaf()`` can write.
+def test_a_leaf_of_version_50_is_a_rawleaf() -> None:
+    """A record of version 50 is a leaf, which consensus can spend.
 
-    btclib's taproot functions refuse that version, so the tree is folded
-    here with BIP341's tagged hash.
+    btclib's `tree_helper` refuses that version, so the tree is folded here
+    with BIP341's tagged hash.
     """
     x_only = bytes.fromhex(X1)
     hashed = tagged_hash(b"TapLeaf", b"\x50\x01\x51")
@@ -579,7 +579,7 @@ def test_a_leaf_of_the_annex_version_is_the_node_of_its_hash() -> None:
     )
     script = b"\x51\x20" + output_key
     inferred = infer_descriptor(script, provider, "regtest")
-    assert inferred == add_checksum(f"tr({X1},rawnode({hashed.hex()}))")
+    assert inferred == add_checksum(f"tr({X1},rawleaf(51,50))")
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 

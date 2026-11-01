@@ -599,12 +599,19 @@ def test_a_tree_takes_raw_and_rawleaf_and_keeps_what_was_written() -> None:
     assert str(raw) != str(leaf)
 
 
-def test_a_leaf_version_of_50_is_the_annex_tag() -> None:
-    """Refuse 50, which BIP341 rules out and PR 30243 accepts."""
-    with pytest.raises(
-        BTClibValueError, match="^Leaf Version is invalid: 50 is the annex tag$"
-    ):
-        parse(f"tr({XONLY},rawleaf(51,50))")
+def test_a_leaf_version_of_50_is_read() -> None:
+    """Accept 50, as PR 30243 does: consensus spends a leaf of it."""
+    parsed = parse(f"tr({XONLY},rawleaf(51,50))")
+    assert isinstance(parsed, TrDescriptor)
+    assert parsed.tree == RawLeaf(b"\x51", 0x50)
+    assert str(parsed) == f"tr({XONLY},rawleaf(51,50))"
+
+
+@pytest.mark.parametrize("version", [0x51, 0xC1, -2, 0x100])
+def test_a_leaf_built_directly_refuses_what_parse_refuses(version: int) -> None:
+    """An odd version, or one that is no byte, prints what `parse` refuses."""
+    with pytest.raises(BTClibValueError, match="^Leaf Version is invalid$"):
+        RawLeaf(b"\x51", version)
 
 
 def test_a_bare_leaf_has_no_other_version() -> None:
