@@ -3417,18 +3417,28 @@ def _inferred_node(node: Miniscript, known: _Known) -> Miniscript | None:
 def _inferred_miniscript(
     script: bytes, context: str, known: _Known
 ) -> Miniscript | None:
-    """Return the sane miniscript a script is, None where it is none."""
+    """Return the sane miniscript a script is, None where it is none.
+
+    None too where the script nests too deep for `_inferred_node`, whose
+    recursion follows the script: how deep that is depends on the
+    interpreter's stack, but it fails here and not in the caller.
+    """
     tapscript = context == _P2TR
-    key_hashes: dict[Octets, Octets] = {}
-    for key_hash, sec in (known.by_x_only_hash if tapscript else known.by_hash).items():
-        key_hashes[key_hash] = sec[1:] if tapscript else sec
+    held = known.by_x_only_hash if tapscript else known.by_hash
+    # only what the script pushes: this runs once per leaf, whatever the
+    # number of keys the provider holds
+    key_hashes: dict[Octets, Octets] = {
+        data: held[data][1:] if tapscript else held[data]
+        for _, data, _ in _ops(script)
+        if data in held
+    }
     try:
         read = _miniscript_from_script(
             script, _MINISCRIPT_CONTEXTS[context], key_hashes
         )
-    except BTClibValueError:
+        node = _inferred_node(read, known)
+    except (BTClibValueError, RecursionError):
         return None
-    node = _inferred_node(read, known)
     return node if node is not None and node.is_sane() else None
 
 
@@ -3549,27 +3559,47 @@ def _inferred_leaf_or_raw(script: bytes, version: int, known: _Known) -> Descrip
     return leaf if leaf is not None and _reads_back(leaf) else RawLeaf(script, version)
 
 
-def _inferred_subtree(node: _TreeNode, known: _Known) -> tuple[DescriptorTree, bytes]:
-    """Return the tree under a rebuilt node, and its hash.
+def _inferred_subtree(
+    node: _TreeNode, known: _Known
+) -> tuple[DescriptorTree, bytes, bool]:
+    """Return the tree under a rebuilt node, its hash, and if it is whole.
 
-    A node no proof went through is a ``rawnode()`` of its hash. A node
-    whose sibling hashes the same is its sibling again, the control blocks
-    of both being the same: only one was rebuilt.
+    A node no proof went through is a ``rawnode()`` of its hash.
+
+    Whole is what Core rebuilds: no raw form in the subtree, except a right
+    node whose left sibling hashes the same under a parent whose hash a
+    proof named. Its control blocks are its sibling's, so only one of them
+    was rebuilt. `_with_twins` writes it out.
     """
     if not node.explored:
         # the root or a sibling a control block named, each with its hash
         digest = cast("bytes", node.hash)
-        return RawNode(digest), digest
+        return RawNode(digest), digest, False
     if not node.inner:
         script, version = cast("tuple[bytes, int]", node.leaf)
-        return _inferred_leaf_or_raw(script, version, known), leaf_hash(version, script)
+        leaf = _inferred_leaf_or_raw(script, version, known)
+        whole = not isinstance(leaf, (RawLeaf, RawNode))
+        return leaf, leaf_hash(version, script), whole
     left_node, right_node = node.sub
-    left, left_hash = _inferred_subtree(left_node, known)
-    right, right_hash = _inferred_subtree(right_node, known)
-    if not right_node.explored and right_hash == left_hash:
-        right = left
+    left, left_hash, left_whole = _inferred_subtree(left_node, known)
+    right, right_hash, right_whole = _inferred_subtree(right_node, known)
+    twin = node.hash is not None and not right_node.explored and right_hash == left_hash
     low, high = sorted((left_hash, right_hash))
-    return (left, right), tagged_hash(b"TapBranch", low + high)
+    digest = tagged_hash(b"TapBranch", low + high)
+    return (left, right), digest, left_whole and (right_whole or twin)
+
+
+def _with_twins(tree: DescriptorTree) -> DescriptorTree:
+    """Return a whole tree with each ``rawnode()`` its left sibling again.
+
+    The only ``rawnode()`` of a whole tree is a twin. The two sides share
+    one object, so this takes one step per node rebuilt; what doubles at
+    each twin is the text.
+    """
+    if not isinstance(tree, tuple):
+        return tree
+    left = _with_twins(tree[0])
+    return left, left if isinstance(tree[1], RawNode) else _with_twins(tree[1])
 
 
 def _taproot_tree(
@@ -3599,7 +3629,8 @@ def _taproot_tree(
             if hashed is not None:
                 proven.append(((script, leaf_version), control, hashed))
     root = _rebuilt(merkle_root, proven) or _TreeNode(merkle_root)
-    return _inferred_subtree(root, known)[0]
+    tree, _, whole = _inferred_subtree(root, known)
+    return _with_twins(tree) if whole else tree
 
 
 def _rebuilt(
@@ -3758,12 +3789,16 @@ def infer_descriptor(
 
     A p2tr output whose internal key and merkle root the provider knows is
     a ``tr()`` of the tree it can rebuild, whatever is missing from it: a
-    leaf that infers to nothing else, that has another leaf version, or
-    that infers to what `parse` refuses, is a ``rawleaf()``, and a leaf with
-    no script, or a subtree none of whose leaves is proven, is a
-    ``rawnode()``. So is the whole tree where the records contradict each
-    other, which only a hash collision does. So a ``tr()`` answered here
-    parses, to the same script.
+    leaf that infers to nothing else, that has another leaf version, that
+    nests too deep for the interpreter's stack, or that infers to what
+    `parse` refuses, is a ``rawleaf()``, and a leaf with no script, or a
+    subtree none of whose leaves is proven, is a ``rawnode()``. So is the
+    whole tree where the records contradict each other, which only a hash
+    collision does. So a ``tr()`` answered here parses, to the same script.
+
+    Two equal subtrees share their control blocks, so one is rebuilt. The
+    other is written out in a tree Core rebuilds with no raw form in it,
+    and is a ``rawnode()`` of its hash in any other tree.
 
     Core v31.1 answers a ``rawtr()`` for a tree with a ``rawnode()`` in it,
     or with a ``rawleaf()`` that infers to nothing else or has another leaf

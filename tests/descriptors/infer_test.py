@@ -19,7 +19,10 @@ what Core v31.1 answers and what is answered here.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import replace
+from hashlib import sha256
+from typing import Any
 
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
@@ -52,6 +55,7 @@ from bip32_descriptors.descriptors import (
 )
 from bip32_descriptors.descriptors import descriptors as descriptors_module
 from bip32_descriptors.descriptors.descriptors import _multi_a, _rebuilt
+from bip32_descriptors.descriptors.miniscript import from_script
 
 # the keys `@0` to `@5` stand for in `SHAPES`
 ROOT = rootxprv_from_seed("0f" * 16, NETWORKS["regtest"].bip32_prv)
@@ -719,10 +723,127 @@ def test_equal_subtrees_are_inferred_twice() -> None:
     """Two equal leaves have one control block, and both are in the tree."""
     both = [[(0xC0, PK_X1)], [(0xC0, PK_X1)]]
     assert _inferred(both) == add_checksum(f"tr({X1},{{pk({X1}),pk({X1})}})")
-    nested = [[(0xC0, ["OP_1"])], [(0xC0, ["OP_1"])]]
-    inferred = _inferred([nested, nested])
-    leaf = "rawleaf(51,c0)"
-    assert inferred == add_checksum(f"tr({X1},{{{{{leaf},{leaf}}},{{{leaf},{leaf}}}}})")
+    # a pair below the root, whose parent's hash the other leaf's proof names
+    below = _inferred([both, [(0xC0, PK_X34)]])
+    pairs = f"{{pk({X1}),pk({X1})}}"
+    assert below == add_checksum(f"tr({X1},{{pk({X34}),{pairs}}})")
+
+
+def _twins(leaf: bytes, depth: int) -> tuple[bytes, bytes, list[str]]:
+    """Return the root and the path of `leaf` under `depth` pairs of twins.
+
+    With the ``rawnode()`` of each twin, from the leaf up.
+    """
+    node = leaf_hash(0xC0, leaf)
+    path = b""
+    nodes = []
+    for _ in range(depth):
+        path += node
+        nodes.append(f"rawnode({node.hex()})")
+        node = _branch(node, node)
+    return node, path, nodes
+
+
+@pytest.mark.parametrize("depth", [2, 12])
+def test_twins_core_does_not_rebuild_stay_rawnodes(depth: int) -> None:
+    """Each pair of twins but the root's has no proof that names its hash.
+
+    Core gives such a tree up, so nothing asks for the twins, and each one
+    written out would double the answer.
+    """
+    leaf = bytes.fromhex(PK_K1)
+    root, path, nodes = _twins(leaf, depth)
+    script, inferred = _inferred_from_paths(root, {leaf: path})
+    text = f"pk({X1})"
+    for node in nodes:
+        text = f"{{{text},{node}}}"
+    assert inferred == add_checksum(f"tr({X1},{text})")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+def test_twins_beside_a_raw_form_stay_rawnodes() -> None:
+    """A tree Core gives up writes no twin out, however whole the pair is."""
+    leaf = bytes.fromhex(PK_K1)
+    twin = f"rawnode({leaf_hash(0xC0, leaf).hex()})"
+    pair, path, _ = _twins(leaf, 1)
+    # beside a node no proof went through
+    other = b"\x11" * 32
+    root = _branch(pair, other)
+    script, inferred = _inferred_from_paths(root, {leaf: path + other})
+    text = f"{{{{pk({X1}),{twin}}},rawnode({other.hex()})}}"
+    assert inferred == add_checksum(f"tr({X1},{text})")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+    # beside a leaf that is a rawleaf()
+    root = _branch(pair, LEAF_51)
+    paths = {leaf: path + LEAF_51, b"\x51": pair}
+    script, inferred = _inferred_from_paths(root, paths)
+    text = f"{{{{pk({X1}),{twin}}},rawleaf(51,c0)}}"
+    assert inferred == add_checksum(f"tr({X1},{text})")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+    # the twin of a rawleaf()
+    root, path, nodes = _twins(b"\x51", 2)
+    script, inferred = _inferred_from_paths(root, {b"\x51": path})
+    text = f"{{{{rawleaf(51,c0),{nodes[0]}}},{nodes[1]}}}"
+    assert inferred == add_checksum(f"tr({X1},{text})")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+def test_a_leaf_nested_too_deep_is_a_rawleaf() -> None:
+    """`_inferred_node` follows the script, which the stack cannot follow far.
+
+    The script is a miniscript of `n:` wrappers, one more with each byte.
+    """
+    leaf = bytes.fromhex(PK_K1) + b"\x92" * (3 * sys.getrecursionlimit())
+    raw = f"rawleaf({leaf.hex()},c0)"
+    hashed = leaf_hash(0xC0, leaf)
+    # alone, beside a node no proof went through, and beside a proven leaf
+    script, inferred = _inferred_from_paths(hashed, {leaf: b""})
+    assert inferred == add_checksum(f"tr({X1},{raw})")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+    other = b"\x11" * 32
+    root = _branch(hashed, other)
+    script, inferred = _inferred_from_paths(root, {leaf: other})
+    assert inferred == add_checksum(f"tr({X1},{{{raw},rawnode({other.hex()})}})")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+    root = _branch(hashed, LEAF_51)
+    paths = {leaf: LEAF_51, b"\x51": hashed}
+    script, inferred = _inferred_from_paths(root, paths)
+    assert raw in inferred
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+def test_a_script_is_read_with_the_keys_it_pushes_the_hash_of(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider's other keys cost nothing for each leaf of a tree."""
+    given: list[int] = []
+
+    def counting(*args: Any) -> Any:
+        given.append(len(args[2]))
+        return from_script(*args)
+
+    monkeypatch.setattr(descriptors_module, "_miniscript_from_script", counting)
+    x_only = bytes.fromhex(X34)
+    leaf = b"\x76\xa9\x14" + hash160(x_only) + b"\x88\xac"
+    hashed = leaf_hash(0xC0, leaf)
+    output_key, parity = output_pubkey_from_merkle_root_var(x_only, hashed)
+    control = bytes([0xC0 + parity]) + x_only
+    keys = {bytes.fromhex(K1): None, bytes.fromhex(K34): None}
+    trees = {output_key: (x_only, hashed, {control: (leaf, 0xC0)})}
+    provider = Provider(keys=keys, trees=trees)
+    inferred = infer_descriptor(b"\x51\x20" + output_key, provider, "regtest")
+    assert inferred == add_checksum(f"tr({X34},pkh({K34}))")
+    assert given == [1]
+
+
+def test_a_witness_script_nested_too_deep_is_an_addr() -> None:
+    """The same recursion, reached through a ``wsh()``."""
+    witness_script = b"\x51" + b"\x92" * (3 * sys.getrecursionlimit())
+    script = b"\x00\x20" + sha256(witness_script).digest()
+    provider = Provider(scripts=(witness_script,))
+    inferred = infer_descriptor(script, provider, "regtest")
+    address = ScriptPubKey(script, "regtest").address
+    assert inferred == add_checksum(f"addr({address})")
 
 
 def test_a_tree_inferred_from_its_descriptor_is_that_descriptor() -> None:
