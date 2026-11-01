@@ -3785,7 +3785,8 @@ def infer_descriptor(
     ``pkh()``, and the leaves are in the order Core rebuilds them. A
     script nothing else describes is an ``addr()`` where it has an address
     -- a ``rawtr()`` for a p2tr output whose key is a point -- and a
-    ``raw()`` otherwise.
+    ``raw()`` otherwise. An empty script is a ``raw()`` that `parse` refuses,
+    as Core's parser does.
 
     A p2tr output whose internal key and merkle root the provider knows is
     a ``tr()`` of the tree it can rebuild, whatever is missing from it: a

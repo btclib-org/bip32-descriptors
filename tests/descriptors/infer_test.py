@@ -419,6 +419,13 @@ def _addr(script: bytes) -> str:
     return infer_descriptor(script, Provider(), "regtest")
 
 
+def test_an_empty_script_is_a_raw_that_parse_refuses() -> None:
+    """Core answers ``raw()`` and its parser refuses it, for the same reason."""
+    inferred = infer_descriptor(b"", Provider(), "regtest")
+    with pytest.raises(BTClibValueError, match="Raw script is not hex"):
+        parse(inferred, "regtest")
+
+
 def test_a_known_script_inferring_nothing_is_an_address() -> None:
     """A ``sh()`` and a ``wsh()`` whose script is no descriptor's."""
     inner = bytes.fromhex("6a01ff")
