@@ -13,7 +13,7 @@ what `decodescript` answers, with an empty provider.
 The other tests are held to Core's source at bitcoin/bitcoin@f0de87f040
 (the v32.1 tag), `src/script/descriptor.cpp`, except those whose ``tr()``
 holds a ``rawleaf()`` or a ``rawnode()``, where `infer_descriptor` says
-what Core v31.1 answers and what is answered here.
+what Core answers and what is answered here.
 """
 
 from __future__ import annotations

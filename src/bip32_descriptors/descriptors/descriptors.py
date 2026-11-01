@@ -3841,13 +3841,13 @@ def infer_descriptor(
     other is written out in a tree Core rebuilds with no raw form in it,
     and is a ``rawnode()`` of its hash in any other tree.
 
-    Core v31.1 answers a ``rawtr()`` for a tree with a ``rawnode()`` in it,
-    or with a ``rawleaf()`` that infers to nothing else or has another leaf
-    version. For a leaf `parse` refuses, such as a key that is no point or
-    a miniscript that is not satisfiable, it answers a ``tr()`` that holds
-    the leaf, and that its own parser refuses. Core's PR 30243 infers the
-    root of a tree it cannot rebuild as one ``rawnode()``, and drops the
-    leaf version of a leaf it infers as another descriptor.
+    At that tag, Core answers a ``rawtr()`` for a tree with a ``rawnode()``
+    in it, or with a ``rawleaf()`` that infers to nothing else or has
+    another leaf version. For a leaf `parse` refuses, such as a key that is
+    no point or a miniscript that is not satisfiable, it answers a ``tr()``
+    that holds the leaf, and that its own parser refuses. Core's PR 30243
+    infers the root of a tree it cannot rebuild as one ``rawnode()``, and
+    drops the leaf version of a leaf it infers as another descriptor.
     """
     script = bytes_from_octets(script)
     _assert_provider(provider)
