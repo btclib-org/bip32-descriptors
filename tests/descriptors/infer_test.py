@@ -420,7 +420,7 @@ def _addr(script: bytes) -> str:
 
 
 def test_an_empty_script_is_a_raw_that_parse_refuses() -> None:
-    """Core answers ``raw()`` and its parser refuses it, for the same reason."""
+    """Core answers ``raw()``, and `parse` refuses it as Core's parser does."""
     inferred = infer_descriptor(b"", Provider(), "regtest")
     with pytest.raises(BTClibValueError, match="Raw script is not hex"):
         parse(inferred, "regtest")
