@@ -30,6 +30,7 @@ from btclib.script.script import serialize
 from btclib.script.script_pub_key import ScriptPubKey
 from btclib.script.taproot import (
     input_script_sig,
+    leaf_hash,
     output_pubkey,
     output_pubkey_from_merkle_root_var,
     tree_helper,
@@ -568,6 +569,56 @@ def test_records_that_contradict_each_other_infer_the_root(
     monkeypatch.setattr(descriptors_module, "_rebuilt", lambda *_: None)
     inferred = infer_descriptor(script, provider, "regtest")
     assert inferred == add_checksum(f"tr({X1},rawnode({root.hex()}))")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+def _branch(left: bytes, right: bytes) -> bytes:
+    """Return BIP341's hash of two nodes."""
+    return tagged_hash(b"TapBranch", min(left, right) + max(left, right))
+
+
+LEAF_51 = leaf_hash(0xC0, b"\x51")
+LEAF_52 = leaf_hash(0xC0, b"\x52")
+ZERO = bytes(32)
+
+
+@pytest.mark.parametrize(
+    "root, paths, tree",
+    [
+        pytest.param(
+            _branch(_branch(LEAF_51, LEAF_52), ZERO),
+            {b"\x51": LEAF_52 + ZERO, b"\x52": LEAF_51 + ZERO},
+            f"{{{{rawleaf(51,c0),rawleaf(52,c0)}},rawnode({ZERO.hex()})}}",
+            id="a sibling of a branch",
+        ),
+        pytest.param(
+            _branch(_branch(LEAF_51, ZERO), _branch(LEAF_52, ZERO)),
+            {
+                b"\x51": ZERO + _branch(LEAF_52, ZERO),
+                b"\x52": ZERO + _branch(LEAF_51, ZERO),
+            },
+            f"{{{{rawleaf(51,c0),rawnode({ZERO.hex()})}},"
+            f"{{rawleaf(52,c0),rawnode({ZERO.hex()})}}}}",
+            id="a sibling of each leaf",
+        ),
+    ],
+)
+def test_a_node_of_32_zero_bytes_is_a_hash_and_not_an_unknown_one(
+    root: bytes, paths: dict[bytes, bytes], tree: str
+) -> None:
+    """Keep each proof on its own side of a node whose hash is all zero."""
+    x_only = bytes.fromhex(X1)
+    output_key, parity = output_pubkey_from_merkle_root_var(x_only, root)
+    leaves = {
+        bytes([0xC0 + parity]) + x_only + path: (leaf, 0xC0)
+        for leaf, path in paths.items()
+    }
+    provider = Provider(
+        keys={bytes.fromhex(K1): None}, trees={output_key: (x_only, root, leaves)}
+    )
+    script = b"\x51\x20" + output_key
+    inferred = infer_descriptor(script, provider, "regtest")
+    assert inferred == add_checksum(f"tr({X1},{tree})")
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 

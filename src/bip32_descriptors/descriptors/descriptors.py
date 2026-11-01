@@ -3452,15 +3452,15 @@ def _merkle_root(control: bytes, leaf: bytes) -> bytes:
     return node
 
 
-# Core's null hash, which is how its `TreeNode` says a hash is not known
-_NULL_HASH = bytes(32)
-
-
 @dataclass
 class _TreeNode:
-    """A node of the tree `_taproot_tree` rebuilds: Core's `TreeNode`."""
+    """A node of the tree `_taproot_tree` rebuilds: Core's `TreeNode`.
 
-    hash: bytes = _NULL_HASH
+    A hash not known is None, where Core's is its null hash: 32 zero bytes
+    are a hash a ``rawnode()`` can hold, which a proof has to tell from none.
+    """
+
+    hash: bytes | None = None
     sub: list[_TreeNode] = field(default_factory=list)
     leaf: tuple[bytes, int] | None = None
     explored: bool = False
@@ -3505,7 +3505,7 @@ def _placed(
             continue
         for i in (0, 1):
             if node.sub[i].hash == sibling or (
-                node.sub[i].hash == _NULL_HASH and node.sub[1 - i].hash != sibling
+                node.sub[i].hash is None and node.sub[1 - i].hash != sibling
             ):
                 node.sub[i].hash = sibling
                 node = node.sub[1 - i]
@@ -3542,7 +3542,9 @@ def _inferred_subtree(node: _TreeNode, known: _Known) -> tuple[DescriptorTree, b
     of both being the same: only one was rebuilt.
     """
     if not node.explored:
-        return RawNode(node.hash), node.hash
+        # the root or a sibling a control block named, each with its hash
+        digest = cast("bytes", node.hash)
+        return RawNode(digest), digest
     if not node.inner:
         script, version = cast("tuple[bytes, int]", node.leaf)
         return _inferred_leaf_or_raw(script, version, known), leaf_hash(version, script)
@@ -3588,7 +3590,7 @@ def _taproot_tree(
 def _rebuilt(
     merkle_root: bytes, proven: list[tuple[tuple[bytes, int], bytes, bytes]]
 ) -> _TreeNode | None:
-    """Return the tree proven leaves rebuild, None on a clash.
+    """Return the tree proven leaves rebuild under the root, None on a clash.
 
     Each is a leaf, a control block proving it under `merkle_root`, and its
     leaf hash. Two proofs under one root clash only through a collision of
