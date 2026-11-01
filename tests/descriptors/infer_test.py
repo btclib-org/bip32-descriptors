@@ -49,6 +49,7 @@ from bip32_descriptors.descriptors import (
     parse,
     strip_checksum,
 )
+from bip32_descriptors.descriptors import descriptors as descriptors_module
 from bip32_descriptors.descriptors.descriptors import _multi_a, _rebuilt
 
 # the keys `@0` to `@5` stand for in `SHAPES`
@@ -540,6 +541,32 @@ def test_a_leaf_with_no_script_is_the_node_of_its_hash() -> None:
     inferred = _inferred([[(0xC0, PK_X1)], [(0xC0, [])]])
     assert inferred == add_checksum(f"tr({X1},{{rawnode({_hash([])}),pk({X1})}})")
     script, _ = _tr([[(0xC0, PK_X1)], [(0xC0, [])]])
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+def test_a_leaf_with_no_script_is_a_node_at_any_version() -> None:
+    """At version c2 too: ``rawleaf()`` with no HEX does not parse at any."""
+    inferred = _inferred([[(0xC0, PK_X1)], [(0xC2, [])]])
+    expected = f"tr({X1},{{rawnode({_hash([], 0xC2)}),pk({X1})}})"
+    assert inferred == add_checksum(expected)
+    script, _ = _tr([[(0xC0, PK_X1)], [(0xC2, [])]])
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+def test_records_that_contradict_each_other_infer_the_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole tree is the node of its root where the proofs clash.
+
+    Only a hash collision makes `_rebuilt` answer None, and
+    `test_control_blocks_that_contradict_each_other` reaches it so; here
+    it is patched, to reach what `infer_descriptor` does with that answer.
+    """
+    script, provider = _tr([[(0xC0, PK_X1)], [(0xC0, PK_X34)]])
+    ((_, (_, root, _)),) = provider.trees.items()
+    monkeypatch.setattr(descriptors_module, "_rebuilt", lambda *_: None)
+    inferred = infer_descriptor(script, provider, "regtest")
+    assert inferred == add_checksum(f"tr({X1},rawnode({root.hex()}))")
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 
