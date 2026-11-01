@@ -558,10 +558,10 @@ def test_records_that_contradict_each_other_infer_the_root(
 ) -> None:
     """The whole tree is the node of its root where the proofs clash.
 
-    Only a hash collision makes `_rebuilt` answer None.
-    `test_control_blocks_that_contradict_each_other` calls `_rebuilt` with
-    made-up records that clash; here `_rebuilt` is patched, to reach what
-    `infer_descriptor` does with that answer.
+    Through `infer_descriptor`, only a hash collision makes `_rebuilt`
+    answer None. `test_control_blocks_that_contradict_each_other` calls
+    `_rebuilt` with made-up records that clash; here `_rebuilt` is patched,
+    to reach what `infer_descriptor` does with that answer.
     """
     script, provider = _tr([[(0xC0, PK_X1)], [(0xC0, PK_X34)]])
     ((_, (_, root, _)),) = provider.trees.items()
