@@ -66,6 +66,7 @@ from bip32_descriptors.descriptors.miniscript import (
 )
 from bip32_descriptors.descriptors.miniscript import parse as miniscript_parse
 from tests import vector_id
+from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
 from tests.exception_family_test import VALUE_ERRORS
 
 WIF = "L4rK1yDtCWekvXuE6oXD9jCYfFNV2cWRpVuPLBcCU2z8TrisoyY1"
@@ -520,11 +521,11 @@ def test_an_empty_or_ill_formed_argument_is_refused(
                 ),
                 (
                     f"wsh(and_v(v:pkh({KEY}),raw_pk_h({HASH160_B})))",
-                    r"unknown miniscript fragment",
+                    P2WSH_FAULT,
                 ),
                 (
                     f"wsh(and_v(v:pkh({KEY}),c:raw_pk_h({HASH160_B})))",
-                    r"unknown miniscript fragment",
+                    P2WSH_FAULT,
                 ),
                 (
                     "sh(sh(raw(00)))",
@@ -545,11 +546,11 @@ def test_an_empty_or_ill_formed_argument_is_refused(
                 ("tr(raw(00))", "^not a key expression$"),
                 (
                     f"tr({XONLY},and_v(v:pk({X1}),raw(51)))",
-                    "unknown miniscript fragment",
+                    TR_LEAF_FAULT,
                 ),
                 (
                     f"tr({XONLY},and_v(v:pk({X1}),rawnode({NODE})))",
-                    "unknown miniscript fragment",
+                    TR_LEAF_FAULT,
                 ),
                 (f"tr({XONLY},{{rawnode({NODE})}})", "two subtrees"),
                 (f"tr({XONLY},rawnode({NODE})x)", "not a descriptor expression"),
