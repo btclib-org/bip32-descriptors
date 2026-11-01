@@ -12,8 +12,8 @@ what `decodescript` answers, with an empty provider.
 
 The other tests are held to Core's source at bitcoin/bitcoin@f0de87f040
 (the v32.1 tag), `src/script/descriptor.cpp`, except those whose ``tr()``
-holds a ``rawleaf()`` or a ``rawnode()``. Core v31.1 answers a ``rawtr()``
-there, and `infer_descriptor` says what is answered here.
+holds a ``rawleaf()`` or a ``rawnode()``, where `infer_descriptor` says
+what Core v31.1 answers and what is answered here.
 """
 
 from __future__ import annotations
@@ -577,6 +577,21 @@ def _branch(left: bytes, right: bytes) -> bytes:
     return tagged_hash(b"TapBranch", min(left, right) + max(left, right))
 
 
+def _inferred_from_paths(root: bytes, paths: dict[bytes, bytes]) -> tuple[bytes, str]:
+    """Return the p2tr script of a root, and what its proven c0 leaves infer."""
+    x_only = bytes.fromhex(X1)
+    output_key, parity = output_pubkey_from_merkle_root_var(x_only, root)
+    leaves = {
+        bytes([0xC0 + parity]) + x_only + path: (leaf, 0xC0)
+        for leaf, path in paths.items()
+    }
+    provider = Provider(
+        keys={bytes.fromhex(K1): None}, trees={output_key: (x_only, root, leaves)}
+    )
+    script = b"\x51\x20" + output_key
+    return script, infer_descriptor(script, provider, "regtest")
+
+
 LEAF_51 = leaf_hash(0xC0, b"\x51")
 LEAF_52 = leaf_hash(0xC0, b"\x52")
 ZERO = bytes(32)
@@ -607,18 +622,56 @@ def test_a_node_of_32_zero_bytes_is_a_hash_and_not_an_unknown_one(
     root: bytes, paths: dict[bytes, bytes], tree: str
 ) -> None:
     """Keep each proof on its own side of a node whose hash is all zero."""
-    x_only = bytes.fromhex(X1)
-    output_key, parity = output_pubkey_from_merkle_root_var(x_only, root)
-    leaves = {
-        bytes([0xC0 + parity]) + x_only + path: (leaf, 0xC0)
-        for leaf, path in paths.items()
-    }
-    provider = Provider(
-        keys={bytes.fromhex(K1): None}, trees={output_key: (x_only, root, leaves)}
-    )
-    script = b"\x51\x20" + output_key
-    inferred = infer_descriptor(script, provider, "regtest")
+    script, inferred = _inferred_from_paths(root, paths)
     assert inferred == add_checksum(f"tr({X1},{tree})")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+# no point has the x-coordinate 5
+NO_POINT = "00" * 31 + "05"
+PK_K1 = f"20{X1}ac"
+# what Core's `InferScript` reads and its parser refuses
+REFUSED_BY_PARSE = [
+    f"20{NO_POINT}ac",
+    f"20{NO_POINT}ac519c",
+    f"20{NO_POINT}ad51b2",
+    "00",
+    f"20{X1}ad00",
+]
+
+
+@pytest.mark.parametrize("leaf", REFUSED_BY_PARSE)
+def test_a_leaf_parse_refuses_is_a_rawleaf_beside_a_hidden_node(leaf: str) -> None:
+    """Infer what `parse` reads back, to the script it was given."""
+    node = b"\x11" * 32
+    script_bytes = bytes.fromhex(leaf)
+    root = _branch(leaf_hash(0xC0, script_bytes), node)
+    script, inferred = _inferred_from_paths(root, {script_bytes: node})
+    tree = f"{{rawleaf({leaf},c0),rawnode({node.hex()})}}"
+    assert inferred == add_checksum(f"tr({X1},{tree})")
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+@pytest.mark.parametrize("leaf", REFUSED_BY_PARSE)
+def test_a_leaf_parse_refuses_is_a_rawleaf_in_a_whole_tree(leaf: str) -> None:
+    """Where Core answers a ``tr()`` that its own parser refuses."""
+    refused, other = bytes.fromhex(leaf), bytes.fromhex(PK_K1)
+    refused_hash, other_hash = leaf_hash(0xC0, refused), leaf_hash(0xC0, other)
+    root = _branch(refused_hash, other_hash)
+    paths = {refused: other_hash, other: refused_hash}
+    script, inferred = _inferred_from_paths(root, paths)
+    assert f"rawleaf({leaf},c0)" in inferred
+    assert f"pk({X1})" in inferred
+    assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+def test_a_leaf_parse_reads_stays_what_it_infers_to() -> None:
+    """The control: a key that is a point keeps its ``pk()``."""
+    leaf = bytes.fromhex(PK_K1)
+    node = b"\x11" * 32
+    root = _branch(leaf_hash(0xC0, leaf), node)
+    script, inferred = _inferred_from_paths(root, {leaf: node})
+    assert inferred == add_checksum(f"tr({X1},{{pk({X1}),rawnode({node.hex()})}})")
     assert parse(inferred, "regtest").script_pub_key().script == script
 
 

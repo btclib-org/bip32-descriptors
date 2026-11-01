@@ -157,6 +157,7 @@ from btclib.script.taproot import (
 from btclib.script.witness import Witness
 from btclib.utils import assert_type, bytes_from_octets, is_integer
 from ecc.ecc.ssa import point_from_bip340pub_key_var
+from ecc.exceptions import EccValueError
 from ecc.hashes import tagged_hash
 from typing_extensions import override
 
@@ -3519,19 +3520,33 @@ def _placed(
     return True
 
 
+def _reads_back(leaf: DescriptorLeaf) -> bool:
+    """Return True where `parse` reads the text of an inferred leaf.
+
+    Core's `InferScript` asks less than its parser does: a key need not be
+    a point, nor a sane miniscript satisfiable. The parser's own reading is
+    what answers here, so there is no second copy of its rules.
+    """
+    try:
+        _parse_tree(_tree_expression(leaf), {}, 0)
+    except (BTClibValueError, EccValueError):
+        return False
+    return True
+
+
 def _inferred_leaf_or_raw(script: bytes, version: int, known: _Known) -> DescriptorTree:
     """Return the tree a proven leaf is: what Core infers, else a ``rawleaf()``.
 
     A leaf of another version is a ``rawleaf()`` whatever its script is, the
     version being part of what the output key commits to. So is a leaf of
-    version c0 that infers to nothing else. A leaf with no script is the
-    node of its hash: ``rawleaf()`` with no HEX does not parse, and the
-    node commits to the same output key.
+    version c0 that infers to nothing else, or to what `parse` refuses. A
+    leaf with no script is the node of its hash: ``rawleaf()`` with no HEX
+    does not parse, and the node commits to the same output key.
     """
     if not script:
         return RawNode(leaf_hash(version, script))
     leaf = _inferred_leaf(script, known) if version == _TAPSCRIPT_LEAF_VERSION else None
-    return RawLeaf(script, version) if leaf is None else leaf
+    return leaf if leaf is not None and _reads_back(leaf) else RawLeaf(script, version)
 
 
 def _inferred_subtree(node: _TreeNode, known: _Known) -> tuple[DescriptorTree, bytes]:
@@ -3743,14 +3758,20 @@ def infer_descriptor(
 
     A p2tr output whose internal key and merkle root the provider knows is
     a ``tr()`` of the tree it can rebuild, whatever is missing from it: a
-    leaf that infers to nothing else, or that has another leaf version, is
-    a ``rawleaf()``, and a leaf with no script, or a subtree none of whose
-    leaves is proven, is a ``rawnode()``. So is the whole tree where the
-    records contradict each other, which only a hash collision does. Core
-    v31.1 answers a ``rawtr()`` for any tree with a ``rawleaf()`` or a
-    ``rawnode()`` in it. Core's PR 30243 infers the root of a tree it
-    cannot rebuild as one ``rawnode()``, and drops the leaf version of a
-    leaf it infers as another descriptor.
+    leaf that infers to nothing else, that has another leaf version, or
+    that infers to what `parse` refuses, is a ``rawleaf()``, and a leaf with
+    no script, or a subtree none of whose leaves is proven, is a
+    ``rawnode()``. So is the whole tree where the records contradict each
+    other, which only a hash collision does. So a ``tr()`` answered here
+    parses, to the same script.
+
+    Core v31.1 answers a ``rawtr()`` for a tree with a ``rawnode()`` in it,
+    or with a ``rawleaf()`` that infers to nothing else or has another leaf
+    version. For a leaf `parse` refuses, such as a key that is no point or
+    a miniscript that is not satisfiable, it answers a ``tr()`` that holds
+    the leaf, and that its own parser refuses. Core's PR 30243 infers the
+    root of a tree it cannot rebuild as one ``rawnode()``, and drops the
+    leaf version of a leaf it infers as another descriptor.
     """
     script = bytes_from_octets(script)
     _assert_provider(provider)
