@@ -2185,16 +2185,16 @@ def _read_unclosed_multisig_keys(
 def _multisig_keys_as_core(text: str) -> list[str]:
     """Return the keys of a multisig as Core's ``FindNextChar`` cuts them.
 
-    A key ends at the next comma, counting no bracket, and the first ")"
-    before it ends the last key. With no ")" there, Core reads no last key.
+    A key ends at the next comma, counting no bracket. Once no comma is
+    left, the first ")" ends the last key, and with no ")" Core reads no
+    last key.
     """
     keys: list[str] = []
-    while True:
-        comma, close = text.find(","), text.find(")")
-        if comma == -1 or -1 < close < comma:
-            return keys if close == -1 else [*keys, text[:close]]
+    while (comma := text.find(",")) != -1:
         keys.append(text[:comma])
         text = text[comma + 1 :]
+    close = text.find(")")
+    return keys if close == -1 else [*keys, text[:close]]
 
 
 def _read_number(name: str, argument: str) -> int:
