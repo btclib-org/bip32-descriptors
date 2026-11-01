@@ -2410,8 +2410,8 @@ def _parse_leaf_miniscript(expression: str, prv_keys: dict[str, str]) -> Miniscr
     return node
 
 
-def _parse_leaf(expression: str, prv_keys: dict[str, str]) -> DescriptorLeaf:
-    """Return a leaf of a tr() tree: what Core's ``Expr`` cut, read whole."""
+def _parse_leaf(expression: str, prv_keys: dict[str, str]) -> DescriptorLeaf | RawNode:
+    """Return a tr() leaf or ``rawnode()``: what ``Expr`` cut, read whole."""
     name = expression.partition("(")[0]
     # An unterminated multi_a falls through to miniscript, as Core does.
     if name in _TREE_FUNCTIONS and (name != "multi_a" or expression.endswith(")")):
@@ -2424,7 +2424,7 @@ def _parse_leaf(expression: str, prv_keys: dict[str, str]) -> DescriptorLeaf:
 
 def _parse_other_leaf(
     expression: str, name: str, prv_keys: dict[str, str]
-) -> DescriptorTree:
+) -> DescriptorLeaf | RawNode:
     """Return the tree of a ``pk()``, a raw function or a miniscript leaf."""
     if name == "musig":
         # allowed inside tr(), and as a key rather than as a leaf: a leaf
@@ -2852,7 +2852,7 @@ _PARSERS: dict[
     "tr": ((_TOP,), _parse_tr),
     "rawtr": ((_TOP,), _parse_rawtr),
     "addr": ((_TOP,), _parse_addr),
-    # inside tr() it is a leaf of a tree and `_parse_tree` reads it
+    # inside tr() it is a leaf of a tree and `_parse_leaf` reads it
     "raw": ((_TOP, _P2SH, _P2WSH, _P2TR), _parse_raw),
     # inside tr() it is read as the miniscript fragment, as pkh() is
     "rawpkh": ((_TOP, _P2SH, _P2WSH, _P2TR), _parse_rawpkh),
@@ -3577,7 +3577,7 @@ def _reads_back(leaf: DescriptorLeaf) -> bool:
     what answers here, so there is no second copy of its rules.
     """
     try:
-        _parse_tree(_tree_expression(leaf), {}, 0)
+        _parse_tree(_tree_expression(leaf), 0, {})
     except (BTClibValueError, EccValueError):
         return False
     return True
