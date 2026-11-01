@@ -12,6 +12,7 @@ from btclib.exceptions import BTClibValueError
 from btclib.key import PrvKeyData
 
 from bip32_descriptors.descriptors import parse
+from tests.descriptors import P2WSH_FAULT, TR_LEAF_FAULT
 
 _K = PrvKeyData(1).pub.sec.hex()
 _K2 = PrvKeyData(2).pub.sec.hex()
@@ -59,8 +60,7 @@ def test_a_leaf_that_runs_into_the_tree_is_read_first(
 )
 def test_a_leaf_that_runs_on_unclosed_is_core_s_fallback(descriptor: str) -> None:
     """Core: '<leaf>' is not a valid descriptor function."""
-    err_msg = r"^tr\(\) leaf is not a valid descriptor function$"
-    with pytest.raises(BTClibValueError, match=err_msg):
+    with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
         parse(descriptor)
 
 
@@ -69,8 +69,7 @@ def test_a_brace_after_a_miniscript_fragment_is_core_s_fallback() -> None:
 
     Row 2 of issue btclib-org/bip32-descriptors#19.
     """
-    err_msg = r"^tr\(\) leaf is not a valid descriptor function$"
-    with pytest.raises(BTClibValueError, match=err_msg):
+    with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
         parse(f"tr({_X},{{and_v(v:pk({_X}){{,pk({_X2})}}),pk({_X2})}})")
 
 
@@ -79,7 +78,7 @@ def test_a_brace_closing_a_miniscript_key_is_core_s_fallback() -> None:
 
     Issue btclib-org/bip32-descriptors#13.
     """
-    with pytest.raises(BTClibValueError, match="^A function is needed within P2WSH$"):
+    with pytest.raises(BTClibValueError, match=P2WSH_FAULT):
         parse(f"wsh(and_v(v:pk({_K}),pk({_K2}}})))")
 
 

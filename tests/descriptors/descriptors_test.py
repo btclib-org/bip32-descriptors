@@ -1046,7 +1046,7 @@ def test_parse_reads_what_core_reads_before_the_brackets_and_the_rest() -> None:
             f"tr({xpub},{{pk({xpub}),pk({xpub}{{)}})",
             r"^not a descriptor expression: expected name\(arguments\)$",
         ),
-        (f"wsh(and_v(v:pk({xpub}}}),older(1)))", "^A function is needed within P2WSH$"),
+        (f"wsh(and_v(v:pk({xpub}}}),older(1)))", P2WSH_FAULT),
         (f"tr(musig({xpub}{{,{xpub})/x)", "musig\\(\\): invalid key expression"),
     ):
         with pytest.raises(BTClibValueError, match=message):

@@ -14,12 +14,12 @@ from btclib.exceptions import BTClibValueError
 from btclib.key import PrvKeyData
 
 from bip32_descriptors.descriptors import parse
+from tests.descriptors import TR_LEAF_FAULT
 
 _X = PrvKeyData(1).pub.sec.hex()[2:]
 _X2 = PrvKeyData(2).pub.sec.hex()[2:]
 _NOT_A_KEY = "^not a key expression$"
 _INVALID_KEY = "^invalid key expression$"
-_TR_LEAF_FAULT = r"^tr\(\) leaf is not a valid descriptor function$"
 
 
 @pytest.mark.parametrize(
@@ -30,12 +30,12 @@ _TR_LEAF_FAULT = r"^tr\(\) leaf is not a valid descriptor function$"
         (f"tr({_X},{{and_v(v:pkh({_X}){{,pk({_X2})),pk({_X2})}})", _NOT_A_KEY),
         (f"tr({_X},{{and_v(v:pk({_X}){{,pk({_X2}))}})", _NOT_A_KEY),
         (f"tr({_X},{{pk(nope)}})", _INVALID_KEY),
-        (f"tr({_X},{{and_v(v:pk({_X}),older(0))}})", _TR_LEAF_FAULT),
+        (f"tr({_X},{{and_v(v:pk({_X}),older(0))}})", TR_LEAF_FAULT),
         (f"tr({_X},{{pk(nope),pk({_X2}),pk({_X})}})", _INVALID_KEY),
         (f"tr({_X},{{pk({_X2}),pk(nope),pk({_X})}})", _INVALID_KEY),
         (
             f"tr({_X},{{and_v(v:pk({_X}),older(0)),pk({_X2}),pk({_X})}})",
-            _TR_LEAF_FAULT,
+            TR_LEAF_FAULT,
         ),
     ],
 )
