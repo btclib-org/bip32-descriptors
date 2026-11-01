@@ -3742,7 +3742,9 @@ def infer_descriptor(
     A p2tr output whose internal key and merkle root the provider knows is
     a ``tr()`` of the tree it can rebuild, whatever is missing from it: a
     leaf that infers to nothing else, or that has another leaf version, is
-    a ``rawleaf()``, and a branch without a known leaf is a ``rawnode()``.
+    a ``rawleaf()``, and a leaf with no script, or a subtree none of whose
+    leaves is known, is a ``rawnode()``. So is the whole tree where the
+    records contradict each other, which only a hash collision does.
     Core v31.1 answers a ``rawtr()`` for such a tree. Core's PR 30243
     infers the root of a tree it cannot rebuild as one ``rawnode()``, and
     drops the leaf version of a leaf it infers as another descriptor.
