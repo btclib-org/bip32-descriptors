@@ -578,10 +578,9 @@ def fingerprint(xkey: BIP32Key) -> bytes:
     names its master with.
 
     Here and not in a converter, because it is bip32's own idea (issue
-    btclib-org/btclib#1188). `derive` below writes a parent's into each child it
-    makes, `crack_prv_key_var` reads one back to tell whether a parent and a
-    child are that pair, and a descriptor's key origin carries one to name a
-    master.
+    btclib-org/btclib#1188). `derive` below writes a parent's fingerprint into
+    each child it makes, and `crack_prv_key_var` reads one back to tell whether
+    a parent and a child are that pair.
 
     An xprv answers with its xpub's, the fingerprint being the public
     key's: a pair that gave two would identify one key twice. The
