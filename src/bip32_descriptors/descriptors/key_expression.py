@@ -1149,10 +1149,13 @@ def _parse_key(
     an xprv as often as it is a public key, and an error message ends up
     in logs and in bug reports.
 
-    The hardening symbol is the last one the expression used, read in the
-    order it is written: the origin's path, then the key's, then the
-    wildcard. A fixed key hardens nothing and keeps the default, there
-    being no step of it to write.
+    The hardening symbol is one for the whole expression, Bitcoin Core's
+    single ``m_apostrophe``. Core reads the wildcard (``ParseDeriveType``)
+    before the key path (``ParseKeyPath``), so the marker is that of the
+    path's last hardened step; the wildcard's where the path hardens
+    nothing; the origin's where the wildcard does not either. A fixed
+    key hardens nothing and keeps the default, there being no step of
+    it to write.
 
     A ``musig()`` is read before the key origin and not after it, which is
     Bitcoin Core's order and where BIP390's "cannot be nested" comes from:
@@ -1203,9 +1206,11 @@ def _read_key(
         )
         # refused by `_der_path` before `_hardening` reads the same path
         indexes = tuple(_der_path(steps))
-        hardening = origin_hardening
-        for symbol in (_hardening("/".join(steps)), wildcard_hardening):
-            hardening = symbol or hardening
+        # the first of these that hardens a step. Core applies the wildcard
+        # before the path, so a hardened step of the path overwrites it
+        hardening = (
+            _hardening("/".join(steps)) or wildcard_hardening or origin_hardening
+        )
         return KeyExpression(
             origin=origin,
             xkey=_neutered(key, prv_keys),

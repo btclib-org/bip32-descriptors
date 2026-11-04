@@ -2180,8 +2180,9 @@ def test_the_hardening_symbol_that_was_read_is_the_one_kept() -> None:
     assert mixed.key_expressions[0].hardening == "'"
     assert parse(f"pk([deadbeef/0'/0h/0h]{key})").key_expressions[0].hardening == "h"
 
-    # the key's own path is written after the origin's, and the wildcard
-    # after both, so each in turn has the last word
+    # the key path is applied after the wildcard, so a hardened step of
+    # it has the last word. The wildcard still wins over the origin where
+    # the path hardens nothing
     assert parse(f"wpkh([deadbeef/0']{XPUB}/1h/2)").key_expressions[0].hardening == "h"
     assert parse(f"wpkh([deadbeef/0h]{XPUB}/1'/2)").key_expressions[0].hardening == "'"
     assert parse(f"wpkh([deadbeef/0h]{XPUB}/1/*')").key_expressions[0].hardening == "'"
@@ -2191,6 +2192,31 @@ def test_the_hardening_symbol_that_was_read_is_the_one_kept() -> None:
     # keep the default rather than an answer they were never given
     assert parse(f"wpkh({XPUB}/1/2)").key_expressions[0].hardening == _HARDENING
     assert parse(f"pk({key})").key_expressions[0].hardening == _HARDENING
+
+
+def test_the_path_marker_wins_over_the_wildcard() -> None:
+    """Write Core v31.1's marker when the path and the wildcard disagree.
+
+    The path's last hardened step supplies the marker every hardened
+    step is written with, checksum included. The wildcard's marker is
+    used only where the path itself hardens nothing, which is why an
+    origin spelled ``h`` comes back as ``'`` beside ``/*'``.
+    """
+    # BIP32 test vector 1's master key
+    xprv = (
+        "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvv"
+        "NKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi"
+    )
+    xpub = xpub_from_xprv(xprv)
+    cases = (
+        (f"{xprv}/0h/*'", f"{xpub}/0h/*h", "mxlmedup"),
+        (f"{xprv}/0'/*h", f"{xpub}/0'/*'", "mtlesfru"),
+        (f"[d34db33f/0h]{xprv}/*'", f"[d34db33f/0']{xpub}/*'", "gl8w3ac5"),
+    )
+    for private, public, digest in cases:
+        assert add_checksum(str(parse(f"wpkh({private})"))) == (
+            f"wpkh({public})#{digest}"
+        )
 
 
 def test_the_origin_is_the_same_whichever_symbol_spelled_it() -> None:
