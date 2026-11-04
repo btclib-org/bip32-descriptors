@@ -206,9 +206,8 @@ class KeyExpression:
     # are different strings with different checksums, so a descriptor
     # handed back in the other one is not the descriptor that was read.
     # One symbol for the whole expression, origin included, which is
-    # Bitcoin Core's single `m_apostrophe` per key: a path spelled both
-    # ways -- BIP380's own valid `[deadbeef/0'/0h/0']` -- is read and
-    # written back in the symbol its last hardened step used
+    # Bitcoin Core's single `m_apostrophe` per key; `_parse_key` says
+    # which one is kept
     hardening: str = _HARDENING
     # checked by `parse` against the network; not compared
     wif_prefix: bytes = field(default=b"", compare=False, repr=False)
@@ -546,8 +545,8 @@ def _hardening(path: str) -> str:
     Empty where the path hardens nothing, so that a caller choosing
     between two paths can tell "no opinion" from "an apostrophe". The
     last and not the first, which is Bitcoin Core's rule by construction:
-    its parser assigns the bool per hardened element, so the one it ends
-    on is the one that is written back.
+    its ``ParseKeyPath`` assigns the bool per hardened element, so a path
+    leaves it at its last one.
     """
     if not path:
         return ""
@@ -1206,8 +1205,7 @@ def _read_key(
         )
         # refused by `_der_path` before `_hardening` reads the same path
         indexes = tuple(_der_path(steps))
-        # the first of these that hardens a step. Core applies the wildcard
-        # before the path, so a hardened step of the path overwrites it
+        # the order is `_parse_key`'s, whose docstring says why
         hardening = (
             _hardening("/".join(steps)) or wildcard_hardening or origin_hardening
         )
