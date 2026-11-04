@@ -2188,14 +2188,15 @@ def test_the_hardening_symbol_that_was_read_is_the_one_kept() -> None:
     assert parse(f"wpkh([deadbeef/0h]{XPUB}/1/*')").key_expressions[0].hardening == "'"
     assert parse(f"wpkh([deadbeef/0']{XPUB}/1/*h)").key_expressions[0].hardening == "h"
 
-    # a path that hardens nothing, and a key that has no path at all,
-    # keep the default rather than an answer they were never given
+    # where no step of the expression is hardened, origin and wildcard
+    # included, a key with a path and a key with none keep the default
+    # rather than an answer they were never given
     assert parse(f"wpkh({XPUB}/1/2)").key_expressions[0].hardening == _HARDENING
     assert parse(f"pk({key})").key_expressions[0].hardening == _HARDENING
 
 
 def test_the_path_marker_wins_over_the_wildcard() -> None:
-    """Write Core v31.1's marker when the path and the wildcard disagree.
+    """Write Bitcoin Core's marker when the path and the wildcard disagree.
 
     The path's last hardened step supplies the marker every hardened
     step is written with, checksum included. The wildcard's marker is

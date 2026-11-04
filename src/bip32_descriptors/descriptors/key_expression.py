@@ -1153,9 +1153,9 @@ def _parse_key(
     single ``m_apostrophe``. Core reads the wildcard (``ParseDeriveType``)
     before the key path (``ParseKeyPath``), so the marker is that of the
     path's last hardened step; the wildcard's where the path hardens
-    nothing; the origin's where the wildcard does not either. A fixed
-    key hardens nothing and keeps the default, there being no step of
-    it to write.
+    nothing; the origin's where the wildcard does not either; and the
+    default where the origin does not either. A fixed key has no path and
+    no wildcard, so it takes the origin's marker, or the default.
 
     A ``musig()`` is read before the key origin and not after it, which is
     Bitcoin Core's order and where BIP390's "cannot be nested" comes from:
