@@ -2726,8 +2726,8 @@ def _parse_addr(
 ) -> Descriptor:
     address = _one_argument(args, "addr")
     # the network of an addr() descriptor is the address's own: it is
-    # written in the prefix, so a parameter could only contradict it.
-
+    # written in the prefix, so a parameter could only contradict it
+    #
     # `from_address` given no network answers a NETWORKS name, while
     # `ScriptPubKey.network` is typed `str | Network`
     found = cast("str", ScriptPubKey.from_address(address).network)
