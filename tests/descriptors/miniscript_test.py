@@ -1325,8 +1325,8 @@ def test_two_unsigned_choices_make_a_signed_satisfaction_malleable() -> None:
 def test_a_spend_without_a_context_opens_no_older_branch() -> None:
     """Refuse ``older(1)`` where the caller gives no sequence.
 
-    BIP112 opens an ``older(n)`` once the input's sequence reaches n, and
-    a `SpendContext` left at its defaults carries sequence 0. Bitcoin Core
+    A `SpendContext` left at its defaults carries sequence 0, which opens
+    no ``older()``, and sequence 1 opens ``older(1)``. Bitcoin Core
     v32.1.0's `descriptorprocesspsbt` leaves the same input incomplete at
     sequence 0 and finalizes it at sequence 1.
     """
