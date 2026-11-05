@@ -2900,7 +2900,7 @@ def _nested_tree(depth: int) -> str:
 
 
 def _right_comb(depth: int) -> str:
-    """Return a tr() whose deepest leaf sits under `depth` right subtrees."""
+    """Return a tr() whose deepest leaves sit under `depth` braces, on the right."""
     leaf = f"pk({XONLY})"
     return f"tr({XONLY}," + f"{{{leaf}," * depth + leaf + "}" * depth + ")"
 
