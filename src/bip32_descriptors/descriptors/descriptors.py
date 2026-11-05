@@ -2726,8 +2726,11 @@ def _parse_addr(
 ) -> Descriptor:
     address = _one_argument(args, "addr")
     # the network of an addr() descriptor is the address's own: it is
-    # written in the prefix, so a parameter could only contradict it
-    return AddrDescriptor(address, network=ScriptPubKey.from_address(address).network)
+    # written in the prefix, so a parameter could only contradict it.
+    # `ScriptPubKey.network` is typed `str | Network`; `from_address`
+    # given no network decodes the address to a NETWORKS name
+    found = cast("str", ScriptPubKey.from_address(address).network)
+    return AddrDescriptor(address, network=found)
 
 
 def _hex_bytes(text: str, fault: str) -> bytes:
