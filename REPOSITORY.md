@@ -761,11 +761,17 @@ back with a call of its own.
 `has_downloads` and `is_template` are in that document and no section
 above reads any of them back.
 
-**A credential this repository spends and does not hold.**
-`claude-review.yml` reads `secrets.CLAUDE_CODE_OAUTH_TOKEN`, which
-section 11 makes an organization secret at `visibility=all` in both
-stores, so the repository's own stores are expected empty and a copy in
-either would be that decision undone:
+**A credential this repository spends and does not hold.** The
+workflows that read `secrets.CLAUDE_CODE_OAUTH_TOKEN` are the ones this
+lists:
+
+```shell
+git grep -lF 'secrets.CLAUDE_CODE_OAUTH_TOKEN' -- .github/workflows/
+```
+
+Section 11 makes that token an organization secret at `visibility=all`
+in both stores, so the repository's own stores are expected empty and a
+copy in either would be that decision undone:
 
 ```shell
 gh api repos/btclib-org/bip32-descriptors/actions/secrets --jq .total_count
@@ -776,12 +782,23 @@ gh api repos/btclib-org/bip32-descriptors/actions/organization-secrets \
 
 The third call reads the organization secrets the repository can see.
 
-**A switch this repository does not set.** `claude-review.yml` calls
-`btclib-org/.github`'s `reusable-claude-review.yml`, whose jobs guard on
-`vars.CLAUDE_REVIEW_ENABLED`; a variable set here would take precedence
-over one of the same name on the organization, so the repository's own
-store is read too:
+**Switches this repository does not set.** A switch is a variable that
+the jobs of a `btclib-org/.github` workflow called here guard on:
+`reusable-claude-review.yml`, which `claude-review.yml` calls, guards
+on `vars.CLAUDE_REVIEW_ENABLED`, and `reusable-claude-implement.yml`,
+which `claude-implement.yml` calls, on `vars.CLAUDE_IMPLEMENT_ENABLED`.
+A variable set here would take precedence over one of the same name on
+the organization, so the repository's own store is read too:
 
 ```shell
 gh api repos/btclib-org/bip32-descriptors/actions/variables --jq .total_count
+```
+
+The organization does not set `CLAUDE_IMPLEMENT_ENABLED`, so the agent
+runs nothing here:
+
+```shell
+gh api -i orgs/btclib-org/actions/variables/CLAUDE_IMPLEMENT_ENABLED \
+  2>/dev/null | head -1
+# HTTP/2.0 404 Not Found
 ```
