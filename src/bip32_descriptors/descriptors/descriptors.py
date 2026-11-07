@@ -1048,13 +1048,15 @@ class Descriptor(ABC):
 
     def __post_init__(self) -> None:
         # every fragment's generated `__init__` calls this, none of them
-        # defining its own: the parse path already refuses a name no
-        # network answers to (`validated_network_name`, above), so what
-        # is left to the direct constructor is the same tolerance rule
-        # issue btclib-org/btclib#216 kept for everything else, not a new
-        # refusal. Without it, two spellings of one network build descriptors
-        # that are neither equal nor hashed alike, `network` comparing and
-        # hashing as the plain field it is
+        # defining its own. A name that is not a string is refused, as a
+        # field of the wrong type is in every fragment. A string no
+        # network answers to is not: the parse path already refuses it
+        # (`validated_network_name`, above), so what is left to the direct
+        # constructor is the same tolerance rule issue btclib-org/btclib#216
+        # kept for everything else. Without the coercion, two spellings of
+        # one network build descriptors that are neither equal nor hashed
+        # alike, `network` comparing and hashing as the plain field it is
+        assert_type(self.network, str, "network")
         object.__setattr__(self, "network", normalized_network_name(self.network))
 
     @property
@@ -1395,6 +1397,11 @@ class PkDescriptor(Descriptor):
     key: KeyExpression
 
     @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.key, KeyExpression, "key")
+
+    @override
     def __str__(self) -> str:
         return _expression("pk", str(self.key))
 
@@ -1433,6 +1440,11 @@ class PkhDescriptor(Descriptor):
     key: KeyExpression
 
     @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.key, KeyExpression, "key")
+
+    @override
     def __str__(self) -> str:
         return _expression("pkh", str(self.key))
 
@@ -1468,6 +1480,11 @@ class WpkhDescriptor(Descriptor):
     """``wpkh(KEY)``: a p2wpkh output, BIP382."""
 
     key: KeyExpression
+
+    @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.key, KeyExpression, "key")
 
     @override
     def __str__(self) -> str:
@@ -1519,6 +1536,11 @@ class ShDescriptor(Descriptor):
     """``sh(SCRIPT)``: the argument, p2sh-embedded, BIP381."""
 
     inner: Descriptor
+
+    @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.inner, Descriptor, "inner descriptor")
 
     @override
     def __str__(self) -> str:
@@ -1578,6 +1600,11 @@ class WshDescriptor(Descriptor):
     """``wsh(SCRIPT)``: the argument, P2WSH-embedded, BIP382."""
 
     inner: Descriptor
+
+    @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.inner, Descriptor, "inner descriptor")
 
     @override
     def __str__(self) -> str:
@@ -1649,6 +1676,11 @@ class MiniscriptDescriptor(Descriptor):
     node: Miniscript
 
     @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.node, Miniscript, "miniscript")
+
+    @override
     def __str__(self) -> str:
         return str(self.node)
 
@@ -1696,6 +1728,17 @@ class MultiDescriptor(Descriptor):
     # functions: the keys of a sortedmulti() are sorted in the script, so
     # the participants need not agree on an order to agree on an address
     sort: bool = False
+
+    @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not is_integer(self.threshold):
+            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
+            raise BTClibTypeError(err_msg)
+        assert_type(self.keys, tuple, "keys")
+        for key in self.keys:
+            assert_type(key, KeyExpression, "key")
+        assert_type(self.sort, bool, "sort")
 
     @override
     def __str__(self) -> str:
@@ -1775,6 +1818,11 @@ class ComboDescriptor(Descriptor):
     key: KeyExpression
 
     @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.key, KeyExpression, "key")
+
+    @override
     def __str__(self) -> str:
         return _expression("combo", str(self.key))
 
@@ -1835,6 +1883,11 @@ class AddrDescriptor(Descriptor):
     """``addr(ADDR)``: the script the address expands to, BIP385."""
 
     addr: str
+
+    @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.addr, str, "address")
 
     @override
     def __str__(self) -> str:
@@ -2311,6 +2364,11 @@ class RawTrDescriptor(Descriptor):
     """
 
     key: KeyExpression
+
+    @override
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert_type(self.key, KeyExpression, "key")
 
     @override
     def __str__(self) -> str:
