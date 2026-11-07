@@ -27,8 +27,8 @@ from bip32_descriptors.descriptors.descriptors import (
 
 _X = PrvKeyData(1).pub.sec.hex()[2:]
 _X2 = PrvKeyData(2).pub.sec.hex()[2:]
-_KEY = parse(f"tr({_X})").internal_key
-_KEY2 = parse(f"tr({_X2})").internal_key
+(_KEY,) = parse(f"tr({_X})").key_expressions
+(_KEY2,) = parse(f"tr({_X2})").key_expressions
 
 
 def _nested(levels: int, *, right: bool) -> object:
