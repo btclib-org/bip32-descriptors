@@ -794,11 +794,11 @@ the organization, so the repository's own store is read too:
 gh api repos/btclib-org/bip32-descriptors/actions/variables --jq .total_count
 ```
 
-The organization does not set `CLAUDE_IMPLEMENT_ENABLED`, so the agent
-runs nothing here:
+The agent runs only while the organization's `CLAUDE_IMPLEMENT_ENABLED`,
+as this repository sees it, is `true`. This prints its value, and
+nothing where it is unset or not visible here:
 
 ```shell
-gh api -i orgs/btclib-org/actions/variables/CLAUDE_IMPLEMENT_ENABLED \
-  2>/dev/null | head -1
-# HTTP/2.0 404 Not Found
+gh api repos/btclib-org/bip32-descriptors/actions/organization-variables \
+  --jq '.variables[] | select(.name == "CLAUDE_IMPLEMENT_ENABLED") | .value'
 ```

@@ -14,6 +14,9 @@ name: claude-implement
 # only after them. REPOSITORY.md's *What this file passes over* reads it
 # back.
 
+# no `workflow_dispatch`, an exception to section 10's *`workflow_dispatch`
+# on everything*, as claude-review.yml and sourcery.yml are: the event
+# carries no issue, and the callee's `assess` job runs only on `issues`
 on:
   issues:
     types: [opened, labeled, unlabeled]
