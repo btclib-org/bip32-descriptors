@@ -70,7 +70,7 @@ from dataclasses import dataclass, field, replace
 from typing import SupportsIndex, TypeVar
 
 from btclib.alias import Octets, ScriptList
-from btclib.exceptions import BTClibValueError
+from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.hashes import hash160
 from btclib.network import network_from_xkeyversion
 from btclib.script.limits import (
@@ -1143,6 +1143,11 @@ class Miniscript:
                 f"{len(self.subs)} given"
             )
             raise BTClibValueError(err_msg)
+        for sub in self.subs:
+            if not isinstance(sub, Miniscript):
+                raise BTClibTypeError(
+                    f"invalid subexpression type: {type(sub).__name__}"
+                )
         self._assert_keys()
         if len(self.data) != _DATA_SIZE.get(fragment, 0):
             expected = _DATA_SIZE.get(fragment, 0)

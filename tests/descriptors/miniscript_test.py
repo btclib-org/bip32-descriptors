@@ -42,7 +42,7 @@ from typing import Any
 
 import pytest
 from btclib.alias import Octets, ScriptList
-from btclib.exceptions import BTClibValueError
+from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.hashes import hash160, hash256, ripemd160, sha256
 from btclib.key import PrvKeyData, PubKeyData
 from btclib.network import NETWORKS
@@ -1627,3 +1627,17 @@ def test_the_estimate_is_the_largest_branch_and_not_the_cheapest() -> None:
     assert sum(len(element) + 1 for element in built) == 109
     assert node.max_witness_size == 220
     assert sum(size + 1 for size in node.max_witness_stack or ()) == 220
+
+
+def test_a_subexpression_that_is_not_a_miniscript_is_refused() -> None:
+    """A hand-built Miniscript refuses a subexpression of the wrong type.
+
+    Issue btclib-org/bip32-descriptors#123: the check belongs in
+    `_assert_shape`, and the failure is a `BTClibTypeError`.
+    """
+    from bip32_descriptors.descriptors.miniscript import Miniscript, TAPSCRIPT
+
+    for bad in (5, "x", (Miniscript("older", TAPSCRIPT, threshold=1),)):
+        err_msg = f"^invalid subexpression type: {type(bad).__name__}$"
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            Miniscript("v:", TAPSCRIPT, (bad,))
