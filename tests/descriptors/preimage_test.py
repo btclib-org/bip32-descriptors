@@ -121,7 +121,7 @@ def test_a_ranged_descriptor_repeats_the_digest_at_every_index(
     ],
 )
 def test_a_tr_leaf_and_a_nested_wsh_file_their_preimage(descriptor: str) -> None:
-    """Both of `descriptors.parse`'s miniscript readers fill the mapping."""
+    """A ``tr()`` leaf and a ``wsh()``, nested in ``sh()`` or not, fill it."""
     prv_keys: dict[str, str] = {}
     preimages: dict[bytes, bytes] = {}
     parsed = parse(descriptor, prv_keys=prv_keys, preimages=preimages)
@@ -153,7 +153,7 @@ def test_a_malformed_preimage_is_refused_quoting_none_of_it(
     ) as e:
         parse(descriptor, preimages=preimages)
     assert message in str(e.value)
-    assert preimages == {}
+    assert not preimages
     secret = argument[len("preimage(") : -1]
     assert_secret_free(e.value, [s for s in (secret, _WIF) if len(s) >= 12])
 
@@ -270,7 +270,7 @@ def test_a_wif_is_written_as_its_public_key() -> None:
     """`parse` files no WIF in `prv_keys`, so there is none to write back."""
     prv_keys: dict[str, str] = {}
     descriptor = parse(f"wpkh({_WIF})", prv_keys=prv_keys)
-    assert prv_keys == {}
+    assert not prv_keys
     assert private_string(descriptor, prv_keys) == str(descriptor)
 
 
