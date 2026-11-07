@@ -22,7 +22,7 @@ has one exception: the run it refuses cannot be the run reporting on it
 either, so the case it exists for is taken in a subprocess started from
 `tests/`.
 
-`switch_went_unread` is a third guard `pytest_configure` holds, and a
+`switch_went_unread` is another guard `pytest_configure` holds, and a
 run that trips it is refused before it measures anything, so it too is
 driven here rather than by the run it refuses.
 
