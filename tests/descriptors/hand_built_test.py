@@ -2,10 +2,10 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""A descriptor built by hand is refused when built, as `parse` refuses it.
+"""What `parse` never builds is refused when a descriptor is built by hand.
 
-`RawDescriptor`, `TrDescriptor` and `MultiA`, a field of the wrong type
-leaving as a `BTClibTypeError` and a bound `parse` refuses as a
+`RawDescriptor`, `TrDescriptor` and `MultiA`: a field of the wrong type
+leaves as a `BTClibTypeError`, and a bound `parse` refuses as a
 `BTClibValueError`. Issue btclib-org/bip32-descriptors#46.
 """
 
