@@ -2184,7 +2184,7 @@ def _read_multi(
         _read_keys_as_core(threshold, keys, context, prv_keys)
         raise _CoreFallbackError(str(error)) from error
     if len(arguments) < 2:
-        err_msg = f"{name}() takes a threshold and at least one key"
+        err_msg = f"{name}() expected ',' after the threshold"
         raise _CoreFallbackError(err_msg)
     threshold, *keys = arguments
     if not _NUMBER.fullmatch(threshold):

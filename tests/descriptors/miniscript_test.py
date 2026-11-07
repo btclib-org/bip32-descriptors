@@ -491,7 +491,7 @@ REFUSED_EXPRESSIONS = [
     (f"thresh(2,pk({KEY}))", "invalid thresh.. threshold"),
     ("thresh(1", "thresh.. takes a threshold"),
     # and a multi()
-    ("multi(1)", "takes a threshold and at least one key"),
+    ("multi(1)", "expected ',' after the threshold"),
     (f"multi(x,{KEY})", "invalid multi.. threshold"),
     (f"multi(2,{KEY})", "invalid k in k-of-n multi"),
     (f"multi_a(1,{KEY})", "only allowed in a tapscript"),
