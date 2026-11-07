@@ -32,6 +32,8 @@ file whose name they could take:
 - `descriptor_checksums.json` is composed from prose, and
   `miniscript_fixed_tests.json` is transcribed from C++ source: no upstream
   file for either, so no upstream name to take.
+- `preimage_descriptors.json` is composed here, for a syntax no BIP
+  specifies yet.
 
 ## Reading an entry
 
@@ -665,6 +667,38 @@ Not vendored as a file because the strings are literals in Scala source.
 bitcoin-s is under the MIT licence (its `LICENSE`), the licence of this
 package.
 
+## Delving Bitcoin
+
+### `tests/_data/preimage_descriptors.json`
+
+```text
+topic     https://delvingbitcoin.org/t/descriptor-syntax-for-hash-preimages/2935
+computed  2026-11-07
+ours      5ef2141dadb30525744f20a8d036878a1b14aff5
+```
+
+Verdict: **composed locally**. The topic proposes ``preimage(HEX)`` as the
+private form of a hash fragment's argument. No BIP specifies it, so these
+vectors are this package's, for issue btclib-org/bip32-descriptors#11.
+Each row is one hash fragment in `wsh(and_v(v:pk(KEY),FRAGMENT(ARG)))`,
+where ARG is the digest in the public form and ``preimage(HEX)`` in the
+private one. KEY is the generator point in the unranged rows, and a ranged
+derivation of the master xpub of BIP32's first test vector in the ranged
+ones.
+
+No code of this package or of btclib computed them: `hashlib` gave the
+digests, and BIP380's reference Python the checksums of both forms.
+Bitcoin Core 32.1.0 answered the public forms: `getdescriptorinfo` gave
+the same checksums, and `deriveaddresses` with `validateaddress` the same
+scriptPubKeys. The unranged scripts were also assembled by hand. Core
+does not read the private forms, so BIP380's code is the one check of
+their checksums made outside this package.
+
+`tests/descriptors/preimage_test.py` reads the file. The `ours` line
+records its blob, and neither the weekly job nor the suite compares the
+file with it: `check_vendored_vectors.py` reads only an entry that names
+a repository, a path and a commit, and this one has none to name.
+
 ## What is not pinned, and why
 
 - **The transcribed files** are pinned to a prose revision, or, where the
@@ -697,6 +731,8 @@ Not checked byte for byte against an upstream blob:
   source file, by the check the entry itself states:
   `bip32_test_vectors.json`, `bip32_invalid_keys.json`,
   `miniscript_fixed_tests.json`.
+- composed here: `preimage_descriptors.json`, for a syntax no BIP
+  specifies, its public forms checked against Bitcoin Core.
 - not vendored: `descriptor_checksums.json`, composed rather than
   recorded: its checksums come from a third implementation run over
   Core's own descriptors.
