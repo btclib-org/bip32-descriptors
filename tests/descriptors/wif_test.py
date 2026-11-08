@@ -97,13 +97,26 @@ def test_an_x_only_key_keeps_its_even_wif(text: str, filed: dict[str, str]) -> N
 
 @pytest.mark.parametrize("even_first", [True, False])
 def test_the_even_wif_is_kept_across_networks(*, even_first: bool) -> None:
-    """Read from the filed entry's public key, which no network changes."""
+    """Filed by public key in either order; written back on neither network.
+
+    Each descriptor reads the other network's WIF under one of its key's
+    spellings, and `private_string` refuses it.
+    """
     even = b58.wif_from_prv_key(b58.prv_key_data_from_wif(_NEG).q, "mainnet")
     reads = [(f"tr({even})", "mainnet"), (f"tr({_W})", "regtest")]
     wifs: dict[str, str] = {}
-    for text, network in reads if even_first else reversed(reads):
+    descriptors = [
         parse(text, network, wifs=wifs)
+        for text, network in (reads if even_first else reversed(reads))
+    ]
     assert wifs == {XONLY: even, KEY: _W}
+    for descriptor in descriptors:
+        network = descriptor.network
+        with pytest.raises(
+            BTClibValueError, match=f"^invalid wifs entry: no {network} WIF of its key$"
+        ) as e:
+            private_string(descriptor, None, None, wifs)
+        assert_secret_free(e.value, [even, _W])
 
 
 @pytest.mark.parametrize(

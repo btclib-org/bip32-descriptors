@@ -214,8 +214,10 @@ def _spellings(pub_key: bytes) -> tuple[str, ...]:
 def _file_wif(key: KeyExpression, wif: str, wifs: MutableMapping[str, str]) -> None:
     """File `wif` in `wifs`, as the `descriptors` module docstring says.
 
-    Which of two WIFs is the even key's is read from its public key, on
-    any network.
+    Which of two WIFs is the even key's is read from its public key, so
+    the filing does not depend on the order of two parses on different
+    networks. `descriptors.private_string` still refuses an entry of
+    another network that it reads.
     """
     text = _pub_key_text(key)
     pub_key = key.pub_key or b""
