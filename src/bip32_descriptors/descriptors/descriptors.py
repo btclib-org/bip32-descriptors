@@ -108,8 +108,8 @@ checksum. `add_checksum(str(descriptor))` is the checksummed form: Core's
 `ToString`, `ToStringHelper` writing none, and HWI's and Electrum's
 `to_string`. What it writes is public by construction, there being no
 private material left in a parsed descriptor to write. `private_string`
-is Core's `ToPrivateString`: it takes the three mappings back and writes
-the xprv, WIF and ``preimage(HEX)`` spellings, as its docstring says.
+is Core's `ToPrivateString`: it takes the mappings back and writes the
+xprv, WIF and ``preimage(HEX)`` spellings, as its docstring says.
 
 `infer_descriptor` goes back from a script instead: Bitcoin Core's
 `InferDescriptor`, reading the script and what a `Provider` knows of its
@@ -3498,7 +3498,7 @@ def _private_spellings(
     preimages: Preimages | None,
     wifs: tuple[Wifs | None, str],
 ) -> Iterator[None]:
-    """Have `str` write the private spellings the three mappings hold."""
+    """Have `str` write the private spellings the mappings hold."""
     keys_token = _PRINTED_PRV_KEYS.set(prv_keys)
     preimages_token = _PRINTED_PREIMAGES.set(preimages)
     wifs_token = _PRINTED_WIFS.set(wifs)
@@ -3522,11 +3522,11 @@ def private_string(
     that `prv_keys` names is written as the xprv filed under it, a public
     key that `wifs` names as the WIF filed under its hex, and a hash
     fragment as ``preimage(HEX)`` where `preimages` holds, under its
-    digest, a preimage that fragment's hash takes to it. The three
-    mappings are what `parse` hands back. What none names is written as
-    `str` writes it. An entry that is no xprv of its xpub is refused, and
-    so is one that is no WIF of its key on the descriptor's network, and
-    a preimage that is no 32 bytes.
+    digest, a preimage that fragment's hash takes to it. The mappings are
+    what `parse` hands back. What none names is written as `str` writes
+    it. An entry that is no xprv of its xpub is refused, and so is one
+    that is no WIF of its key on the descriptor's network, and a preimage
+    that is no 32 bytes.
 
     ``preimage(HEX)`` is no BIP's syntax, as the `miniscript` module
     docstring says.
