@@ -71,10 +71,15 @@ jobs:
       # starts a new session, cosmic-ray takes its mutants in random
       # order, and the job cuts the session at the budget and reports
       # what it judged, so each run judges a different part of a profile.
-      # A mutant's verdict is stable, so one that changes between two runs
-      # that both judged it is a test that stopped checking what it used
-      # to. The ceiling is the budget plus the environment. The budgets
-      # are btclib-wallet's, where these sessions ran before they moved.
+      # A verdict can change between two runs that both judged a mutant
+      # without the suite losing a check: the code or the tests changed, a
+      # timeout fired (it is answered KILLED, and a loaded runner is
+      # slower), or a property test drew different examples. Outside those,
+      # a kill that a later run lets live points at a test that stopped
+      # checking what it used to.
+      #
+      # The ceiling is the budget plus the environment. The budgets are
+      # btclib-wallet's, where these sessions ran before they moved.
       #
       # No run carries anything to the next, so where a budget cuts its
       # session, no set of runs is sure to have judged every mutant of that
