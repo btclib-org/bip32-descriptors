@@ -24,7 +24,7 @@ _K2 = PrvKeyData(2).pub.sec.hex()
 _X = _K[2:]
 _X2 = _K2[2:]
 _NOT_A_KEY = "^key [0-9]+: not a key expression$"
-_INVALID_KEY = "^key [0-9]+: invalid key expression$"
+_INVALID_KEY = "^key 0: invalid key expression$"
 
 
 @pytest.mark.parametrize(

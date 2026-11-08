@@ -2725,7 +2725,9 @@ def _parse_leaf_miniscript(
     this one is unspendable or unsafe.
 
     On a ``_CoreFallbackError`` Core says "'<leaf>' is not a valid
-    descriptor function", which `_not_a_function` says too.
+    descriptor function". `_not_a_function` follows it with what the
+    leaf's brackets enclose written "...", and writes "tr() leaf" where
+    that is still too long to quote.
     """
     if expression.startswith("multi_a("):
         _read_unclosed_multisig_keys(expression, miniscript.TAPSCRIPT, prv_keys)

@@ -704,7 +704,7 @@ def test_multipath_refuses_a_second_step_before_any_later_fault(
     """
     xpub = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y"
     descriptor = template.format(xpub=xpub)
-    message = "^key [0-9]+: Multiple multipath key path specifiers found$"
+    message = "^key 0: Multiple multipath key path specifiers found$"
     with pytest.raises(BTClibValueError, match=message):
         multipath_descriptors(descriptor)
     with pytest.raises(BTClibValueError, match=message):
@@ -734,7 +734,7 @@ def test_multipath_refuses_a_fingerprint_before_the_origin_path(origin: str) -> 
     """
     xpub = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y"
     descriptor = f"pkh({origin}{xpub}/0/*)"
-    message = "^key [0-9]+: invalid key origin fingerprint: 8 hex digits expected$"
+    message = "^key 0: invalid key origin fingerprint: 8 hex digits expected$"
     with pytest.raises(BTClibValueError, match=message):
         multipath_descriptors(descriptor)
     with pytest.raises(BTClibValueError, match=message):
@@ -808,7 +808,7 @@ def test_multipath_reads_a_key_where_core_does() -> None:
     """
     xpub = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y"
     comma = f"pkh([dead,beef/0]{xpub}/0/*)"
-    message = "^key [0-9]+: invalid key origin fingerprint: 8 hex digits expected$"
+    message = "^key 0: invalid key origin fingerprint: 8 hex digits expected$"
     with pytest.raises(BTClibValueError, match=message):
         multipath_descriptors(comma)
     unread = f"pkh({xpub},{xpub}/x)"
@@ -818,7 +818,7 @@ def test_multipath_reads_a_key_where_core_does() -> None:
         with pytest.raises(BTClibValueError):
             parse(descriptor)
     descriptor = f"pkh(musig({MUSIG_XPUB_A},{MUSIG_XPUB_B}/<0;0>)/x)"
-    message = r"^key [0-9]+: musig\(\) is only allowed in tr\(\) and rawtr\(\)$"
+    message = r"^key 0: musig\(\) is only allowed in tr\(\) and rawtr\(\)$"
     with pytest.raises(BTClibValueError, match=message):
         multipath_descriptors(descriptor)
     with pytest.raises(BTClibValueError, match=message):
@@ -883,7 +883,7 @@ def test_multipath_refuses_a_musig_behind_a_key_origin_as_parse_does() -> None:
     """
     xpub = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y"
     descriptor = f"tr([deadbeef]musig({xpub},{xpub})/<0h;1>)"
-    message = "^key [0-9]+: musig[(][)] cannot be nested inside a key origin$"
+    message = "^key 0: musig[(][)] cannot be nested inside a key origin$"
     with pytest.raises(BTClibValueError, match=message):
         multipath_descriptors(descriptor)
     with pytest.raises(BTClibValueError, match=message):
@@ -904,7 +904,7 @@ def test_multipath_refuses_a_hardened_item_of_a_musig_step(template: str) -> Non
     """
     xpub = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y"
     descriptor = template.format(xpub=xpub)
-    message = r"^key [0-9]+: musig\(\) cannot have hardened derivation steps$"
+    message = r"^key 2: musig\(\) cannot have hardened derivation steps$"
     with pytest.raises(BTClibValueError, match=message):
         multipath_descriptors(descriptor)
     with pytest.raises(BTClibValueError, match=message):
@@ -916,25 +916,25 @@ def test_multipath_refuses_a_hardened_item_of_a_musig_step(template: str) -> Non
     [
         (
             "tr(musig({xpub}/<0;1>,{xpub})/0h/<2;3>)",
-            r"^key [0-9]+: musig\(\) cannot have hardened derivation steps$",
+            r"^key 2: musig\(\) cannot have hardened derivation steps$",
         ),
         (
             "pkh({key}/<0;1>/<2;3>)",
-            "^key [0-9]+: derivation path after a key that cannot derive$",
+            "^key 0: derivation path after a key that cannot derive$",
         ),
         (
             "pkh([dead,beef/0]{xpub}/0/*)",
-            "^key [0-9]+: invalid key origin fingerprint: 8 hex digits expected$",
+            "^key 0: invalid key origin fingerprint: 8 hex digits expected$",
         ),
         (
             "tr(musig({key},{xpub})/<0;1>/<2;3>)",
-            r"^key [0-9]+: musig\(\) derivation requires every participant to be extended$",
+            r"^key 2: musig\(\) derivation requires every participant to be extended$",
         ),
-        ("pk(/<0>)", "^key [0-9]+: No key provided$"),
-        ("pk([deadbeef/0]/<0>)", "^key [0-9]+: No key provided$"),
+        ("pk(/<0>)", "^key 0: No key provided$"),
+        ("pk([deadbeef/0]/<0>)", "^key 0: No key provided$"),
         (
             "pkh({xpub}/<0>,{xpub})",
-            "^key [0-9]+: Key path value is not a valid uint32$",
+            "^key 0: Key path value is not a valid uint32$",
         ),
         (
             "rawtr({key},musig({xpub},{xpub})/<0h;1>)",
@@ -1041,7 +1041,7 @@ def test_multipath_names_a_key_fault_before_different_lengths() -> None:
     descriptor = f"multi(1,{xpub}/<0;1>,{key}/<2;3;4>)"
     with pytest.raises(
         BTClibValueError,
-        match="^key [0-9]+: derivation path after a key that cannot derive$",
+        match="^key 1: derivation path after a key that cannot derive$",
     ):
         multipath_descriptors(descriptor)
 
@@ -1054,7 +1054,7 @@ def test_multipath_reads_the_keys_in_the_network_it_is_given() -> None:
         expanded = multipath_descriptors(descriptor, network)
         assert [strip_checksum(d) for d in expanded] == expansions
     with pytest.raises(
-        BTClibValueError, match="^key [0-9]+: not a mainnet key: version 0x043587cf$"
+        BTClibValueError, match="^key 0: not a mainnet key: version 0x043587cf$"
     ):
         multipath_descriptors(descriptor, "mainnet")
 
@@ -1062,7 +1062,7 @@ def test_multipath_reads_the_keys_in_the_network_it_is_given() -> None:
 def test_parse_reads_the_whole_argument_of_a_key_function_first() -> None:
     """Name the key's fault, not the brackets: Core reads the argument whole."""
     xpub = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y"
-    message = "^key [0-9]+: more than one ']' in a single key expression$"
+    message = "^key 0: more than one ']' in a single key expression$"
     with pytest.raises(BTClibValueError, match=message):
         parse(f"pkh([deadbeef/0]]{xpub}/0))")
 
@@ -1099,9 +1099,7 @@ def test_unpaired_brackets_are_refused_once_the_arguments_are_read() -> None:
 def test_parse_reads_the_keys_of_a_tr_before_counting_its_arguments() -> None:
     """Name a key's fault before the third argument of ``tr()``."""
     xpub = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y"
-    with pytest.raises(
-        BTClibValueError, match="^key [0-9]+: invalid derivation index$"
-    ):
+    with pytest.raises(BTClibValueError, match="^key 0: invalid derivation index$"):
         parse(f"tr({xpub}/x,pk({xpub}),{xpub})")
     with pytest.raises(BTClibValueError, match="^tr[(][)] takes a key and at most"):
         parse(f"tr({xpub},pk({xpub}),{xpub})")
@@ -1147,7 +1145,7 @@ def test_multipath_refuses_a_step_in_a_key_origin(step: str) -> None:
     """
     xpub = "xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y"
     descriptor = f"pkh([deadbeef/{step}]{xpub}/0/*)"
-    message = "^key [0-9]+: Key path value specifies multipath in a section where multipath is not allowed$"
+    message = "^key 0: Key path value specifies multipath in a section where multipath is not allowed$"
     with pytest.raises(BTClibValueError, match=message):
         multipath_descriptors(descriptor)
     with pytest.raises(BTClibValueError, match=message):
@@ -1185,11 +1183,11 @@ def test_multipath_refuses_a_step_glued_to_a_key(template: str) -> None:
     [
         (
             "wsh(multi(1,{xpub}/<0;1>>/*,[deadbeef/<0;1>]{xpub}/0))",
-            "^key [0-9]+: Key path value is not a valid uint32$",
+            "^key 0: Key path value is not a valid uint32$",
         ),
         (
             "wsh(multi(1,[deadbeef/<0;1>]{xpub}/0,{xpub}/<0;1>>/*))",
-            "^key [0-9]+: Key path value specifies multipath in a section where multipath is not allowed$",
+            "^key 0: Key path value specifies multipath in a section where multipath is not allowed$",
         ),
     ],
 )
@@ -2292,9 +2290,7 @@ def test_a_path_step_holds_no_whitespace() -> None:
         f"pkh({XPUB}/ 0)",
         f"pkh({XPUB}/0 /1)",
     ):
-        with pytest.raises(
-            BTClibValueError, match="^key [0-9]+: invalid derivation index$"
-        ):
+        with pytest.raises(BTClibValueError, match="^key 0: invalid derivation index$"):
             parse(descriptor)
     key_expression = parse(f"pkh([deadbeef/0h]{XPUB}/0)").key_expressions[0]
     assert key_expression.der_path == (0,)
@@ -2335,15 +2331,13 @@ def test_a_key_holds_no_whitespace() -> None:
             ):
                 function(descriptor)
     for function in (parse, multipath_descriptors):
-        with pytest.raises(BTClibValueError, match=r"^key [0-9]+: more than one '\]'"):
+        with pytest.raises(BTClibValueError, match=r"^key 0: more than one '\]'"):
             function(f"pkh( [deadbeef]]{XPUB})")
     # pkh() reads its whole argument as one key, "," included, so the
     # space after the "," is inside the key, which both functions refuse
     inside = f"pkh({XPUB}, {KEY})"
     for function in (parse, multipath_descriptors):
-        with pytest.raises(
-            BTClibValueError, match="^key [0-9]+: invalid key expression$"
-        ):
+        with pytest.raises(BTClibValueError, match="^key 0: invalid key expression$"):
             function(inside)
     for function in (parse, multipath_descriptors):
         with pytest.raises(BTClibValueError, match=message):
@@ -2354,9 +2348,7 @@ def test_a_key_holds_no_whitespace() -> None:
         (f"tr(musig( [deadbeef]{MUSIG_XPUB_A},{MUSIG_XPUB_B}))", r"'\]' without"),
     ):
         for function in (parse, multipath_descriptors):
-            with pytest.raises(
-                BTClibValueError, match=rf"^key [0-9]+: musig\(\): {fault}"
-            ):
+            with pytest.raises(BTClibValueError, match=rf"^key 0: musig\(\): {fault}"):
                 function(descriptor)
 
 
@@ -2389,7 +2381,7 @@ def test_a_space_by_a_function_name_is_no_key_fault() -> None:
     stands is read as the key, up to its ")", so a space before it is the
     key's whitespace (issue btclib-org/btclib-wallet#443).
     """
-    message = "^key [0-9]+: Key is invalid due to whitespace$"
+    message = "^key 0: Key is invalid due to whitespace$"
     musig = f"musig({MUSIG_XPUB_A},{MUSIG_XPUB_B})"
     for descriptor in (
         f"wsh( pk({KEY}))",
@@ -2428,13 +2420,11 @@ def test_a_slash_introduces_a_path_step() -> None:
         f"pkh({XPUB}/)",
         f"pkh({XPUB}//*)",
     ):
-        with pytest.raises(
-            BTClibValueError, match="^key [0-9]+: invalid derivation index$"
-        ):
+        with pytest.raises(BTClibValueError, match="^key 0: invalid derivation index$"):
             parse(descriptor)
     for descriptor in (f"tr({musig}/)", f"tr({musig}//*)"):
         with pytest.raises(
-            BTClibValueError, match=r"^key [0-9]+: musig\(\): invalid derivation index$"
+            BTClibValueError, match=r"^key 2: musig\(\): invalid derivation index$"
         ):
             parse(descriptor)
     # a miniscript reads its keys with the same parser, and counts none
@@ -2673,11 +2663,11 @@ CORE_UNPARSABLE = [
     # Core: musig() participants with multipath steps of different lengths
     (
         "tr(musig(xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc/<0;1>,xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y/<0;1;2>))",
-        r"^key [0-9]+: multipath steps of different length: \[2, 3\]$",
+        r"^key 2: multipath steps of different length: \[2, 3\]$",
     ),
     (
         "tr(musig(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/<0;1>,xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y/<0;1;2>))",
-        r"^key [0-9]+: multipath steps of different length: \[2, 3\]$",
+        r"^key 2: multipath steps of different length: \[2, 3\]$",
     ),
     # Core: multi() inside tr()
     (
@@ -4777,35 +4767,35 @@ UNECHOED = [
     ),
     (f"wpkh(#{WIF})", "^invalid descriptor checksum$"),
     (f"wpkh({WIF}))", "^unbalanced brackets$"),
-    (f"sh(multi(1,({WIF}))", "^key [0-9]+: not a key expression$"),
+    (f"sh(multi(1,({WIF}))", "^key 0: not a key expression$"),
     (f"wpkh({WIF}", TOP_FAULT),
     (f"tr({XPRV_ROOT},{{pk({WIF}),pk({MUSIG_A_WIF})}}x)", "^unbalanced braces$"),
     (
         f"wpkh([{WIF}]{XPRV_ROOT})",
-        "^key [0-9]+: invalid key origin fingerprint: 8 hex digits expected$",
+        "^key 0: invalid key origin fingerprint: 8 hex digits expected$",
     ),
-    (f"wpkh([deadbeef/{WIF}]{XPRV_ROOT})", "^key [0-9]+: invalid derivation index$"),
-    (f"wpkh({XPRV_ROOT}/0/*{WIF})", "^key [0-9]+: invalid derivation index$"),
-    (f"wpkh({XPRV_ROOT}<0;1>/*)", "^key [0-9]+: key is not valid$"),
+    (f"wpkh([deadbeef/{WIF}]{XPRV_ROOT})", "^key 0: invalid derivation index$"),
+    (f"wpkh({XPRV_ROOT}/0/*{WIF})", "^key 0: invalid derivation index$"),
+    (f"wpkh({XPRV_ROOT}<0;1>/*)", "^key 0: key is not valid$"),
     (
         f"wpkh({XPRV_ROOT}/0/{WIF}>)",
-        "^key [0-9]+: Key path value is not a valid uint32$",
+        "^key 0: Key path value is not a valid uint32$",
     ),
     (
         f"wpkh({XPRV_ROOT}/<{WIF};1>>/*)",
-        "^key [0-9]+: Key path value is not a valid uint32$",
+        "^key 0: Key path value is not a valid uint32$",
     ),
     (
         f"wpkh([deadbeef/<{WIF};1>]{XPRV_ROOT})",
-        "^key [0-9]+: Key path value specifies multipath in a section where multipath is not allowed$",
+        "^key 0: Key path value specifies multipath in a section where multipath is not allowed$",
     ),
     (
         f"wpkh([deadbeef/<{WIF};1>>]{XPRV_ROOT})",
-        "^key [0-9]+: Key path value specifies multipath in a section where multipath is not allowed$",
+        "^key 0: Key path value specifies multipath in a section where multipath is not allowed$",
     ),
     (
         f"wpkh([deadbeef/<<{WIF};1>]{XPRV_ROOT})",
-        "^key [0-9]+: Key path value specifies multipath in a section where multipath is not allowed$",
+        "^key 0: Key path value specifies multipath in a section where multipath is not allowed$",
     ),
     (
         f"tr(musig({XPRV_ROOT},{XPRV_SECOND}){WIF})",
@@ -5069,7 +5059,7 @@ def test_a_multisig_threshold_core_reads_is_followed_by_its_keys(
     threshold: str,
 ) -> None:
     """Core: Multi: key 'zz' is not valid."""
-    with pytest.raises(BTClibValueError, match="^key [0-9]+: invalid key expression$"):
+    with pytest.raises(BTClibValueError, match="^key 0: invalid key expression$"):
         parse(f"wsh(multi({threshold},zz))")
 
 
@@ -5455,9 +5445,7 @@ def test_a_nonderivable_musig_precedes_a_later_key_fault(
     """
     leaf = later_key.format(xpub=MUSIG_XPUB_A)
     descriptor = f"tr(musig({MUSIG_A},{MUSIG_B})/0,pk({leaf}))"
-    message = (
-        r"^key [0-9]+: musig\(\) derivation requires every participant to be extended$"
-    )
+    message = r"^key 2: musig\(\) derivation requires every participant to be extended$"
     with pytest.raises(BTClibValueError, match=message):
         function(descriptor)
 
@@ -5473,9 +5461,7 @@ def test_an_internal_musig_requires_extended_participants_before_its_path(
     """The participant kind is checked before aggregate path elements."""
     participants = group.format(a=MUSIG_A, b=MUSIG_B, xpub=MUSIG_XPUB_A)
     descriptor = f"{name}(musig({participants}){path})"
-    message = (
-        r"^key [0-9]+: musig\(\) derivation requires every participant to be extended$"
-    )
+    message = r"^key 2: musig\(\) derivation requires every participant to be extended$"
     for function in (parse, multipath_descriptors):
         with pytest.raises(BTClibValueError, match=message):
             function(descriptor)

@@ -19,7 +19,7 @@ from tests.descriptors import TR_LEAF_FAULT
 
 _X = PrvKeyData(1).pub.sec.hex()[2:]
 _X2 = PrvKeyData(2).pub.sec.hex()[2:]
-_NOT_A_KEY = "^key [0-9]+: not a key expression$"
+_NOT_A_KEY = "^key 1: not a key expression$"
 _INVALID_KEY = "^key [0-9]+: invalid key expression$"
 
 

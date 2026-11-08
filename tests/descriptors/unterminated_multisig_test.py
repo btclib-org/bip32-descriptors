@@ -106,7 +106,7 @@ def test_a_multisig_key_ends_at_a_comma_past_a_close() -> None:
     left, so the first key read here is ``musig()``.
     """
     with pytest.raises(
-        BTClibValueError, match=r"^key [0-9]+: musig\(\) takes at least one key$"
+        BTClibValueError, match=r"^key 1: musig\(\) takes at least one key$"
     ):
         parse(f"tr({_X_ONLY},multi_a(1,musig(),)")
 

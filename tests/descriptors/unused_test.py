@@ -70,11 +70,11 @@ CORE_UNPARSABLE = [
         "unused(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/*)",
         r"^unused\(\): key cannot be ranged$",
     ),
-    ("unused()", "unused()", "^key [0-9]+: No key provided$"),
+    ("unused()", "unused()", "^key 0: No key provided$"),
     (
         "unused(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)",
         "unused(a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd)",
-        "^key [0-9]+: x-only public keys are allowed in a taproot key expression only$",
+        "^key 0: x-only public keys are allowed in a taproot key expression only$",
     ),
 ]
 
@@ -129,7 +129,7 @@ CORE_REFUSED = [
     (f"unused({WIF},{XPRV})", r"^unused\(\) takes one argument, 2 given$"),
     (
         f"unused(musig({K},{U}))",
-        r"^key [0-9]+: musig\(\) is only allowed in tr\(\) and rawtr\(\)$",
+        r"^key 0: musig\(\) is only allowed in tr\(\) and rawtr\(\)$",
     ),
 ]
 

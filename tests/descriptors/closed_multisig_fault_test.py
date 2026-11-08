@@ -73,7 +73,7 @@ def test_a_multisig_outside_its_context_reads_no_key(
         ),
         (
             f"tr({_X_ONLY},and_v(v:multi_a(1,[dead]]{_X_ONLY},{_X_ONLY}{{),pk({_X_ONLY})))",
-            r"^key [0-9]+: more than one '\]' in a single key expression$",
+            r"^key 1: more than one '\]' in a single key expression$",
         ),
         (f"wsh(and_v(v:multi(1,{_KEY}{{),pk({_KEY})))", _KEY_FAULT),
     ],
