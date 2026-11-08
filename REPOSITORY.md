@@ -799,6 +799,7 @@ as this repository sees it, is `true`. This prints its value, and
 nothing where it is unset or not visible here:
 
 ```shell
-gh api repos/btclib-org/bip32-descriptors/actions/organization-variables \
+gh api --paginate \
+  repos/btclib-org/bip32-descriptors/actions/organization-variables \
   --jq '.variables[] | select(.name == "CLAUDE_IMPLEMENT_ENABLED") | .value'
 ```
