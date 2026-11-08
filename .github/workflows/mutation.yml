@@ -72,11 +72,11 @@ jobs:
       # order, and the job cuts the session at the budget and reports
       # what it judged, so each run judges a different part of a profile.
       # A verdict can change between two runs that both judged a mutant
-      # without the suite losing a check: the code or the tests changed, a
-      # timeout fired (it is answered KILLED, and a loaded runner is
-      # slower), or a property test drew different examples. Outside those,
-      # a kill that a later run lets live points at a test that stopped
-      # checking what it used to.
+      # with no check lost where a timeout fired (it is answered KILLED,
+      # and a loaded runner is slower) or a property test drew different
+      # examples. Where neither applies, a kill that a later run lets
+      # live is read against what changed in the tests and the code in
+      # between: it may be a test that stopped checking what it used to.
       #
       # The ceiling is the budget plus the environment. The budgets are
       # btclib-wallet's, where these sessions ran before they moved.
