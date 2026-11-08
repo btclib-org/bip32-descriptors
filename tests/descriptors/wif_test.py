@@ -97,7 +97,7 @@ def test_an_x_only_key_keeps_its_even_wif(text: str, filed: dict[str, str]) -> N
 
 @pytest.mark.parametrize("even_first", [True, False])
 def test_the_even_wif_is_kept_across_networks(*, even_first: bool) -> None:
-    """Filed by public key in either order; written back on neither network.
+    """The x-only hex keeps the even WIF in either order; none is written back.
 
     Each descriptor reads the other network's WIF under one of its key's
     spellings, and `private_string` refuses it.
