@@ -827,7 +827,7 @@ def _is_extended_key(key: str) -> bool:
 def _neutered(xkey: str, prv_keys: MutableMapping[str, str]) -> str:
     """Return the public spelling of an extended key, filing the private one.
 
-    The one place a descriptor's private material is separated from the
+    Where an extended key's private material is separated from the
     descriptor, and the reason `KeyExpression.xkey` can be said to be
     public: an xprv is answered with its xpub, and the xprv goes to the
     caller's mapping under that xpub. An xpub is answered with itself and
