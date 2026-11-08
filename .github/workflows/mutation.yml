@@ -80,9 +80,7 @@ jobs:
       # session, no set of runs is sure to have judged every mutant of that
       # profile. How much of a profile a run judged is the line the callee's
       # mutation_counts.py prints for each session in the "Write the
-      # reports" step, as `descriptors: killed 478, survived 210, skipped 0,
-      # never run 13338` in
-      # https://github.com/btclib-org/bip32-descriptors/actions/runs/41456861722
+      # reports" step.
       profiles: >-
         [{"profile": "extended keys", "slug": "keys", "ceiling": 65, "sessions":
         "bip32.toml 45m"},
