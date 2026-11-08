@@ -742,6 +742,23 @@ def _sane_by_parse() -> Iterator[None]:
         _SANE_BY_PARSE.reset(token)
 
 
+def _tapscript_node(node: object) -> Miniscript:
+    """Return a miniscript node of a tr() leaf, refusing what is none.
+
+    A node that skipped `Miniscript`'s own checks, as an unpickled one
+    does, holds any value as a subexpression and any context, so only the
+    library's own context is named, a refusal echoing no value it holds.
+    """
+    assert_type(node, Miniscript, "miniscript node")
+    node = cast("Miniscript", node)
+    if node.context != miniscript.TAPSCRIPT:
+        known = node.context == miniscript.P2WSH
+        context = miniscript.P2WSH if known else "another context"
+        err_msg = f"not a tapscript node: {_named_fragment(node)} in {context}"
+        raise BTClibValueError(err_msg)
+    return node
+
+
 def _assert_tree(tree: DescriptorTree) -> None:
     """Refuse a node of the wrong type, and a tree deeper than MAX_TREE_DEPTH.
 
@@ -765,15 +782,10 @@ def _assert_tree(tree: DescriptorTree) -> None:
     leaves: list[Miniscript] = []
     while stack:
         node, depth, in_leaf = stack.pop()
-        if isinstance(node, Miniscript):
-            if node.context != miniscript.TAPSCRIPT:
-                # a node that skipped `Miniscript`'s own checks, as an
-                # unpickled one does, holds any context, so only the
-                # library's own is named, a refusal echoing no value it holds
-                known = node.context == miniscript.P2WSH
-                context = miniscript.P2WSH if known else "another context"
-                err_msg = f"not a tapscript node: {_named_fragment(node)} in {context}"
-                raise BTClibValueError(err_msg)
+        # under a leaf every node is a miniscript one, whatever an
+        # unpickled leaf holds there
+        if in_leaf or isinstance(node, Miniscript):
+            node = _tapscript_node(node)
             if not in_leaf:
                 leaves.append(node)
             stack += [(sub, depth, True) for sub in node.subs]

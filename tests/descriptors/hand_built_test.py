@@ -252,6 +252,28 @@ def test_a_wsh_miniscript_holding_what_is_no_node_is_refused() -> None:
     assert_secret_free(e.value, [_RANDOM_HEX])
 
 
+@pytest.mark.parametrize(
+    "forged,kind",
+    [
+        (MultiA(1, (_KEY2,)), "MultiA"),
+        (_KEY2, "KeyExpression"),
+        ((_KEY2, _KEY2), "tuple"),
+    ],
+    ids=["MultiA", "KeyExpression", "tuple"],
+)
+def test_a_tr_leaf_holding_a_tree_node_as_a_subexpression_is_refused(
+    forged: object, kind: str
+) -> None:
+    """A tree node of another type is no miniscript node inside a leaf."""
+    leaf = _unpickled(miniscript.parse(f"pk({_X})", miniscript.TAPSCRIPT))
+    object.__setattr__(leaf, "subs", (forged,))
+    with pytest.raises(
+        BTClibTypeError, match=f"^invalid miniscript node type: {kind}$"
+    ) as e:
+        TrDescriptor(_KEY, leaf)
+    assert_secret_free(e.value, [str(forged)])
+
+
 class _Network(str):
     """A network name whose methods record whether `parse` was building."""
 
