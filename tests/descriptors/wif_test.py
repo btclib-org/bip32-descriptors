@@ -17,6 +17,11 @@ import pickle
 import pytest
 from btclib import b58
 from btclib.exceptions import BTClibTypeError, BTClibValueError
+from btclib.script import sig_hash
+from btclib.script.engine import verify_transaction
+from btclib.script.witness import Witness
+from btclib.tx import OutPoint, Tx, TxIn, TxOut
+from ecc.ecc import ssa
 
 from bip32_descriptors.descriptors import add_checksum, parse, private_string
 from bip32_descriptors.descriptors.miniscript import TAPSCRIPT
@@ -316,3 +321,69 @@ def test_private_string_refuses_a_wifs_that_is_no_mapping() -> None:
     with pytest.raises(BTClibTypeError, match="invalid wifs type"):
         private_string(descriptor, None, None, "x")  # type: ignore[arg-type]
     assert private_string(descriptor, None, None, None) == str(descriptor)
+
+
+# Issue btclib-org/bip32-descriptors#177: an x-only key read from a WIF is
+# held as its even-y form, KEY's WIF being of an odd key
+_TREE_KEY = MUSIG_A[2:]
+
+
+@pytest.mark.parametrize(
+    "text,core",
+    [
+        (f"tr({_W})", f"tr({_W})#nk0fg9vw"),
+        (f"rawtr({_W})", f"rawtr({_W})#q6n8ynp4"),
+        (f"tr({_TREE_KEY},pk({_W}))", f"tr({_TREE_KEY},pk({_W}))#27f3t6hz"),
+        (
+            f"tr({_TREE_KEY},and_v(v:pk({_W}),older(1)))",
+            f"tr({_TREE_KEY},and_v(v:pk({_W}),older(1)))#8dg5yvct",
+        ),
+    ],
+    ids=["tr", "rawtr", "leaf", "miniscript"],
+)
+def test_an_odd_x_only_wif_is_held_even_and_written_back(text: str, core: str) -> None:
+    """`str` reads back as the same key; `private_string` writes Core's WIF.
+
+    Each row was imported into Bitcoin Core v32.1.0 on regtest and listed
+    back with its private flag.
+    """
+    assert KEY[:2] == "03"
+    wifs: dict[str, str] = {}
+    descriptor = parse(text, "regtest", wifs=wifs)
+    (key,) = (key for key in descriptor.key_expressions if key.wif_prefix)
+    assert key.x_only
+    assert key.pub_key == bytes.fromhex(_EVEN)
+    assert parse(str(descriptor), "regtest") == descriptor
+    assert add_checksum(private_string(descriptor, None, None, wifs)) == core
+
+
+def test_an_odd_x_only_wif_and_its_hex_are_one_key() -> None:
+    """The script pushes the same 32 bytes twice: a key repeated."""
+    node = parse_miniscript(f"and_v(v:pk({WIF}),pk({XONLY}))", TAPSCRIPT)
+    assert node.has_duplicate_keys()
+    assert not node.is_sane()
+    with pytest.raises(BTClibValueError, match="is not sane: it repeats a public key"):
+        parse(f"tr({_TREE_KEY},and_v(v:pk({WIF}),pk({XONLY})))")
+
+
+def test_an_odd_x_only_wif_key_takes_its_secret_s_signature() -> None:
+    """BIP340 signs with the negated secret, which the even-y key verifies.
+
+    A key path spend of ``rawtr()``, whose output key is the key itself,
+    checked by btclib's script engine with the signature offered under
+    the x-only key and under the 33 bytes `sec` answers.
+    """
+    descriptor = parse(f"rawtr({WIF})")
+    script_pub_key = descriptor.script_pub_key()
+    prevouts = [TxOut(100_000, script_pub_key)]
+    tx = Tx(vin=[TxIn(OutPoint(b"\x11" * 32, 0))], vout=[TxOut(90_000, script_pub_key)])
+    # a placeholder of the one element a key path witness holds
+    tx.vin[0].script_witness = Witness([b"\x00" * 64])
+    msg_hash = sig_hash.from_tx(prevouts, tx, 0, sig_hash.DEFAULT)
+    signature = ssa.sign_(msg_hash, b58.prv_key_data_from_wif(WIF).q).serialize()
+    sec = descriptor.key_expressions[0].sec()
+    for offered in (bytes.fromhex(XONLY), sec):
+        script_sig, witness = descriptor.satisfy({offered: signature})
+        assert script_sig == b""
+        tx.vin[0].script_witness = witness
+        verify_transaction(prevouts, tx)
