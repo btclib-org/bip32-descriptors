@@ -15,12 +15,7 @@ import pytest
 from btclib.exceptions import BTClibValueError
 from btclib.key import PrvKeyData
 
-from bip32_descriptors.descriptors.miniscript import (
-    _MAX_PUBKEYS_PER_MULTI_A,
-    TAPSCRIPT,
-    from_script,
-    parse,
-)
+from bip32_descriptors.descriptors.miniscript import TAPSCRIPT, from_script, parse
 
 K = [PrvKeyData(i).pub.sec.hex() for i in range(1, 6)]
 
@@ -70,8 +65,21 @@ def test_a_dissatisfied_thresh_costs_its_dissatisfactions() -> None:
     assert node.max_exec_stack_items == 3
 
 
+def test_the_stack_peaks_above_the_witness() -> None:
+    """`max_exec_stack_items` counts what the script pushes on the witness.
+
+    A multi_a() of three keys takes three witness elements, and its first
+    key is pushed on top of them.
+    """
+    node = parse(f"multi_a(1,{K[0]},{K[1]},{K[2]})", TAPSCRIPT)
+    assert node.max_stack_items == 3
+    assert node.max_exec_stack_items == 4
+
+
 def test_a_multi_a_takes_its_most_keys() -> None:
-    """`multi_a()` may hold `_MAX_PUBKEYS_PER_MULTI_A` keys."""
-    keys = ",".join([K[0][2:]] * _MAX_PUBKEYS_PER_MULTI_A)
-    node = parse(f"multi_a(1,{keys})", TAPSCRIPT)
-    assert len(node.keys) == _MAX_PUBKEYS_PER_MULTI_A
+    """`multi_a()` holds as many keys as BIP387 allows, and no more."""
+    x_only = K[0][2:]
+    node = parse(f"multi_a(1,{','.join([x_only] * 999)})", TAPSCRIPT)
+    assert len(node.keys) == 999
+    with pytest.raises(BTClibValueError, match="invalid number of keys"):
+        parse(f"multi_a(1,{','.join([x_only] * 1000)})", TAPSCRIPT)
