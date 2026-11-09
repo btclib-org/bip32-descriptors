@@ -78,17 +78,17 @@ jobs:
       # changed in the tests and the code in between: it may be a test that
       # stopped checking what it used to.
       #
-      # The ceiling is the budget plus the environment. The descriptors
-      # budget is btclib-wallet's, where these sessions ran before they
-      # moved. The bip32 budget is sized for a whole session. A run that
-      # cuts it logs a `cut at` notice, and its counts line says how many
-      # mutants it left.
+      # The ceiling is the budget plus the environment. The bip32 budget is
+      # sized for a whole session. A run that cuts it logs a `cut at`
+      # notice, and its counts line says how many mutants it left. A whole
+      # descriptors session does not fit in the time GitHub allows a hosted
+      # job, so its budget cuts the session.
       #
       # No run carries anything to the next, so where a budget cuts its
-      # session, as the descriptors budget does, no set of runs is sure to
-      # have judged every mutant of that profile. How much of a profile a
-      # run judged is the line the callee's mutation_counts.py prints for
-      # each session in the "Write the reports" step.
+      # session, no set of runs is sure to have judged every mutant of that
+      # profile. How much of a profile a run judged is the line the callee's
+      # mutation_counts.py prints for each session in the "Write the
+      # reports" step.
       profiles: >-
         [{"profile": "extended keys", "slug": "keys", "ceiling": 100, "sessions":
         "bip32.toml 80m"},
