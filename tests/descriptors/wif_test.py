@@ -387,3 +387,45 @@ def test_an_odd_x_only_wif_key_takes_its_secret_s_signature() -> None:
         assert script_sig == b""
         tx.vin[0].script_witness = witness
         verify_transaction(prevouts, tx)
+
+
+# Issue btclib-org/bip32-descriptors#192: the spellings of the keys of one
+# x coordinate, and leaves naming two keys
+_SAME_X = {"W": _W, "Wn": _NEG, "02X": _EVEN, "03X": KEY, "X": XONLY}
+_TWO_KEY_LEAVES = [
+    "and_v(v:pk({}),pk({}))",
+    "and_v(v:pkh({}),pk({}))",
+    "and_v(v:pkh({}),pkh({}))",
+    "or_b(pk({}),s:pk({}))",
+]
+
+
+@pytest.mark.parametrize("leaf", _TWO_KEY_LEAVES)
+@pytest.mark.parametrize("first", _SAME_X)
+@pytest.mark.parametrize("second", _SAME_X)
+def test_two_tapscript_keys_of_one_x_are_one_key(
+    leaf: str, first: str, second: str
+) -> None:
+    """The script pushes the same 32 bytes twice, whatever the parity.
+
+    Bitcoin Core v32.1.0 accepts the pairs of opposite parity, comparing
+    keys with it: refusing them is a departure from Core.
+    """
+    text = f"tr({_TREE_KEY},{leaf.format(_SAME_X[first], _SAME_X[second])})"
+    with pytest.raises(BTClibValueError, match="is not sane: it repeats a public key"):
+        parse(text, "regtest")
+    # the control: a key of another x beside it
+    parse(f"tr({_TREE_KEY},{leaf.format(_SAME_X[first], _MA)})", "regtest")
+
+
+@pytest.mark.parametrize("first", ["W", "Wn", "02X", "03X"])
+@pytest.mark.parametrize("second", ["W", "Wn", "02X", "03X"])
+def test_p2wsh_keys_are_compared_with_their_parity(first: str, second: str) -> None:
+    """The script pushes 33 bytes, so two keys of one x are two keys."""
+    text = f"wsh(and_v(v:pk({_SAME_X[first]}),pk({_SAME_X[second]})))"
+    sec = {"W": KEY, "Wn": _EVEN, "02X": _EVEN, "03X": KEY}
+    if sec[first] == sec[second]:
+        with pytest.raises(BTClibValueError, match="it repeats a public key"):
+            parse(text, "regtest")
+    else:
+        parse(text, "regtest")
