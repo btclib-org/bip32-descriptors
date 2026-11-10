@@ -626,18 +626,20 @@ def test_a_range_validates_the_account_and_each_key_it_answers(
     """
     root = rootxprv_from_seed_(b"\x01" * 16)
     account = xpub_from_xprv_(derive_(root, "m/44h/0h/0h"))
-    validations = 0
+    validated: list[BIP32KeyData] = []
     real = BIP32KeyData.assert_valid
 
-    def counting(self: BIP32KeyData) -> None:
-        nonlocal validations
-        validations += 1
+    def recording(self: BIP32KeyData) -> None:
+        validated.append(self)
         real(self)
 
-    monkeypatch.setattr(BIP32KeyData, "assert_valid", counting)
-    indexes = [0, 1, 2]
-    derive_from_account_range_(account, 0, indexes)
-    assert validations == 1 + len(indexes)
+    monkeypatch.setattr(BIP32KeyData, "assert_valid", recording)
+    keys = derive_from_account_range_(account, 0, [0, 1, 2])
+    # the account itself first, then each key answered, in order and by
+    # identity: a count alone would also pass the account validated again
+    assert len(validated) == 1 + len(keys)
+    assert validated[0] is account
+    assert all(v is k for v, k in zip(validated[1:], keys, strict=True))
 
 
 def test_derive_validates_before_it_changes_the_depth() -> None:
