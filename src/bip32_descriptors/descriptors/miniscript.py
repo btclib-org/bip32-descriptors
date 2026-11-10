@@ -3022,6 +3022,10 @@ class _Decoder:
         count = _script_number(self.entries[self.pos + 1])
         if count is None or self._remaining() < 3 + count:
             raise BTClibValueError("not a multi(): no number of keys")
+        # Core's DecodeScript refuses the count before it reads a key: a
+        # negative one would otherwise index before the start of the script
+        if not 1 <= count <= MAX_PUBKEYS_PER_MULTISIG:
+            raise BTClibValueError(f"invalid number of keys in multi: {count}")
         keys = []
         for i in range(count):
             sec = self._data(2 + i)
