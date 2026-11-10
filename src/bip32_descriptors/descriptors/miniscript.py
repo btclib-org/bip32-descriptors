@@ -1210,6 +1210,8 @@ class Miniscript:
         ``musig()`` key would also want an ECDSA signature, which a MuSig2
         group does not make (BIP327).
         """
+        for key in self.keys:
+            assert_type(key, KeyExpression, "key")
         fragment = self.fragment
         keys = len(self.keys)
         if fragment in {"multi", "multi_a"} and (fragment == "multi_a") != (
