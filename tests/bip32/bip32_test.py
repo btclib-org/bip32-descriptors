@@ -202,6 +202,9 @@ def test_a_quoted_checksum_is_cut_and_other_refusals_are_whole(
         with pytest.raises(BTClibValueError) as e:
             BIP32KeyData.b58decode(xkey)
     assert str(e.value) == "invalid checksum"
+    # nor is either checksum in the refusal's chain, which a traceback shows
+    for checksum in ("0xb38b79a4", "0x84a7e524"):
+        assert checksum not in chained_text(e.value)
 
     with pytest.raises(BTClibValueError) as e:
         BIP32KeyData.b58decode("1" * 200)
