@@ -60,22 +60,38 @@ concurrency:
 
 jobs:
   mutation:
-    uses: btclib-org/.github/.github/workflows/reusable-mutation.yml@5be4b0fbb5231cff001a3ee0eaa8f7d82bffef11 # v2026.11.5
+    uses: btclib-org/.github/.github/workflows/reusable-mutation.yml@f1e5044d9c9d0ce9d1c5cdc74f483b3d08a2bd8f # v2026.11.9
     with:
       # One object per profile, every value this tree's own: the phrase
       # the job is named for, the slug the dropdown and the artifact are
       # keyed on, the ceiling in minutes, and the sessions in the order
       # they run. The callee's `profiles` input describes that shape.
       #
-      # Each budget is a sample rather than a finished session: the weekly
-      # job cuts the session there and reports what it judged, and the
-      # verdicts in a sample of the same slice are stable, so one that
-      # changes is a test that stopped checking what it used to. The
-      # ceiling is the budget plus the environment. The budgets are
-      # btclib-wallet's, where these sessions ran before they moved
+      # A session its budget cuts is a sample. Every run starts a new
+      # session, cosmic-ray takes its mutants in random order, and the job
+      # cuts the session at the budget and reports what it judged, so each
+      # cut session judges a different part of a profile. A verdict can
+      # change between two runs that both judged a mutant with no check lost
+      # where a timeout fired (it is answered KILLED, and a loaded runner is
+      # slower) or a property test drew different examples. Where neither
+      # applies, a kill that a later run lets live is read against what
+      # changed in the tests and the code in between: it may be a test that
+      # stopped checking what it used to.
+      #
+      # The ceiling is the budget plus the environment. The bip32 budget is
+      # sized for a whole session. A run that cuts it logs a `cut at`
+      # notice, and its counts line says how many mutants it left. A whole
+      # descriptors session does not fit in the time GitHub allows a hosted
+      # job, so its budget cuts the session.
+      #
+      # No run carries anything to the next, so where a budget cuts its
+      # session, no set of runs is sure to have judged every mutant of that
+      # profile. How much of a profile a run judged is the line the callee's
+      # mutation_counts.py prints for each session in the "Write the
+      # reports" step.
       profiles: >-
-        [{"profile": "extended keys", "slug": "keys", "ceiling": 65, "sessions":
-        "bip32.toml 45m"},
+        [{"profile": "extended keys", "slug": "keys", "ceiling": 100, "sessions":
+        "bip32.toml 80m"},
         {"profile": "output descriptors and miniscript", "slug": "descriptors",
         "ceiling": 100, "sessions": "descriptors.toml 90m"}]
       # the dropdown above, forwarded. A schedule has no `inputs`, so this

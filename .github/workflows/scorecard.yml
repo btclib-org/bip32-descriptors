@@ -2,8 +2,8 @@
 name: scorecard
 
 # the OpenSSF Scorecard: a public repository's supply-chain practices,
-# scored and published, and the badge at the head of the README's last
-# line. A check scoring below its maximum is an issue against what it
+# scored and published, and its badge in the README's `## Status`
+# section. A check scoring below its maximum is an issue against what it
 # found, section 10 of the organization's standard says, and never a
 # sentence explaining the score.
 #
@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   analysis:
-    uses: btclib-org/.github/.github/workflows/reusable-scorecard.yml@5be4b0fbb5231cff001a3ee0eaa8f7d82bffef11 # v2026.11.5
+    uses: btclib-org/.github/.github/workflows/reusable-scorecard.yml@f1e5044d9c9d0ce9d1c5cdc74f483b3d08a2bd8f # v2026.11.9
     # a caller's permissions: block bounds the called workflow and refuses
     # rather than trims, so every scope its job declares is named here
     permissions:

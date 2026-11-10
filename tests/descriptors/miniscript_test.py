@@ -80,7 +80,7 @@ from bip32_descriptors.descriptors.miniscript import (
     reads_back,
 )
 from tests import load, vector_id
-from tests.descriptors import MINISCRIPT_OUTSIDE
+from tests.descriptors import MINISCRIPT_OUTSIDE, TR_LEAF_FAULT
 
 VECTORS: list[dict[str, Any]] = load("_data", "miniscript_fixed_tests.json")
 
@@ -795,16 +795,16 @@ def test_a_hardened_key_without_its_private_key_is_compared_as_written(
     "keys, repeated",
     [
         ((CHILD[2:], "02" + CHILD[2:]), True),
-        ((CHILD[2:], "03" + CHILD[2:]), False),
-        (("02" + CHILD[2:], "03" + CHILD[2:]), False),
+        ((CHILD[2:], "03" + CHILD[2:]), True),
+        (("02" + CHILD[2:], "03" + CHILD[2:]), True),
         ((f"{XPUB}/1", f"{XPUB}/2"), False),
         ((f"{XPRV}/1h", f"{XPRV}/2h"), False),
     ],
 )
-def test_a_tapscript_key_counts_as_its_even_y_form(
+def test_a_tapscript_key_counts_as_its_x_coordinate(
     keys: tuple[str, str], *, repeated: bool
 ) -> None:
-    """Compare 33-byte keys, parity included, as Core does."""
+    """Compare the 32 bytes the script holds; Core compares the parity too."""
     expression = f"or_i(pk({keys[0]}),pk({keys[1]}))"
     assert parse(expression, TAPSCRIPT).has_duplicate_keys() == repeated
 
@@ -1498,7 +1498,7 @@ def test_a_tr_miniscript_leaf_is_held_to_the_same_sanity() -> None:
     with pytest.raises(BTClibValueError, match="without signature exist"):
         parse_descriptor(f"tr({KEYS[0]},{{pk({KEYS[1]}),older(36)}})")
     # multi() belongs to P2WSH: inside tr() the fragment is multi_a()
-    with pytest.raises(BTClibValueError, match="leaf is not a valid descriptor"):
+    with pytest.raises(BTClibValueError, match=TR_LEAF_FAULT):
         parse_descriptor(f"tr({KEYS[0]},and_v(v:multi(1,{KEYS[1]}),older(36)))")
     with pytest.raises(BTClibValueError, match="ill-typed"):
         parse_descriptor(f"tr({KEYS[0]},and_v(1,1))")

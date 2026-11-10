@@ -75,7 +75,7 @@ BIP379: https://github.com/bitcoin/bips/blob/master/bip-0379.md
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import SupportsIndex, TypeVar
@@ -109,6 +109,7 @@ from btclib.utils import (
     is_integer,
 )
 from btclib.var_int import serialize as var_int_serialize
+from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import BIP32KeyData
@@ -116,10 +117,12 @@ from bip32_descriptors.bip32.der_path import _int_from_digits
 from bip32_descriptors.descriptors.key_expression import (
     KeyExpression,
     PrvKeys,
+    _assert_outside_taproot,
     _assert_prv_keys,
     _offered_signature,
     _parse_key,
     _split_arguments,
+    _wifs_filed_in,
 )
 
 __all__ = [
@@ -1164,28 +1167,42 @@ class Miniscript:
     def _assert_shape(self) -> None:
         """Refuse a node no fragment has the shape of.
 
-        The arity, the keys, the digest and the number: a caller building
-        a node by hand can get any of them wrong, and `parse` and
-        `from_script` leave some of them to it. Refused rather than typed
-        empty: an ill-*shaped* node is not an expression the rules have
-        anything to say about, where an ill-*typed* one is an expression
-        they refuse. The fragment and the digest are each asserted to be
-        the type their annotation declares before any of it: a field of
-        another type leaves as a `BTClibTypeError` naming the field and
-        the type alone.
+        The context, the arity, the keys, the digest and the number: a
+        caller building a node by hand can get any of them wrong, and
+        `parse` and `from_script` leave some of them to it. Refused rather
+        than typed empty: an ill-*shaped* node is not an expression the
+        rules have anything to say about, where an ill-*typed* one is an
+        expression they refuse.
+
+        A fragment or a context given by hand is any value, so its refusal
+        names only the library's own.
+
+        The fragment and the digest are each asserted to be the type their
+        annotation declares before any of it: a field of another type
+        leaves as a `BTClibTypeError` naming the field and the type alone.
         """
+        assert_type(self.context, str, "context")
+        if self.context not in (P2WSH, TAPSCRIPT):
+            err_msg = "unknown spend context"
+            err_msg += f"; it must be one of {sorted((P2WSH, TAPSCRIPT))}"
+            raise BTClibValueError(err_msg)
         fragment = self.fragment
         assert_type(fragment, str, "fragment")
         if fragment == "thresh":
             if not self.subs:
                 raise BTClibValueError("thresh() takes at least one subexpression")
         elif fragment not in _ARITY:
-            raise BTClibValueError(f"unknown miniscript fragment: {fragment}")
+            raise BTClibValueError("unknown miniscript fragment")
         elif len(self.subs) != _ARITY[fragment]:
             err_msg = (
                 f"{fragment} takes {_ARITY[fragment]} subexpressions, "
                 f"{len(self.subs)} given"
             )
+            raise BTClibValueError(err_msg)
+        # each node writes its keys in its own context, so a subexpression
+        # of the other one would put keys of the wrong size in the script
+        if any(sub.context != self.context for sub in self.subs):
+            err_msg = f"a subexpression of {fragment} is not in {self.context}"
             raise BTClibValueError(err_msg)
         self._assert_keys()
         assert_type(self.data, bytes, "data")
@@ -1199,6 +1216,11 @@ class Miniscript:
 
     def _assert_keys(self) -> None:
         """Refuse the keys no fragment holds, and the ones a context forbids.
+
+        A P2WSH node refuses a ``musig()`` key and an x-only one, with
+        `parse`'s message, since its text would not parse back. A
+        ``musig()`` key would also want an ECDSA signature, which a MuSig2
+        group does not make (BIP327).
 
         The keys are asserted to be a tuple before they are counted, a
         field of another type leaving as a `BTClibTypeError` naming the
@@ -1221,6 +1243,9 @@ class Miniscript:
             allowed = keys == 0
         if not allowed:
             raise BTClibValueError(f"invalid number of keys in {fragment}: {keys}")
+        if self.context == P2WSH:
+            for key in self.keys:
+                _assert_outside_taproot(key)
 
     def _assert_number(self) -> None:
         """Refuse a threshold that is no integer, and one outside its bounds."""
@@ -1303,8 +1328,13 @@ class Miniscript:
         does not predict. The keys compared are the ones the KEY
         expressions derive at index 0, as Bitcoin Core's `KeyCompare`
         does, so the origin, the spelling of a hardened step and the
-        wildcard do not make two spellings of a key two keys. An x-only
-        key counts as its even-y form, parity included in the comparison.
+        wildcard do not make two spellings of a key two keys.
+
+        In a tapscript the keys are compared by their x coordinate, the 32
+        bytes the script holds, so two keys of one x are one key. Bitcoin
+        Core compares them with their parity, and accepts a leaf naming
+        both. In P2WSH the keys are compared whole, parity included, as
+        Core does.
 
         A hardened step is derived with `prv_keys`, as in
         `KeyExpression.sec`. A key it cannot derive is compared by its
@@ -1316,14 +1346,15 @@ class Miniscript:
         """
         _assert_prv_keys(prv_keys)
         keys = [_key_identity(key, prv_keys) for key in self.key_expressions]
+        if self.context == TAPSCRIPT:
+            # the key as the script writes it: its x coordinate
+            keys = [key[1:] if isinstance(key, bytes) else key for key in keys]
         if len(set(keys)) != len(keys):
             return True
         # a ``rawpkh()`` names a key by its hash: the same hash twice, or
         # the hash of a key the expression names, is that key twice
         hashes = _raw_key_hashes(self)
-        # the hash is of the key as the script writes it, x-only in a tapscript
-        start = 1 if self.context == TAPSCRIPT else 0
-        known = {hash160(key[start:]) for key in keys if isinstance(key, bytes)}
+        known = {hash160(key) for key in keys if isinstance(key, bytes)}
         return len(set(hashes)) != len(hashes) or not known.isdisjoint(hashes)
 
     @property
@@ -2009,6 +2040,20 @@ class _CoreFallbackError(BTClibValueError):
     """
 
 
+class _TypeFaultError(BTClibValueError):
+    """A miniscript the type system refuses, or one that is not a "B".
+
+    Core's parser builds such a miniscript from its text all the same, so
+    where Core's descriptor reader allows no miniscript it names the
+    position instead, which the descriptor reader here names too. The
+    standalone parser keeps this diagnostic.
+
+    A thresh() past the bound on its arguments is the exception: `parse`
+    refuses its type there without reading on, where Core can stop on a
+    later fault.
+    """
+
+
 def _expression_end(text: str, pos: int, *, stop_at_close: bool) -> int:
     """Return the index one past the expression starting at `pos`.
 
@@ -2126,16 +2171,20 @@ def _assert_typed(node: Miniscript) -> Miniscript:
     if not node.properties:
         arguments = ", ".join("".join(sorted(sub.properties)) for sub in node.subs)
         err_msg = f"ill-typed miniscript: {node.fragment} over {arguments}"
-        raise BTClibValueError(err_msg)
+        raise _TypeFaultError(err_msg)
     return _assert_fits(node)
 
 
 def _assert_fits(node: Miniscript) -> Miniscript:
-    """Return the node, refusing one past the script size of its context."""
+    """Return the node, refusing one past the script size of its context.
+
+    An unpickled node holds any context, so only the library's own is
+    named.
+    """
     if node.script_size > _max_script_size(node.context):
+        context = TAPSCRIPT if node.context == TAPSCRIPT else P2WSH
         err_msg = (
-            f"miniscript too large for {node.context}: "
-            f"{node.script_size} bytes of script"
+            f"miniscript too large for {context}: {node.script_size} bytes of script"
         )
         raise _CoreFallbackError(err_msg)
     return node
@@ -2223,7 +2272,7 @@ def _read_key_fragment(
     name: str,
     argument: str,
     context: str,
-    prv_keys: dict[str, str],
+    prv_keys: MutableMapping[str, str],
 ) -> Miniscript:
     """Return the node of a fragment whose argument is a KEY expression.
 
@@ -2268,7 +2317,7 @@ def _read_multi(
     name: str,
     argument: str,
     context: str,
-    prv_keys: dict[str, str],
+    prv_keys: MutableMapping[str, str],
 ) -> Miniscript:
     """Return the node of a ``multi()`` or a ``multi_a()``: a k and keys.
 
@@ -2338,7 +2387,7 @@ def _int64_read_as_core(text: str) -> int | None:
 
 
 def _read_keys_as_core(
-    threshold: str, keys: list[str], context: str, prv_keys: dict[str, str]
+    threshold: str, keys: list[str], context: str, prv_keys: MutableMapping[str, str]
 ) -> None:
     """Read the keys of a multisig in its own context, as Core splits them.
 
@@ -2358,7 +2407,7 @@ def _read_keys_as_core(
 
 
 def _read_unclosed_multisig_keys(
-    fragment: str, context: str, prv_keys: dict[str, str]
+    fragment: str, context: str, prv_keys: MutableMapping[str, str]
 ) -> None:
     """Read the keys Core reads in a multisig with no closing parenthesis.
 
@@ -2407,7 +2456,7 @@ def _read_number(name: str, argument: str) -> int:
 
 
 def _read_preimage(
-    name: str, text: str, context: str, preimages: dict[bytes, bytes]
+    name: str, text: str, context: str, preimages: MutableMapping[bytes, bytes]
 ) -> Miniscript:
     """Return the node of a hash fragment read from ``preimage(HEX)``.
 
@@ -2432,8 +2481,8 @@ def _read_leaf(
     name: str,
     argument: str,
     context: str,
-    prv_keys: dict[str, str],
-    preimages: dict[bytes, bytes],
+    prv_keys: MutableMapping[str, str],
+    preimages: MutableMapping[bytes, bytes],
 ) -> Miniscript:
     """Return the node of a fragment whose arguments are not subexpressions."""
     if name in _KEY_FRAGMENTS:
@@ -2482,8 +2531,8 @@ def _read_fragment(
     to_parse: list[tuple[str, int, int]],
     built: _Built,
     context: str,
-    prv_keys: dict[str, str],
-    preimages: dict[bytes, bytes],
+    prv_keys: MutableMapping[str, str],
+    preimages: MutableMapping[bytes, bytes],
 ) -> int:
     """Read one fragment, building it or stacking what its arguments need."""
     name, pos = _read_name(expression, pos)
@@ -2521,8 +2570,8 @@ def _read_leaf_fragment(
     pos: int,
     built: _Built,
     context: str,
-    prv_keys: dict[str, str],
-    preimages: dict[bytes, bytes],
+    prv_keys: MutableMapping[str, str],
+    preimages: MutableMapping[bytes, bytes],
 ) -> int:
     """Read a fragment with no subexpression, and build it."""
     own = "multi_a" if context == TAPSCRIPT else "multi"
@@ -2601,8 +2650,9 @@ def _assert_no_trailing_text(expression: str, pos: int, built: _Built) -> None:
 def parse(
     expression: str,
     context: str = P2WSH,
-    prv_keys: dict[str, str] | None = None,
-    preimages: dict[bytes, bytes] | None = None,
+    prv_keys: MutableMapping[str, str] | None = None,
+    preimages: MutableMapping[bytes, bytes] | None = None,
+    wifs: MutableMapping[str, str] | None = None,
 ) -> Miniscript:
     """Return the Miniscript of a BIP379 expression, in its context.
 
@@ -2616,28 +2666,41 @@ def parse(
     key is filed in, under the extended public key that replaces it, so
     that what a parsed expression holds is public. `preimages` is the
     same for a hash fragment's ``preimage(HEX)``, filed under its digest,
-    as the module docstring says. What either mapping was filed with stays
-    in it where the expression is then refused.
+    as the module docstring says, and `wifs` for a WIF, filed as
+    `descriptors.parse` files one. What a mapping was filed with stays in
+    it where the expression is then refused.
 
     A `str`, a BIP379 expression being text, and refused as a type for
     the reason `descriptors.parse` gives: what was neither reached the
     slicing below and left as "object of type X has no len()".
 
-    The context is one of the two BIP379 has, and `prv_keys` a mapping
-    or `None`, as `descriptors.parse` asks for the same pair: a context
-    no fragment table knows was compared against `TAPSCRIPT`, found
-    unequal, and every rule then read as the p2wsh one, so an expression
-    was type-checked under a context that does not exist.
+    The context is one of the two BIP379 has, and `prv_keys` a mutable
+    mapping or `None`, as `descriptors.parse` asks for the same pair: a
+    context no fragment table knows was compared against `TAPSCRIPT`,
+    found unequal, and every rule then read as the p2wsh one, so an
+    expression was type-checked under a context that does not exist.
     """
     assert_type(expression, str, "miniscript")
     _assert_valid_context(context)
-    assert_type(prv_keys, (Mapping, type(None)), "prv_keys")
-    assert_type(preimages, (Mapping, type(None)), "preimages")
+    assert_type(prv_keys, (MutableMapping, type(None)), "prv_keys")
+    assert_type(preimages, (MutableMapping, type(None)), "preimages")
+    assert_type(wifs, (MutableMapping, type(None)), "wifs")
 
     if prv_keys is None:
         prv_keys = {}
     if preimages is None:
         preimages = {}
+    with _wifs_filed_in({} if wifs is None else wifs):
+        return _read_expression(expression, context, prv_keys, preimages)
+
+
+def _read_expression(
+    expression: str,
+    context: str,
+    prv_keys: MutableMapping[str, str],
+    preimages: MutableMapping[bytes, bytes],
+) -> Miniscript:
+    """Return the Miniscript of a BIP379 expression, as `parse` refuses it."""
     to_parse: list[tuple[str, int, int]] = [(_WRAPPED_EXPR, 0, 0)]
     built = _Built(context)
     pos = 0
@@ -2661,11 +2724,17 @@ def parse(
             _built(state, built, context)
     _assert_no_trailing_text(expression, pos, built)
     node = built[0]
+    _assert_script(node)
+    return node
+
+
+def _assert_script(node: Miniscript) -> None:
+    """Refuse an expression that is no script: untyped, too large, not a "B"."""
+    _assert_typed(node)
     if not _has(node.properties, "B"):
         basic = "".join(sorted(node.properties & _t("BVKW")))
         err_msg = f"not a miniscript script: {node} is a {basic}, not a B"
-        raise BTClibValueError(err_msg)
-    return node
+        raise _TypeFaultError(err_msg)
 
 
 def _op(name: str) -> int:
@@ -3217,6 +3286,9 @@ def from_script(
     miniscript, and this is what answers the question -- a caller asking
     it catches the refusal.
 
+    A key that is no point is refused as `KeyExpression` refuses it, by
+    the curve library.
+
     `key_hashes` maps a hash160 to the public key behind it, for the one
     fragment that keeps no key in the script: ``pk_h()`` and its sugared
     ``pkh()`` write the hash alone, so a script holding one is readable
@@ -3244,11 +3316,7 @@ def from_script(
     if decoder.pos != len(decoder.entries):
         err_msg = "not a miniscript: the script holds more than one expression"
         raise BTClibValueError(err_msg)
-    _assert_typed(node)
-    if not _has(node.properties, "B"):
-        basic = "".join(sorted(node.properties & _t("BVKW")))
-        err_msg = f"not a miniscript script: {node} is a {basic}, not a B"
-        raise BTClibValueError(err_msg)
+    _assert_script(node)
     return node
 
 
@@ -3284,7 +3352,7 @@ def reads_back(
     script = bytes_from_octets(script)
     try:
         node = from_script(script, context, key_hashes)
-    except BTClibValueError:
+    except (BTClibValueError, EccValueError):
         return False
     return node.script() == script
 
@@ -3323,6 +3391,18 @@ def _assert_sane(node: Miniscript, prv_keys: PrvKeys) -> None:
         raise BTClibValueError(f"{insane} is not sane: it repeats a public key")
     err_msg = f"{insane} is not sane: satisfying it may exceed the resource limits"
     raise BTClibValueError(err_msg)
+
+
+def _assert_sane_script(node: Miniscript) -> None:
+    """Refuse a hand-built miniscript that `parse` refuses without `prv_keys`.
+
+    A descriptor holding one would not parse back from its own text. With
+    no private key a key behind a hardened step is compared by its
+    expression, as `Miniscript.has_duplicate_keys` says, so `parse` with
+    `prv_keys` may still refuse what this accepts.
+    """
+    _assert_script(node)
+    _assert_sane(node, {})
 
 
 @dataclass(frozen=True)

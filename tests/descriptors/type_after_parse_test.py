@@ -10,9 +10,9 @@ fragment whatever its type, and its descriptor reader refuses an
 ill-typed one only once the parser has finished. So a fault that stops
 the parser is what Core names, even after an ill-typed subexpression:
 its fallback inside wsh() or a tr() leaf, or the key it refuses. Where
-the type is the only fault, parse names the innermost ill-typed
-fragment. What Core names for each descriptor here is what
-getdescriptorinfo answered on an offline node.
+the type is the only fault inside wsh() and tr(), parse names the
+innermost ill-typed fragment. What Core names for each descriptor here
+is what getdescriptorinfo answered on an offline node.
 """
 
 import pytest
@@ -35,7 +35,7 @@ X, X2, X3 = K[2:], K2[2:], K3[2:]
 _PRV_KEY = 0xC2E58B0C21FC8C9765C9E2B474B2A8A35F59B2588BBF2D258045FD36BB016246
 # of the network parse reads by default
 WIF = wif_from_prv_key(_PRV_KEY, "mainnet")
-_KEY_FAULT = "^invalid key expression$"
+_KEY_FAULT = "^key [0-9]+: invalid key expression$"
 _ILL_TYPED = "^ill-typed miniscript: and_v over Bdekmnosu, Bdekmnosu$"
 
 # and_v() takes a V first: over two B it has no type

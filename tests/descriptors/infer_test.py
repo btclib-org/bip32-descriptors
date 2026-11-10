@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.hashes import hash160
-from btclib.key import PubKeyData
+from btclib.key import PrvKeyData, PubKeyData
 from btclib.network import NETWORKS
 from btclib.script.script import serialize
 from btclib.script.script_pub_key import ScriptPubKey
@@ -489,6 +489,19 @@ def test_a_wsh_holds_no_uncompressed_key() -> None:
     assert inferred == _addr(script)
 
 
+def test_a_sh_multisig_over_the_push_limit_is_an_address() -> None:
+    """Core infers a ``sh(multi())`` of it, which `parse` refuses.
+
+    Sixteen keys make a 547-byte redeem script.
+    """
+    keys = [PrvKeyData(prv_key).pub.sec for prv_key in range(1, 17)]
+    inner = serialize(["OP_1", *keys, "OP_16", "OP_CHECKMULTISIG"])
+    script = b"\xa9\x14" + hash160(inner) + b"\x87"
+    inferred = infer_descriptor(script, Provider(scripts=(inner,)), "regtest")
+    assert inferred == _addr(script)
+    assert inferred.startswith("addr(")
+
+
 def test_a_miniscript_core_refuses_is_no_miniscript() -> None:
     """One that is not sane, and one holding a key that is no key."""
     not_sane = bytes.fromhex("5ab2")
@@ -754,6 +767,21 @@ def test_what_parse_refuses_is_the_address_of_the_output(
     assert inferred == _addr(script)
     assert inferred.startswith("addr(")
     assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+_PKH_OF_U5 = b"\x76\xa9\x14" + hash160(bytes.fromhex(U5)) + b"\x88"
+
+
+@pytest.mark.parametrize(
+    "witness_script", [_PKH_OF_U5 + b"\xac", _PKH_OF_U5 + b"\xad\x51"]
+)
+def test_an_uncompressed_key_in_a_p2wsh_pkh_is_the_address_of_the_output(
+    witness_script: bytes,
+) -> None:
+    """Core's `InferPubkey` takes no uncompressed key in a P2WSH."""
+    script = ScriptPubKey.p2wsh(witness_script).script
+    provider = Provider(keys={bytes.fromhex(U5): None}, scripts=(witness_script,))
+    assert infer_descriptor(script, provider, "regtest") == _addr(script)
 
 
 def test_a_leaf_parse_reads_stays_what_it_infers_to() -> None:

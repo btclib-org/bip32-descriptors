@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 import string
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -43,6 +43,7 @@ from btclib.utils import assert_type, bytes_from_octets, is_integer
 from ecc.curves import point_from_pub_key, secp256k1
 from ecc.curves.sec_point import bytes_from_point
 from ecc.ecc.musig2 import key_agg_var, key_sort
+from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import (
@@ -53,6 +54,7 @@ from bip32_descriptors.bip32.bip32 import (
     xpub_from_xprv,
 )
 from bip32_descriptors.bip32.der_path import (
+    _BIP380_HARDENINGS,
     _HARDENING,
     HARDENED_OFFSET,
     hardenings_from_der_path,
@@ -62,18 +64,18 @@ from bip32_descriptors.bip32.der_path import (
 )
 from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
 
-__all__ = ["KeyExpression", "PrvKeys"]
+__all__ = ["KeyExpression", "PrvKeys", "Wifs"]
 
 _FINGERPRINT = re.compile(r"[0-9a-fA-F]{8}")
 _HEX = re.compile(r"[0-9a-fA-F]*")
 # what `xkey` holds where it is no extended key: the stand-ins the
 # wallet-policy functions of `descriptors` write -- a BIP388 placeholder
-# alone, or with the chain suffix it is paired with, a musig() group of
-# them with that suffix, and the one key `_skeleton_key` writes everywhere
+# alone, or with the chain suffix it is paired with, and a musig() group
+# of them with that suffix
 _INDEX = r"(?:0|[1-9][0-9]*)"
 _CHAIN_SUFFIX = rf"(?:/\*\*|/<{_INDEX};{_INDEX}>/\*)"
 _PLACEHOLDER = re.compile(
-    rf"K|@{_INDEX}{_CHAIN_SUFFIX}?|musig\(@{_INDEX}(?:,@{_INDEX})*\){_CHAIN_SUFFIX}"
+    rf"@{_INDEX}{_CHAIN_SUFFIX}?|musig\(@{_INDEX}(?:,@{_INDEX})*\){_CHAIN_SUFFIX}"
 )
 # what `_split_arguments` stops at, compiled once here rather than
 # handed to `re.finditer` as a pattern string per call: the cache that
@@ -88,6 +90,11 @@ _DELIMITERS = re.compile(r"[(){},]")
 # `FlatSigningProvider` is keyed too -- by the key id there, by the xpub
 # here, an extended key being what a descriptor derives from
 PrvKeys = Mapping[str, str]
+
+# and the WIF each fixed key was read from, filed under the hex the
+# descriptor writes for its public key, x-only where the position is: a
+# mapping of its own, so that `PrvKeys` holds extended keys alone
+Wifs = Mapping[str, str]
 
 
 def _assert_prv_keys(prv_keys: object) -> None:
@@ -156,6 +163,138 @@ def _printed_xkey(xkey: str) -> str:
     if xpub != xkey:
         raise BTClibValueError("invalid prv_keys entry: no xprv of its xpub")
     return xprv
+
+
+# the `wifs` the parse in progress files a WIF in, None outside one: a
+# context variable, as `_SET_ASIDE` is, rather than a parameter every
+# reader of a KEY expression would have to carry
+_FILED_WIFS: ContextVar[MutableMapping[str, str] | None] = ContextVar(
+    "_FILED_WIFS", default=None
+)
+
+# the `wifs` `descriptors.private_string` writes back, and the network of
+# the descriptor it writes; None outside it
+_PRINTED_WIFS: ContextVar[tuple[Wifs | None, str] | None] = ContextVar(
+    "_PRINTED_WIFS", default=None
+)
+
+
+def _filed_wifs() -> MutableMapping[str, str]:
+    """Return the mapping the parse in progress files a WIF in."""
+    wifs = _FILED_WIFS.get()
+    return {} if wifs is None else wifs
+
+
+@contextmanager
+def _wifs_filed_in(wifs: MutableMapping[str, str]) -> Iterator[None]:
+    """Have every WIF the parse reads filed in `wifs`."""
+    token = _FILED_WIFS.set(wifs)
+    try:
+        yield
+    finally:
+        _FILED_WIFS.reset(token)
+
+
+def _pub_key_text(key: KeyExpression) -> str:
+    """Return the hex `KeyExpression.__str__` writes for a fixed key."""
+    pub_key = key.pub_key or b""
+    return (pub_key[1:] if key.x_only else pub_key).hex()
+
+
+def _spellings(pub_key: bytes) -> tuple[str, ...]:
+    """Return the hex texts a WIF of `pub_key` may be filed under.
+
+    Its own hex, and for a 33-byte key its x-only hex too, which is how
+    the same key is written inside a ``tr()``.
+    """
+    if len(pub_key) == 33:
+        return pub_key.hex(), pub_key[1:].hex()
+    return (pub_key.hex(),)
+
+
+def _file_wif(key: KeyExpression, wif: str, wifs: MutableMapping[str, str]) -> None:
+    """File `wif` in `wifs`, as the `descriptors` module docstring says.
+
+    Which of two WIFs is the even key's is read from its public key, so
+    which one the x-only hex keeps does not depend on the order of two
+    parses on different networks. `descriptors.private_string` still
+    refuses an entry of another network that it reads. The key of `wif`
+    is decoded from `wif`, since an x-only `key` holds the even one.
+    """
+    text = _pub_key_text(key)
+    if key.x_only:
+        pub_key = _filed_pub_key(wif)
+        filed = wifs.get(text)
+        filed_key = _filed_pub_key(filed)
+        if filed_key == b"\x02" + pub_key[1:] and pub_key[0] == 3:
+            wifs[pub_key.hex()] = wif
+            return
+        if filed_key == b"\x03" + pub_key[1:] and pub_key[0] == 2:
+            wifs[filed_key.hex()] = wifs[text]
+    wifs[text] = wif
+
+
+def _filed_pub_key(wif: object) -> bytes:
+    """Return the public key of a WIF on any network, empty for what is none."""
+    if not isinstance(wif, str):
+        return b""
+    try:
+        return b58.prv_key_data_from_wif(wif).pub.sec
+    except (TypeError, ValueError):
+        return b""
+
+
+def _wif_pub_key(wif: str, network: str) -> bytes:
+    """Return the public key of a `wifs` entry, refusing what is no WIF.
+
+    The refusal quotes none of the entry. A padded entry is refused too,
+    since btclib strips it before it decodes and `parse` refuses it.
+    """
+    if not isinstance(wif, str):
+        err_msg = f"invalid wifs entry type: {type(wif).__name__}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    if wif.strip() != wif:
+        raise BTClibValueError("invalid wifs entry: whitespace around it")
+    # decoded outside the handler, so that the refusal chains no error
+    # of btclib's
+    try:
+        pub_key = b58.prv_key_data_from_wif(wif, network).pub.sec
+    except (TypeError, ValueError):
+        pub_key = b""
+    if not pub_key:
+        raise BTClibValueError(f"invalid wifs entry: no {network} WIF of its key")
+    return pub_key
+
+
+def _printed_pub_key(key: KeyExpression) -> str:
+    """Return the fixed key `KeyExpression.__str__` writes.
+
+    Its hex, or inside `descriptors.private_string` a WIF of it that its
+    `wifs` hold, looked for as that function's docstring says. Each entry
+    is decoded once. A refusal quotes none of the entry, since the text
+    written would not be this descriptor's. An entry for an x-only key,
+    under its own hex, is checked by its x coordinate.
+    """
+    text = _pub_key_text(key)
+    wifs, network = _PRINTED_WIFS.get() or (None, "")
+    if not wifs:
+        return text
+    pub_key = key.pub_key or b""
+    keys = (b"\x02" + pub_key[1:], b"\x03" + pub_key[1:]) if key.x_only else (pub_key,)
+    found: dict[bytes, str] = {}
+    for spelling in dict.fromkeys(s for k in keys for s in _spellings(k)):
+        wif = wifs.get(spelling)
+        if wif is None:
+            continue
+        wif_key = _wif_pub_key(wif, network)
+        if spelling == text and wif_key not in keys:
+            err_msg = f"invalid wifs entry: no {network} WIF of its key"
+            raise BTClibValueError(err_msg)
+        # an entry is of the key its spelling names: under x-only hex,
+        # either key of that x coordinate
+        if wif_key in keys and spelling in _spellings(wif_key):
+            found.setdefault(wif_key, wif)
+    return next((found[k] for k in keys if k in found), text)
 
 
 @contextmanager
@@ -248,14 +387,34 @@ class KeyExpression:
     wif_prefix: bytes = field(default=b"", compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Refuse an `xkey` that is no xpub or placeholder, quoting none of it.
+        """Check `pub_key`, `xkey`, `participants`, `wildcard` and `hardening`.
 
-        An extended public key of any version btclib decodes, or one of the
-        wallet-policy stand-ins `_PLACEHOLDER` matches, or nothing at all
-        where the key is `pub_key` or `participants`. What else is refused
-        includes an xprv, and an xprv damaged by a character, which decodes
-        as no key -- and where only its checksum changed still spells one.
+        A `pub_key` is the SEC bytes of a point, as `_assert_pub_key` says,
+        and the whole key: no `xkey`, `participants`, `der_path` or
+        `wildcard` beside it. `x_only` takes a 0x02 `pub_key` of 33 bytes.
+        `participants` make a ``musig()`` as `_assert_musig` says.
+        `wildcard` is None, 0 or 2**31. `hardening` is one of the two
+        symbols BIP380 allows. A refusal quotes no key, beyond the prefix
+        byte of a `pub_key`.
+
+        An `xkey` is an extended public key of any version btclib decodes,
+        or one of the wallet-policy stand-ins `_PLACEHOLDER` matches, or
+        nothing at all where the key is `pub_key` or `participants`. What
+        else is refused includes an xprv, and an xprv damaged by a
+        character, which decodes as no key -- and where only its checksum
+        changed still spells one.
         """
+        if not isinstance(self.der_path, tuple):
+            err_msg = f"invalid der_path type: {type(self.der_path).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+        if not isinstance(self.participants, tuple):
+            err_msg = f"invalid participants type: {type(self.participants).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+        _assert_pub_key(self)
+        _assert_fixed_key_alone(self)
+        _assert_hardening(self.hardening)
+        _assert_wildcard(self.wildcard)
+        _assert_musig(self)
         if not isinstance(self.xkey, str):
             err_msg = f"invalid xkey type: {type(self.xkey).__name__}"  # type: ignore[unreachable]
             raise BTClibTypeError(err_msg)
@@ -419,7 +578,7 @@ class KeyExpression:
         key to write and `ToPrivateString` taking the private material
         back from the caller. `descriptors.private_string` is the second
         one: inside it, this writes the xprv its `prv_keys` file under the
-        xpub.
+        xpub, and a WIF of the public key that its `wifs` hold.
 
         An x-only key is written as the 32 bytes a ``tr()`` holds, which
         is the spelling it was read in and the only one allowed there.
@@ -442,7 +601,7 @@ class KeyExpression:
             )
             text = f"[{path}]"
         if self.pub_key is not None:
-            return text + (self.pub_key[1:] if self.x_only else self.pub_key).hex()
+            return text + _printed_pub_key(self)
         text += _printed_xkey(self.xkey)
         for index in self.der_path:
             text += "/" + str_from_index_int(index, self.hardening)
@@ -711,34 +870,162 @@ def _key_origin(description: str) -> tuple[BIP32KeyOrigin, str]:
     return BIP32KeyOrigin(fingerprint, _der_path(steps)), _hardening(path)
 
 
+# "inside tr()" would not be true of every position that refuses one: a
+# musig() participant is inside a tr() and is aggregated as a point, so it
+# needs the byte an x-only key drops
+_X_ONLY_REFUSED = "x-only public keys are allowed in a taproot key expression only"
+
+
+_UNCOMPRESSED_REFUSED = "uncompressed public keys are not allowed here"
+
+
+def _assert_pub_key(key: KeyExpression) -> None:
+    """Refuse a `pub_key` value and an `x_only` that `parse` never builds.
+
+    With `parse`'s messages, except for a size, which `parse` counts in
+    characters of hex, and for what it never reads: bytes of another type,
+    and an x-only key with no `pub_key` or with a 0x03 prefix. An x-only
+    key is held in the 33 bytes of its even-y form. `parse` reads an
+    uncompressed WIF in a taproot position to one of 65, which this
+    refuses with the message `parse` gives for it.
+    """
+    pub_key = key.pub_key
+    if pub_key is None:
+        if key.x_only:
+            raise BTClibValueError("invalid x-only key: no pub_key")
+        return
+    if not isinstance(pub_key, bytes):
+        err_msg = f"invalid pub_key type: {type(pub_key).__name__}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    size = len(pub_key)
+    if size not in {33, 65}:
+        raise BTClibValueError(f"invalid public key length in bytes: {size}")
+    prefix = pub_key[0]
+    if (size == 33 and prefix not in {2, 3}) or (size == 65 and prefix != 4):
+        # 06 and 07 are the hybrid encoding, which nothing in bitcoin
+        # produces and Bitcoin Core refuses in a descriptor too
+        raise BTClibValueError(f"invalid public key prefix: 0x{prefix:02x}")
+    # a point off the curve has no script to derive
+    point_from_pub_key(pub_key)
+    if key.x_only and size != 33:
+        raise BTClibValueError(_UNCOMPRESSED_REFUSED)
+    if key.x_only and prefix == 3:
+        raise BTClibValueError("invalid x-only key prefix: 0x03")
+
+
+def _assert_fixed_key_alone(key: KeyExpression) -> None:
+    """Refuse a `pub_key` beside another key or a derivation of its own.
+
+    `str` writes the `pub_key` alone, or the ``musig()`` of `participants`
+    alone, so the key would not be read back.
+    """
+    if key.pub_key is None:
+        return
+    beside = {
+        "xkey": key.xkey,
+        "participants": key.participants,
+        "der_path": key.der_path,
+        "wildcard": key.wildcard is not None,
+    }
+    for name, value in beside.items():
+        if value:
+            raise BTClibValueError(f"a pub_key takes no {name}")
+
+
+def _assert_hardening(hardening: object) -> None:
+    """Refuse a hardening symbol BIP380 does not allow, quoting none of it."""
+    if not isinstance(hardening, str):
+        raise BTClibTypeError(f"invalid hardening type: {type(hardening).__name__}")
+    if hardening not in _BIP380_HARDENINGS:
+        raise BTClibValueError("invalid hardening symbol: h or ' expected")
+
+
+def _assert_wildcard(wildcard: object) -> None:
+    """Refuse any wildcard but None, 0 and 2**31, the offsets `parse` reads.
+
+    `str` writes any other offset of an extended key as the hardened
+    wildcard, which `parse` reads as 2**31.
+    """
+    if wildcard is None:
+        return
+    if not is_integer(wildcard):
+        raise BTClibTypeError(f"invalid wildcard type: {type(wildcard).__name__}")
+    if wildcard not in {0, HARDENED_OFFSET}:
+        raise BTClibValueError("invalid wildcard: None, 0 or 2**31 expected")
+
+
+def _assert_musig(key: KeyExpression) -> None:
+    """Refuse the ``musig()`` keys below, which `parse` never builds.
+
+    Each participant is a `KeyExpression`, neither a ``musig()`` nor
+    x-only nor uncompressed, and the ``musig()`` has no `xkey` and no
+    `origin`, which `str` would not write. Its `hardening` is `h`, which
+    `parse` gives every ``musig()``. A path or a wildcard on it takes
+    extended participants none of which is ranged, and no hardened step
+    or wildcard. A refusal carries `parse`'s message, except for a type,
+    an `xkey` and a `hardening`, for which `parse` has none.
+    """
+    participants = key.participants
+    if not participants:
+        return
+    for participant in participants:
+        if not isinstance(participant, KeyExpression):
+            err_msg = f"invalid participant type: {type(participant).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+    if key.xkey:
+        raise BTClibValueError("a musig() takes no xkey")
+    if key.origin is not None:
+        raise BTClibValueError(_MUSIG_IN_ORIGIN)
+    if key.hardening != _HARDENING:
+        raise BTClibValueError("invalid musig() hardening symbol: h expected")
+    _assert_participants(participants)
+    if key.der_path or key.wildcard is not None:
+        _assert_musig_path(key)
+
+
+def _assert_participants(participants: tuple[KeyExpression, ...]) -> None:
+    """Refuse a participant that `_assert_musig` refuses whatever the path."""
+    if any(participant.participants for participant in participants):
+        raise BTClibValueError(_MUSIG_CLOSES)
+    for participant in participants:
+        if participant.x_only:
+            raise BTClibValueError(f"musig(): {_X_ONLY_REFUSED}")
+        if not participant.is_compressed:
+            raise BTClibValueError(f"musig(): {_UNCOMPRESSED_REFUSED}")
+
+
+def _assert_musig_path(key: KeyExpression) -> None:
+    """Refuse the path or wildcard of a ``musig()`` as `_assert_musig` says."""
+    if any(not participant.xkey for participant in key.participants):
+        raise BTClibValueError(_UNEXTENDED_PARTICIPANT)
+    if any(participant.is_ranged for participant in key.participants):
+        raise BTClibValueError(_RANGED_PARTICIPANT)
+    if key.wildcard:
+        raise BTClibValueError(_HARDENED_MUSIG_WILDCARD)
+    for index in key.der_path:
+        if not is_integer(index):
+            err_msg = f"invalid derivation index type: {type(index).__name__}"
+            raise BTClibTypeError(err_msg)
+        if HARDENED_OFFSET <= index < 2 * HARDENED_OFFSET:
+            raise BTClibValueError(_HARDENED_MUSIG_STEP)
+
+
 def _pub_key_from_hex(key: str, *, x_only: bool) -> tuple[bytes, bool]:
-    """Return the SEC bytes of a hex key, and whether it was x-only."""
+    """Return the SEC bytes of a hex key, and whether it was x-only.
+
+    The length of the text is checked here, and the bytes by the
+    `KeyExpression` they go into, which `parse` builds inside the refusal
+    that names the key by its position.
+    """
     length = len(key)
     if length == 64:
         if not x_only:
-            # "inside tr()" would not be true of every position that
-            # refuses one: a musig() participant is inside a tr() and is
-            # aggregated as a point, so it needs the byte an x-only key drops
-            err_msg = "x-only public keys are allowed in a taproot key expression only"
-            raise BTClibValueError(err_msg)
+            raise BTClibValueError(_X_ONLY_REFUSED)
         # the even-y lift of BIP340, which is what an x-only key means
-        pub_key = b"\x02" + bytes_from_octets(key)
-    elif length in {66, 130}:
-        prefix = key[:2]
-        if (length == 66 and prefix not in {"02", "03"}) or (
-            length == 130 and prefix != "04"
-        ):
-            # 06 and 07 are the hybrid encoding, which nothing in bitcoin
-            # produces and Bitcoin Core refuses in a descriptor too
-            raise BTClibValueError(f"invalid public key prefix: 0x{prefix}")
-        pub_key = bytes_from_octets(key)
-    else:
+        return b"\x02" + bytes_from_octets(key), True
+    if length not in {66, 130}:
         raise BTClibValueError(f"invalid public key length: {length} characters")
-    # a key expression is parsed in order to be used, and a point off the
-    # curve has no script to derive: refuse it here, where the error can
-    # still say it was the key
-    point_from_pub_key(pub_key)
-    return pub_key, length == 64
+    return bytes_from_octets(key), False
 
 
 def _is_extended_key(key: str) -> bool:
@@ -751,10 +1038,10 @@ def _is_extended_key(key: str) -> bool:
     return True
 
 
-def _neutered(xkey: str, prv_keys: dict[str, str]) -> str:
+def _neutered(xkey: str, prv_keys: MutableMapping[str, str]) -> str:
     """Return the public spelling of an extended key, filing the private one.
 
-    The one place a descriptor's private material is separated from the
+    Where an extended key's private material is separated from the
     descriptor, and the reason `KeyExpression.xkey` can be said to be
     public: an xprv is answered with its xpub, and the xprv goes to the
     caller's mapping under that xpub. An xpub is answered with itself and
@@ -811,6 +1098,23 @@ def _assert_musig_allowed(*, musig_allowed: bool) -> None:
     """
     if not musig_allowed:
         raise BTClibValueError("musig() is only allowed in tr() and rawtr()")
+
+
+def _assert_outside_taproot(key: KeyExpression) -> None:
+    """Refuse a key `parse` reads in taproot only, with `parse`'s message.
+
+    A ``musig()``, and an x-only key.
+    """
+    if key.is_aggregate:
+        _assert_musig_allowed(musig_allowed=False)
+    if key.x_only:
+        raise BTClibValueError(_X_ONLY_REFUSED)
+
+
+def _assert_compressed(key: KeyExpression) -> None:
+    """Refuse an uncompressed key, with `parse`'s message."""
+    if not key.is_compressed:
+        raise BTClibValueError(_UNCOMPRESSED_REFUSED)
 
 
 # Bitcoin Core's own message, refusing a key path with two multipath steps
@@ -994,7 +1298,7 @@ def _assert_key_characters(rest: str, *, extended: bool) -> None:
         # is a key expression, and reaching here means it was written
         # behind a key origin, which is not where it may be nested
         if key.startswith("musig("):
-            raise BTClibValueError("musig() cannot be nested inside a key origin")
+            raise BTClibValueError(_MUSIG_IN_ORIGIN)
         raise BTClibValueError("not a key expression")
     if steps and not extended:
         raise BTClibValueError(_UNDERIVABLE)
@@ -1023,6 +1327,11 @@ def _fixed_pub_key(key: str, *, x_only: bool) -> tuple[bytes, bool]:
     -- `false` for a hex key it read whole, `ctx == ParseScriptContext::
     P2TR` for a private one -- which is what makes its ``tr(WIF)`` and
     ``rawtr(WIF)`` vectors come back in 32 bytes and not 33.
+
+    An x-only WIF key is lifted to its even-y form, as a 32-byte hex key
+    is, so that the text `str` writes for it reads back as the same key.
+    Core keeps the WIF's own key instead. An uncompressed WIF key is left
+    as it is, for the constructor to refuse.
     """
     if _HEX.fullmatch(key):
         return _pub_key_from_hex(key, x_only=x_only)
@@ -1030,32 +1339,43 @@ def _fixed_pub_key(key: str, *, x_only: bool) -> tuple[bytes, bool]:
     # btclib-org/btclib#1188): prv_key_data_from_wif answers both for it and for
     # characters that are no key expression at all
     try:
-        return b58.prv_key_data_from_wif(key).pub.sec, x_only
+        pub_key = b58.prv_key_data_from_wif(key).pub.sec
     except (TypeError, ValueError) as e:
         raise BTClibValueError("invalid key expression") from e
+    if x_only and len(pub_key) == 33:
+        return b"\x02" + pub_key[1:], True
+    return pub_key, x_only
 
 
-def _assert_network(key: KeyExpression, network: str) -> None:
+def _assert_network(keys: tuple[KeyExpression, ...], network: str) -> None:
     """Refuse a key spelled for another network, as Bitcoin Core's parser does.
 
     A WIF by its version byte and an extended key by its version, against
-    the network's own; the test networks share both. The refusal quotes
-    none of the key.
+    the network's own; the test networks share both. The refusal names the
+    key by its position, counted as `_parse_key` counts it, and quotes none
+    of it.
     """
-    for participant in key.participants:
-        _assert_network(participant, network)
-    if key.wif_prefix and key.wif_prefix != NETWORKS[network].wif:
-        raise BTClibValueError(f"not a {network} key: WIF prefix")
-    if key.xkey and not _PLACEHOLDER.fullmatch(key.xkey):
-        version = BIP32KeyData.b58decode(key.xkey).version
-        if version not in xpubversions_from_network(network):
-            raise BTClibValueError(f"not a {network} key: version 0x{version.hex()}")
+    position = 0
+    for key in keys:
+        for read in (*key.participants, key):
+            if read.wif_prefix and read.wif_prefix != NETWORKS[network].wif:
+                err_msg = f"key {position}: not a {network} key: WIF prefix"
+                raise BTClibValueError(err_msg)
+            if read.xkey and not _PLACEHOLDER.fullmatch(read.xkey):
+                version = BIP32KeyData.b58decode(read.xkey).version
+                if version not in xpubversions_from_network(network):
+                    err_msg = f"not a {network} key: version 0x{version.hex()}"
+                    raise BTClibValueError(f"key {position}: {err_msg}")
+            position += 1
 
 
 _RANGED_PARTICIPANT = "musig() cannot have a ranged participant and derivation too"
 # Bitcoin Core's own message, refusing a musig() that holds a ")" of its own
 _MUSIG_CLOSES = "Too many ')' in musig() expression"
 _HARDENED_MUSIG_STEP = "musig() cannot have hardened derivation steps"
+_HARDENED_MUSIG_WILDCARD = "musig() cannot have a hardened wildcard"
+_UNEXTENDED_PARTICIPANT = "musig() derivation requires every participant to be extended"
+_MUSIG_IN_ORIGIN = "musig() cannot be nested inside a key origin"
 # Bitcoin Core's own message, refusing a musig() with a multipath step in
 # both its participants and its path
 _MUSIG_ONE_MULTIPATH = (
@@ -1093,7 +1413,7 @@ def _musig_der_path(suffix: str) -> tuple[tuple[int, ...], int | None, int]:
         return (), None, 0
     steps, wildcard, wildcard_hardening = _split_wildcard(suffix[1:].split("/"))
     if wildcard_hardening:
-        raise BTClibValueError("musig() cannot have a hardened wildcard")
+        raise BTClibValueError(_HARDENED_MUSIG_WILDCARD)
     try:
         length = _assert_key_path(steps)
     except BTClibValueError as e:
@@ -1123,7 +1443,7 @@ def _assert_musig_multipath(*, participants: list[int], path: int) -> None:
 
 
 def _musig_participants(
-    arguments: list[str], prv_keys: dict[str, str]
+    arguments: list[str], prv_keys: MutableMapping[str, str]
 ) -> tuple[tuple[KeyExpression, ...], list[int]]:
     """Return the participants of a ``musig()``, and their step lengths.
 
@@ -1150,7 +1470,7 @@ def _musig_participants(
         raise BTClibValueError(f"musig(): {e}") from e
 
 
-def _parse_musig(expression: str, prv_keys: dict[str, str]) -> KeyExpression:
+def _parse_musig(expression: str, prv_keys: MutableMapping[str, str]) -> KeyExpression:
     """Return the KeyExpression of a BIP390 ``musig()`` expression.
 
     The participants are KEY expressions read as any other key in a
@@ -1183,8 +1503,7 @@ def _parse_musig(expression: str, prv_keys: dict[str, str]) -> KeyExpression:
     path = suffix if suffix.startswith("/") else ""
     if path:
         if any(not key.xkey for key in participants):
-            err_msg = "musig() derivation requires every participant to be extended"
-            raise BTClibValueError(err_msg)
+            raise BTClibValueError(_UNEXTENDED_PARTICIPANT)
         if any(key.is_ranged for key in participants):
             raise BTClibValueError(_RANGED_PARTICIPANT)
     der_path, wildcard, multipath = _musig_der_path(path)
@@ -1200,9 +1519,43 @@ def _parse_musig(expression: str, prv_keys: dict[str, str]) -> KeyExpression:
     )
 
 
+@dataclass
+class _KeyCount:
+    """The keys a descriptor has read, and whether one is being read."""
+
+    read: int = 0
+    nested: bool = False
+
+
+# the count of the descriptor being read, None outside one. See `_parse_key`
+_KEY_COUNT: ContextVar[_KeyCount | None] = ContextVar("_KEY_COUNT", default=None)
+
+
+@contextmanager
+def _keys_counted() -> Iterator[None]:
+    """Have a key refused inside named by its position, from 0."""
+    token = _KEY_COUNT.set(_KeyCount())
+    try:
+        yield
+    finally:
+        _KEY_COUNT.reset(token)
+
+
+@contextmanager
+def _keys_read_again() -> Iterator[None]:
+    """Read keys that the reader reads again after, counting them once.
+
+    The count is put back only where the block ends without a refusal.
+    """
+    count = _KEY_COUNT.get() or _KeyCount()
+    read = count.read
+    yield
+    count.read = read
+
+
 def _parse_key(
     expression: str,
-    prv_keys: dict[str, str],
+    prv_keys: MutableMapping[str, str],
     *,
     x_only: bool,
     compressed: bool,
@@ -1229,7 +1582,60 @@ def _parse_key(
     Bitcoin Core's order and where BIP390's "cannot be nested" comes from:
     the expression is a musig one or it is not, so an origin in front of it
     is not a musig expression with an origin -- it is a key that is no key.
+
+    Inside `_keys_counted` a refusal names the key by its position,
+    counted as Bitcoin Core counts its ``key_exp_index``: from 0 in the
+    order the keys are read, a ``musig()`` after its participants. The
+    refusal of a participant names the participant.
     """
+    count = _KEY_COUNT.get()
+    if count is None or count.nested:
+        key = _read_key_on_a_path(
+            expression,
+            prv_keys,
+            x_only=x_only,
+            compressed=compressed,
+            musig_allowed=musig_allowed,
+        )
+    else:
+        count.nested = True
+        try:
+            key = _read_key_on_a_path(
+                expression,
+                prv_keys,
+                x_only=x_only,
+                compressed=compressed,
+                musig_allowed=musig_allowed,
+            )
+        except _MultipathKeyError:
+            raise
+        except BTClibValueError as e:
+            raise BTClibValueError(f"key {count.read}: {e}") from e
+        except EccValueError as e:
+            raise EccValueError(f"key {count.read}: {e}") from e
+        finally:
+            count.nested = False
+    if count is not None:
+        count.read += 1
+    return key
+
+
+def _read_key_on_a_path(
+    expression: str,
+    prv_keys: MutableMapping[str, str],
+    *,
+    x_only: bool,
+    compressed: bool,
+    musig_allowed: bool,
+) -> KeyExpression:
+    """Return the KeyExpression of a KEY expression, read on its first path.
+
+    That is, where `_steps_set_aside` is in force; outside it a step is
+    refused. Read again on its first path, a ``musig()`` counts its
+    participants once.
+    """
+    count = _KEY_COUNT.get() or _KeyCount()
+    read = count.read
     try:
         return _read_key(
             expression,
@@ -1243,6 +1649,7 @@ def _parse_key(
         if steps is None:
             raise
         steps.append(e.length)
+    count.read = read
     return _read_key(
         _first_path(expression),
         prv_keys,
@@ -1254,7 +1661,7 @@ def _parse_key(
 
 def _read_key(
     expression: str,
-    prv_keys: dict[str, str],
+    prv_keys: MutableMapping[str, str],
     *,
     x_only: bool,
     compressed: bool,
@@ -1293,6 +1700,9 @@ def _read_key(
         hardening=origin_hardening or _HARDENING,
         wif_prefix=b"" if _HEX.fullmatch(key) else base58_decode(key)[:1],
     )
-    if compressed and not key_expression.is_compressed:
-        raise BTClibValueError("uncompressed public keys are not allowed here")
+    if compressed:
+        _assert_compressed(key_expression)
+    wifs = _FILED_WIFS.get()
+    if key_expression.wif_prefix and wifs is not None:
+        _file_wif(key_expression, key, wifs)
     return key_expression
