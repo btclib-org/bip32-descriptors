@@ -4,18 +4,20 @@
 
 """What `parse` never builds is refused when a descriptor is built by hand.
 
-A field of the wrong type, in every `Descriptor` fragment, in a `MultiA`
-and in a `Miniscript` node, leaves as a `BTClibTypeError`.
-`TrDescriptor`, `MiniscriptDescriptor`, `UnusedDescriptor`,
-`ShDescriptor`, `WshDescriptor` and `MultiA` also refuse a value `parse`
-refuses, as a `BTClibValueError`, and every fragment holding a key that
-`parse` reads outside ``tr()`` and ``rawtr()``, and a P2WSH `Miniscript`
-node, refuses a ``musig()`` one and an x-only one. Issues
-btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
-btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119,
-btclib-org/bip32-descriptors#134, btclib-org/bip32-descriptors#141,
-btclib-org/bip32-descriptors#150, btclib-org/bip32-descriptors#158,
-btclib-org/bip32-descriptors#159 and btclib-org/bip32-descriptors#161.
+A field of the wrong type, in every `Descriptor` fragment and in a
+`MultiA`, leaves as a `BTClibTypeError`, and so does a `Miniscript`
+node's fragment, threshold or digest of the wrong type, or its keys
+given as no tuple. `TrDescriptor`, `MiniscriptDescriptor`,
+`UnusedDescriptor`, `ShDescriptor`, `WshDescriptor` and `MultiA` also
+refuse a value `parse` refuses, as a `BTClibValueError`, and every
+fragment holding a key that `parse` reads outside ``tr()`` and
+``rawtr()``, and a P2WSH `Miniscript` node, refuses a ``musig()`` one
+and an x-only one. Issues btclib-org/bip32-descriptors#46,
+btclib-org/bip32-descriptors#85, btclib-org/bip32-descriptors#103,
+btclib-org/bip32-descriptors#119, btclib-org/bip32-descriptors#134,
+btclib-org/bip32-descriptors#141, btclib-org/bip32-descriptors#150,
+btclib-org/bip32-descriptors#158, btclib-org/bip32-descriptors#159 and
+btclib-org/bip32-descriptors#161.
 
 `KeyExpression` refuses a `pub_key` that `parse` refuses, an x-only key
 with no `pub_key`, a `pub_key` beside another key or a derivation, and a
@@ -555,7 +557,7 @@ def test_a_multi_a_threshold_out_of_range_is_refused(
         MultiA(threshold, keys, sort=sort)
 
 
-# a hand-built `Miniscript` node of each field a caller can get wrong,
+# a hand-built `Miniscript` node for each field the tests below try,
 # carrying a valid value of it for `replace` to overtype
 _OLDER = miniscript.Miniscript("older", miniscript.P2WSH, threshold=1)
 _PK_K = miniscript.Miniscript("pk_k", miniscript.P2WSH, keys=(_KEY,))
@@ -580,7 +582,7 @@ def test_a_miniscript_threshold_of_another_type_is_refused(threshold: Any) -> No
 
 @pytest.mark.parametrize("keys", [5, [_KEY], None])
 def test_miniscript_keys_of_another_type_are_refused(keys: Any) -> None:
-    """A tuple of KEY expressions, as `parse` builds it."""
+    """The keys are a tuple, as `parse` builds them."""
     err_msg = f"^invalid keys type: {type(keys).__name__}$"
     with pytest.raises(BTClibTypeError, match=err_msg):
         replace(_PK_K, keys=keys)

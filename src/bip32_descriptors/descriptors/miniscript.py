@@ -1177,9 +1177,10 @@ class Miniscript:
         A fragment or a context given by hand is any value, so its refusal
         names only the library's own.
 
-        The fragment and the digest are each asserted to be the type their
-        annotation declares before any of it: a field of another type
-        leaves as a `BTClibTypeError` naming the field and the type alone.
+        The fragment, the keys, the digest and the number each have their
+        type asserted just before their value is checked, the keys only as
+        a tuple: a field of another type leaves as a `BTClibTypeError`
+        naming the field and the type alone.
         """
         assert_type(self.context, str, "context")
         if self.context not in (P2WSH, TAPSCRIPT):
@@ -1221,10 +1222,6 @@ class Miniscript:
         `parse`'s message, since its text would not parse back. A
         ``musig()`` key would also want an ECDSA signature, which a MuSig2
         group does not make (BIP327).
-
-        The keys are asserted to be a tuple before they are counted, a
-        field of another type leaving as a `BTClibTypeError` naming the
-        field and the type.
         """
         assert_type(self.keys, tuple, "keys")
         fragment = self.fragment
@@ -1248,7 +1245,7 @@ class Miniscript:
                 _assert_outside_taproot(key)
 
     def _assert_number(self) -> None:
-        """Refuse a threshold that is no integer, and one outside its bounds."""
+        """Refuse a lock time or a threshold not an integer or out of bounds."""
         if not is_integer(self.threshold):
             err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
             raise BTClibTypeError(err_msg)
