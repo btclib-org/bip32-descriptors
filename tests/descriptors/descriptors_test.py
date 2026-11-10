@@ -2600,7 +2600,10 @@ UNPARSABLE = [
     # a key function's whole argument is its key, as in Core
     (f"pk({KEY},{KEY})", "invalid key expression"),
     (f"multi(x,{KEY})", "threshold"),
-    ("multi(1)", "at least one key"),
+    ("multi(1)", "expected ',' after the threshold"),
+    (f"wsh(multi(1)(,{KEY}))", "expected ',' after the threshold"),
+    (f"wsh(sortedmulti(1)(,{KEY}))", "expected ',' after the threshold"),
+    (f"tr({XONLY},sortedmulti_a(1)(,{XONLY}))", "expected ',' after the threshold"),
     (f"pk({KEY}))", "unbalanced"),
     (f"pk(({KEY})", "not a key expression"),
     (f"tr({XONLY},pk({XONLY}),pk({XONLY}))", "at most one tree"),
@@ -3058,7 +3061,7 @@ BIP387_INVALID = [
     (f"tr({XONLY},multi_a(3,{WIF},{UNCOMPRESSED_WIF}))", "uncompressed"),
     (f"tr({XONLY},multi_a(3,{KEY},{KEY}))", "invalid k in k-of-n multi_a"),
     # and what BIP387 does not list: a threshold with no key after it
-    (f"tr({XONLY},multi_a(1))", "at least one key"),
+    (f"tr({XONLY},multi_a(1))", "expected ',' after the threshold"),
 ]
 
 

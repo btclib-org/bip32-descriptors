@@ -2778,7 +2778,7 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
     """
     args = _split_unpaired_arguments(text)
     if len(args) < 2:
-        raise BTClibValueError(f"{name}() takes a threshold and at least one key")
+        raise BTClibValueError(f"{name}() expected ',' after the threshold")
     if not _THRESHOLD.fullmatch(args[0]):
         raise BTClibValueError(f"invalid {name}() threshold: digits expected")
     keys, lengths = _read_multipath_keys(
@@ -3069,7 +3069,7 @@ def _parse_multi(
     args = _split_unpaired_arguments(text)
     threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
-        raise BTClibValueError(f"{name}() takes a threshold and at least one key")
+        raise BTClibValueError(f"{name}() expected ',' after the threshold")
     keys, lengths = _read_multipath_keys(
         args[1:],
         lambda key: _parse_key(
