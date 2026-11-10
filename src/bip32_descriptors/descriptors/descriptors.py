@@ -496,10 +496,12 @@ class MultiA:
             assert_type(key, KeyExpression, "key")
         assert_type(self.sort, bool, "sort")
         name = "sortedmulti_a" if self.sort else "multi_a"
-        if not 1 <= self.threshold <= len(self.keys):
-            raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
+        # the count first, as Bitcoin Core checks it: a leaf of more keys
+        # than BIP387 allows is the count's fault whatever the threshold
         if len(self.keys) > _MAX_MULTI_A_KEYS:
             raise BTClibValueError(f"invalid n in k-of-n {name}: {len(self.keys)}")
+        if not 1 <= self.threshold <= len(self.keys):
+            raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
 
     @override
     def __str__(self) -> str:
@@ -2787,10 +2789,12 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
         ),
     )
     _assert_multisig_end(name, text, args)
-    if not 1 <= threshold <= len(keys):
-        raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
+    # the count first, as Bitcoin Core checks it: a leaf of more keys
+    # than BIP387 allows is the count's fault whatever the threshold
     if len(keys) > _MAX_MULTI_A_KEYS:
         raise BTClibValueError(f"invalid n in k-of-n {name}: {len(keys)}")
+    if not 1 <= threshold <= len(keys):
+        raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
     _assert_multipath_keys(lengths)
     return MultiA(threshold, keys, sort=name == "sortedmulti_a")
 
