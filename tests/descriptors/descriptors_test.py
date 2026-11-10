@@ -4980,6 +4980,9 @@ def test_what_a_key_expression_xkey_holds() -> None:
         KeyExpression(xkey=xpubs[0].encode("ascii"))  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    "threshold", [0, 1, 22, 4294967295], ids=["zero", "valid", "22", "uint32-max"]
+)
 @pytest.mark.parametrize("name", ["multi", "sortedmulti"])
 @pytest.mark.parametrize(
     "wrap",
@@ -4987,17 +4990,19 @@ def test_what_a_key_expression_xkey_holds() -> None:
     ids=["bare", "sh", "wsh", "sh-wsh"],
 )
 def test_a_multisig_of_more_than_twenty_keys_is_refused_at_parse(
-    name: str, wrap: str
+    threshold: int, name: str, wrap: str
 ) -> None:
     """OP_CHECKMULTISIG takes twenty keys at most, wherever it sits.
 
-    Checked before the bound of the position, as Bitcoin Core orders them,
-    so the refusal names the count in every position.
+    Checked before the bound of the position and before the threshold, as
+    Bitcoin Core orders them, so the refusal names the count in every
+    position. Issues btclib-org/bip32-descriptors#17 and
+    btclib-org/bip32-descriptors#107.
     """
     keys = ",".join([KEY] * 21)
     err_msg = rf"^{name}\(\) takes at most 20 keys, 21 given$"
     with pytest.raises(BTClibValueError, match=err_msg):
-        parse(wrap.format(f"{name}(1,{keys})"))
+        parse(wrap.format(f"{name}({threshold},{keys})"))
 
 
 @pytest.mark.parametrize("threshold", [0, 2], ids=["zero", "above-key-count"])
@@ -5017,6 +5022,26 @@ def test_an_impossible_multisig_threshold_is_refused_at_parse(
     err_msg = rf"^invalid k in k-of-n {name}: {threshold}$"
     with pytest.raises(BTClibValueError, match=err_msg):
         parse(wrap.format(f"{name}({threshold},{KEY})"))
+
+
+@pytest.mark.parametrize("name", ["multi", "sortedmulti"])
+@pytest.mark.parametrize(
+    "wrap,key_count",
+    [("{}", 4), ("sh({})", 16)],
+    ids=["bare-over-3", "sh-over-520-bytes"],
+)
+def test_an_impossible_multisig_threshold_beats_position_limits(
+    name: str, wrap: str, key_count: int
+) -> None:
+    """With at most 20 keys, an invalid threshold beats position size limits.
+
+    Issue btclib-org/bip32-descriptors#107.
+    """
+    keys = ",".join([KEY] * key_count)
+    for threshold in (0, key_count + 1):
+        err_msg = rf"^invalid k in k-of-n {name}: {threshold}$"
+        with pytest.raises(BTClibValueError, match=err_msg):
+            parse(wrap.format(f"{name}({threshold},{keys})"))
 
 
 _MORE_DIGITS = r"^invalid multi\(\) threshold: more than 10 digits$"

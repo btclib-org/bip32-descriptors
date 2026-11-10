@@ -3042,6 +3042,9 @@ def _parse_multi(
         ),
     )
     _assert_multisig_end(name, text, args)
+    if len(keys) > MAX_PUBKEYS_PER_MULTISIG:
+        err_msg = f"{name}() takes at most {MAX_PUBKEYS_PER_MULTISIG} keys"
+        raise BTClibValueError(f"{err_msg}, {len(keys)} given")
     if not 1 <= threshold <= len(keys):
         raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
     _assert_multi_size(name, keys, context)
@@ -3071,17 +3074,14 @@ def _assert_multi_size(
 ) -> None:
     """Refuse the keys of a ``multi()`` that Bitcoin Core refuses where it sits.
 
-    OP_CHECKMULTISIG's own bound first, which holds everywhere; then the
-    bare output IsStandard relays, and the redeem script a ``sh()`` has to
-    push in one element, which is what spending it takes. ``wsh()`` adds
-    nothing: twenty keys are a witness script well inside its bound. The
-    size is Core's own sum, a key and its push byte each, plus one byte
-    each for the threshold, the count and OP_CHECKMULTISIG: the script's
-    exact size up to sixteen keys, and over the limit past them anyway.
+    Bare output IsStandard relays at most three keys, and the redeem
+    script a ``sh()`` has to push in one element takes at most 520
+    bytes. ``wsh()`` adds nothing: twenty keys are a witness script well
+    inside its bound. The size is Core's own sum, a key and its push byte
+    each, plus one byte each for the threshold, the count and
+    OP_CHECKMULTISIG: the script's exact size up to sixteen keys, and over
+    the limit past them anyway.
     """
-    if len(keys) > MAX_PUBKEYS_PER_MULTISIG:
-        err_msg = f"{name}() takes at most {MAX_PUBKEYS_PER_MULTISIG} keys"
-        raise BTClibValueError(f"{err_msg}, {len(keys)} given")
     if context == _TOP and len(keys) > _MAX_BARE_MULTISIG_KEYS:
         err_msg = f"a bare {name}() takes at most {_MAX_BARE_MULTISIG_KEYS} keys"
         raise BTClibValueError(f"{err_msg}, {len(keys)} given")
