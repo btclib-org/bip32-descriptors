@@ -4971,8 +4971,9 @@ def test_what_a_key_expression_xkey_holds() -> None:
     """A mainnet or testnet xpub, a placeholder, or nothing."""
     xpubs = (xpub_from_xprv(XPRV_ROOT), TESTNET_XPUB)
     placeholders = ("@0", "@12", "@0/**", "@3/<2;3>/*", "musig(@0,@1)/**")
-    for xkey in (*xpubs, *placeholders, ""):
+    for xkey in (*xpubs, *placeholders):
         assert KeyExpression(xkey=xkey).xkey == xkey
+    assert KeyExpression(pub_key=bytes.fromhex(KEY)).xkey == ""
     for near_miss in ("@01", "@0/*", "musig(@0,@1)", "K"):
         with pytest.raises(BTClibValueError, match="^invalid xkey"):
             KeyExpression(xkey=near_miss)
@@ -5042,6 +5043,38 @@ _NOT_DIGITS = r"^invalid multi\(\) threshold: digits expected$"
         ("wsh(multi(-1,zz))", _NOT_DIGITS),
         ("wsh(multi(,zz))", _NOT_DIGITS),
         ("wsh(multi(x))", _NOT_DIGITS),
+        (
+            f"tr({XONLY},multi_a(99999999999,zz))",
+            r"^invalid multi_a\(\) threshold: more than 10 digits$",
+        ),
+        (
+            f"tr({XONLY},sortedmulti_a(99999999999,zz))",
+            r"^invalid sortedmulti_a\(\) threshold: more than 10 digits$",
+        ),
+        (
+            f"tr({XONLY},multi_a(4294967296,zz))",
+            r"^invalid multi_a\(\) threshold: not in 0\.\.2\*\*32-1$",
+        ),
+        (
+            f"tr({XONLY},sortedmulti_a(4294967296,zz))",
+            r"^invalid sortedmulti_a\(\) threshold: not in 0\.\.2\*\*32-1$",
+        ),
+        (
+            f"tr({XONLY},multi_a(000000000000000000004294967296,zz))",
+            r"^invalid multi_a\(\) threshold: not in 0\.\.2\*\*32-1$",
+        ),
+        (
+            f"tr({XONLY},multi_a(4294967296))",
+            r"^invalid multi_a\(\) threshold: not in 0\.\.2\*\*32-1$",
+        ),
+        (
+            f"tr({XONLY},multi_a(+1,zz))",
+            r"^invalid multi_a\(\) threshold: digits expected$",
+        ),
+        (
+            f"tr({XONLY},multi_a(x))",
+            r"^invalid multi_a\(\) threshold: digits expected$",
+        ),
     ],
 )
 def test_a_multisig_threshold_is_refused_before_its_keys(
@@ -5050,21 +5083,33 @@ def test_a_multisig_threshold_is_refused_before_its_keys(
     """Core: Multi threshold '...' is not valid.
 
     Core reads the threshold as a uint32 before it reads or counts the
-    keys, so ``zz`` is never read as one.
+    keys, so ``zz`` is never read as one. Issues
+    btclib-org/bip32-descriptors#17 and
+    btclib-org/bip32-descriptors#102.
     """
     with pytest.raises(BTClibValueError, match=message):
         parse(descriptor)
 
 
 @pytest.mark.parametrize(
+    "template,key_label",
+    [
+        ("wsh(multi({},zz))", "key 0"),
+        (f"tr({XONLY},multi_a({{}},zz))", "key 1"),
+    ],
+    ids=["wsh-multi", "tr-multi_a"],
+)
+@pytest.mark.parametrize(
     "threshold", ["0", "4294967295", "04294967295", "000000000000000000004294967295"]
 )
 def test_a_multisig_threshold_core_reads_is_followed_by_its_keys(
-    threshold: str,
+    template: str, key_label: str, threshold: str
 ) -> None:
     """Core: Multi: key 'zz' is not valid."""
-    with pytest.raises(BTClibValueError, match="^key 0: invalid key expression$"):
-        parse(f"wsh(multi({threshold},zz))")
+    with pytest.raises(
+        BTClibValueError, match=f"^{key_label}: invalid key expression$"
+    ):
+        parse(template.format(threshold))
 
 
 def test_a_multisig_threshold_is_refused_without_quoting_it() -> None:
@@ -5072,6 +5117,10 @@ def test_a_multisig_threshold_is_refused_without_quoting_it() -> None:
     decimal = str(int(HEX_PRV, 16))
     with pytest.raises(BTClibValueError, match=_MORE_DIGITS) as e:
         parse(f"wsh(multi({decimal},{KEY}))")
+    assert_secret_free(e.value, [decimal])
+    err_msg = r"^invalid multi_a\(\) threshold: more than 10 digits$"
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        parse(f"tr({XONLY},multi_a({decimal},{XONLY}))")
     assert_secret_free(e.value, [decimal])
 
 
@@ -5139,11 +5188,12 @@ def test_a_redeem_script_over_520_bytes_is_refused(
         parse(f"sh({name}(1,{keys}))")
 
 
-def test_a_hand_built_sh_over_520_bytes_has_no_spend() -> None:
+def test_an_unpickled_sh_over_520_bytes_has_no_spend() -> None:
     """`satisfy` refuses as `script_pub_key` does: no spend without an output.
 
     Sixteen keys make the 547-byte redeem script the parser refuses above,
-    so the descriptor is built by hand.
+    and so does `ShDescriptor` when built. Unpickling skips that refusal,
+    so the descriptor is an unpickled one given the keys.
     """
     multi = MultiDescriptor(
         1,
@@ -5152,7 +5202,8 @@ def test_a_hand_built_sh_over_520_bytes_has_no_spend() -> None:
             for prv_key in range(1, 17)
         ),
     )
-    descriptor = ShDescriptor(multi)
+    descriptor = pickle.loads(pickle.dumps(parse(f"sh(multi(1,{KEY}))")))  # noqa: S301
+    object.__setattr__(descriptor, "inner", multi)
     for question in (
         descriptor.script_pub_key,
         lambda: descriptor.satisfy(signatures_of(KEY_A)),

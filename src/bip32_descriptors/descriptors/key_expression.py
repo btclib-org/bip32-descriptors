@@ -57,6 +57,7 @@ from bip32_descriptors.bip32.der_path import (
     _BIP380_HARDENINGS,
     _HARDENING,
     HARDENED_OFFSET,
+    _assert_valid_index,
     hardenings_from_der_path,
     indexes_from_der_path,
     str_from_der_path,
@@ -387,7 +388,7 @@ class KeyExpression:
     wif_prefix: bytes = field(default=b"", compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Check `pub_key`, `xkey`, `participants`, `wildcard` and `hardening`.
+        """Check key fields, `der_path`, `wildcard` and `hardening`.
 
         A `pub_key` is the SEC bytes of a point, as `_assert_pub_key` says,
         and the whole key: no `xkey`, `participants`, `der_path` or
@@ -404,6 +405,14 @@ class KeyExpression:
         character, which decodes as no key -- and where only its checksum
         changed still spells one.
         """
+        if not isinstance(self.der_path, tuple):
+            err_msg = f"invalid der_path type: {type(self.der_path).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+        if not isinstance(self.participants, tuple):
+            err_msg = f"invalid participants type: {type(self.participants).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+        for step in self.der_path:
+            _assert_valid_index(step)
         _assert_pub_key(self)
         _assert_fixed_key_alone(self)
         _assert_hardening(self.hardening)
@@ -412,6 +421,8 @@ class KeyExpression:
         if not isinstance(self.xkey, str):
             err_msg = f"invalid xkey type: {type(self.xkey).__name__}"  # type: ignore[unreachable]
             raise BTClibTypeError(err_msg)
+        if not (self.pub_key or self.xkey or self.participants):
+            raise BTClibValueError(_NO_KEY)
         if not self.xkey or _PLACEHOLDER.fullmatch(self.xkey):
             return
         try:
@@ -997,9 +1008,6 @@ def _assert_musig_path(key: KeyExpression) -> None:
     if key.wildcard:
         raise BTClibValueError(_HARDENED_MUSIG_WILDCARD)
     for index in key.der_path:
-        if not is_integer(index):
-            err_msg = f"invalid derivation index type: {type(index).__name__}"
-            raise BTClibTypeError(err_msg)
         if HARDENED_OFFSET <= index < 2 * HARDENED_OFFSET:
             raise BTClibValueError(_HARDENED_MUSIG_STEP)
 
@@ -1103,6 +1111,12 @@ def _assert_outside_taproot(key: KeyExpression) -> None:
         _assert_musig_allowed(musig_allowed=False)
     if key.x_only:
         raise BTClibValueError(_X_ONLY_REFUSED)
+
+
+def _assert_compressed(key: KeyExpression) -> None:
+    """Refuse an uncompressed key, with `parse`'s message."""
+    if not key.is_compressed:
+        raise BTClibValueError(_UNCOMPRESSED_REFUSED)
 
 
 # Bitcoin Core's own message, refusing a key path with two multipath steps
@@ -1688,8 +1702,8 @@ def _read_key(
         hardening=origin_hardening or _HARDENING,
         wif_prefix=b"" if _HEX.fullmatch(key) else base58_decode(key)[:1],
     )
-    if compressed and not key_expression.is_compressed:
-        raise BTClibValueError(_UNCOMPRESSED_REFUSED)
+    if compressed:
+        _assert_compressed(key_expression)
     wifs = _FILED_WIFS.get()
     if key_expression.wif_prefix and wifs is not None:
         _file_wif(key_expression, key, wifs)
