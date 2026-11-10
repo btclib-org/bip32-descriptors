@@ -4,6 +4,7 @@
 
 """Tests for the `bip32_descriptors.bip32` module."""
 
+import copy
 import hmac
 import re
 import string
@@ -107,6 +108,9 @@ def test_the_three_key_reads_answer_for_one_half_each() -> None:
     assert pub_keyinfo_from_xpub(xpub) == pub_keyinfo_from_xkey(xpub)
     assert pub_keyinfo_from_xkey(xprv) == pub_keyinfo_from_xkey(xpub)
     assert point_from_xpub(xpub) == mult(q)
+    # the curve the version names is compared by value: a copy of
+    # secp256k1 is not the same object, and is the same curve
+    assert point_from_xpub(xpub, copy.deepcopy(ec)) == mult(q)
 
     # a BIP32 key is always compressed, so uncompressed is another format
     err_msg = "uncompressed SEC / compressed BIP32 mismatch"
@@ -138,9 +142,12 @@ def test_the_three_key_reads_answer_for_one_half_each() -> None:
         with pytest.raises(BTClibValueError) as excinfo:
             read(xprv)
         assert str(excinfo.value) == "not a public key: prefix 0x00"
-    # and the private read refuses the public half by its prefix
-    with pytest.raises(BTClibValueError, match="not a private key: prefix 0x0[23]"):
+    # and the private read refuses the public half by its prefix, the
+    # message compared whole for the same reason
+    prefix = BIP32KeyData.b58decode(xpub).key[:1].hex()
+    with pytest.raises(BTClibValueError) as excinfo:
         prv_keyinfo_from_xprv(xpub)
+    assert str(excinfo.value) == f"not a private key: prefix 0x{prefix}"
 
 
 def test_exceptions() -> None:
@@ -180,6 +187,35 @@ def test_exceptions() -> None:
     # 513` is one no byte-sized seed can ever reach
     assert rootxprv_from_seed("00" * 16)
     assert rootxprv_from_seed("00" * 64)
+
+
+def test_a_quoted_checksum_is_cut_and_other_refusals_are_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`b58decode` keeps base58's refusal, except for the checksums it quotes.
+
+    At the btclib floor pyproject.toml names, a bad checksum is refused
+    quoting the right one, a hash of the key: this is that message, as
+    btclib's `base58.decode` wrote it there for this key. Any other
+    refusal is kept whole, the part after its colon included.
+    """
+    xkey = "xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjq"
+
+    def decode(_: str) -> bytes:
+        raise BTClibValueError("invalid checksum: 0xb38b79a4 instead of 0x84a7e524")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(base58, "decode", decode)
+        with pytest.raises(BTClibValueError) as e:
+            BIP32KeyData.b58decode(xkey)
+    assert str(e.value) == "invalid checksum"
+    # nor is either checksum in the refusal's chain, which a traceback shows
+    for checksum in ("0xb38b79a4", "0x84a7e524"):
+        assert checksum not in chained_text(e.value)
+
+    with pytest.raises(BTClibValueError) as e:
+        BIP32KeyData.b58decode("1" * 200)
+    assert str(e.value) == "too many base58 characters: 200, max is 112"
 
 
 def test_an_xkey_decodes_however_its_text_is_held() -> None:
@@ -514,6 +550,33 @@ def test_public_derivation_builds_no_point(
     assert child.key == bytes_from_point(point_from_octets_var(uncompressed))
 
 
+def test_the_working_copy_prints_no_key_material() -> None:
+    """`_BIP32KeyData`'s repr is the default object one, naming no field.
+
+    The struct holds a private key and its scalar and has no masking repr
+    of its own, so a generated one would print both.
+    """
+    xprv = BIP32KeyData.b58decode(
+        "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi"
+    )
+    q = int.from_bytes(xprv.key[1:], "big")
+    working = _BIP32KeyData(
+        version=xprv.version,
+        depth=xprv.depth,
+        parent_fingerprint=xprv.parent_fingerprint,
+        index=xprv.index,
+        chain_code=xprv.chain_code,
+        key=xprv.key,
+        prv_key_int=q,
+    )
+    text = repr(working)
+    assert text == object.__repr__(working)
+    # what a generated repr would print: the scalar in decimal and the
+    # two byte strings as their reprs
+    for secret in (str(q), repr(xprv.key), repr(xprv.chain_code)):
+        assert secret not in text
+
+
 def test_private_functions_do_not_validate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -550,6 +613,33 @@ def test_private_functions_do_not_validate(
     validations = 0
     derive(xpub_data, "m/0/1")
     assert validations == 2
+
+
+def test_a_range_validates_the_account_and_each_key_it_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`derive_from_account_range_` checks its input once and each output.
+
+    The rule `test_private_functions_do_not_validate` holds `derive` to:
+    the account key on reading it, and every key handed back, the branch
+    key walked to on the way being no answer.
+    """
+    root = rootxprv_from_seed_(b"\x01" * 16)
+    account = xpub_from_xprv_(derive_(root, "m/44h/0h/0h"))
+    validated: list[BIP32KeyData] = []
+    real = BIP32KeyData.assert_valid
+
+    def recording(self: BIP32KeyData) -> None:
+        validated.append(self)
+        real(self)
+
+    monkeypatch.setattr(BIP32KeyData, "assert_valid", recording)
+    keys = derive_from_account_range_(account, 0, [0, 1, 2])
+    # the account itself first, then each key answered, in order and by
+    # identity: a count alone would also pass the account validated again
+    assert len(validated) == 1 + len(keys)
+    assert validated[0] is account
+    assert all(v is k for v, k in zip(validated[1:], keys, strict=True))
 
 
 def test_derive_validates_before_it_changes_the_depth() -> None:
@@ -717,6 +807,12 @@ def test_derive_from_account() -> None:
     # 65536 or narrowed to 65534 would move the boundary this vector
     # relies on being exactly 65535
     assert derive_from_account(mxpub, 0, 0xFFFF)
+    # and derive_from_account_'s own default, the same boundary
+    assert derive_from_account_(mxpub, 0, 0xFFFF).index == 0xFFFF
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_(mxpub, 0, 0xFFFF + 1)
+    # a branch at max_index itself is no higher than it
+    assert derive_from_account(mxpub, 0xFFFF, 0, branches_0_1_only=False)
 
     # strictly above the offset, not only at it: `>= HARDENED_OFFSET`
     # weakened to `==` would refuse only the exact boundary above, the
@@ -774,6 +870,13 @@ def test_crack() -> None:
     err_msg = "not a parent's child: wrong parent fingerprint"
     with pytest.raises(BTClibValueError, match=err_msg):
         crack_prv_key(child_xpub, grandchild_xprv)
+    # a wrong fingerprint above the parent's as well as below it: `!=`
+    # weakened to `<` would take the one above for the parent's
+    child = BIP32KeyData.b58decode(child_xprv)
+    for wrong in (b"\x00" * 4, b"\xff" * 4):
+        assert wrong != child.parent_fingerprint
+        with pytest.raises(BTClibValueError, match=err_msg):
+            crack_prv_key(parent_xpub, replace(child, parent_fingerprint=wrong))
 
     hardened_child_xprv = derive(parent_xprv, 0x80000000)
     with pytest.raises(BTClibValueError, match="hardened child derivation"):
@@ -842,6 +945,22 @@ def test_no_key_material_in_repr_or_exceptions() -> None:
     with pytest.raises(BTClibValueError, match="not a public key: ") as excinfo:
         crack_prv_key(xprv, child_xprv)
     assert xprv not in str(excinfo.value)
+
+
+def test_the_repr_of_an_empty_key_masks_nothing() -> None:
+    """Print the chain code of an unchecked key data holding no key.
+
+    The repr masks a key whose first byte is 0x00, the private prefix. An
+    empty key has no first byte, so it is not private, and the chain code
+    beside it is printed as a public one is.
+    """
+    data = BIP32KeyData(
+        b"\x04\x88\xb2\x1e", 0, b"\x00" * 4, 0, b"\x01" * 32, b"", check_validity=False
+    )
+    assert repr(data) == (
+        "BIP32KeyData(version=0488b21e, depth=0, parent_fingerprint=00000000, "
+        f"index=0, chain_code={'01' * 32}, key=)"
+    )
 
 
 class _ForcedHmac:
@@ -1232,6 +1351,20 @@ def test_is_root_is_all_three_fields_and_not_just_one() -> None:
         check_validity=False,
     )
     assert not negative_index.is_root
+
+    # and a parent fingerprint of zeros shorter than four bytes, which
+    # sorts before four of them: the fingerprint compared with `<=`
+    # instead of `==` would call this one root
+    short_fingerprint = BIP32KeyData(
+        version=root.version,
+        depth=0,
+        parent_fingerprint=b"\x00" * 3,
+        index=0,
+        chain_code=root.chain_code,
+        key=root.key,
+        check_validity=False,
+    )
+    assert not short_fingerprint.is_root
 
 
 def test_is_hardened_is_not_narrowed_to_the_boundary_alone() -> None:
@@ -1780,6 +1913,19 @@ def test_derive_from_account_range_refuses_before_it_walks() -> None:
     err_msg = "invalid address index: 65536"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account_range_(mxpub, 0, [0, 1, 0xFFFF + 1])
+
+    # the text spelling carries defaults of its own, held to the same
+    # branches and the same bound: max_index's top accepted, one past it
+    # refused
+    with pytest.raises(BTClibValueError, match="invalid branch number: 2"):
+        derive_from_account_range(mxpub, 2, [0])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_range(mxpub, 0, [0xFFFF + 1])
+    top = [derive_from_account(mxpub, 0, 0xFFFF)]
+    assert derive_from_account_range(mxpub, 0, [0xFFFF]) == top
+    assert derive_from_account_range_(mxpub, 0, [0xFFFF]) == [
+        derive_from_account_(mxpub, 0, 0xFFFF)
+    ]
 
     err_msg = "unhardened account/master key"
     with pytest.raises(BTClibValueError, match=err_msg):

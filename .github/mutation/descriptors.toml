@@ -65,9 +65,10 @@ excluded-modules = []
 # the workflow uploads, at btclib's run 34833390559, except where a
 # paragraph names its own run.
 #
-# This file triages the non-annotation survivors of `miniscript.py` and
-# of the script inference in descriptors.py, not the rest of
-# descriptors.py or key_expression.py, and they split into these kinds:
+# This file triages the non-annotation survivors of `miniscript.py`, and
+# those of descriptors.py and key_expression.py that the mutation run
+# https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+# left on lines that still exist, and they split into these kinds:
 #
 # - the type-property algebra, which is what this scope was written to
 #   ask about -- and the class is smaller than the survivor list makes it
@@ -105,14 +106,11 @@ excluded-modules = []
 #   for the timelock, two signed branches for the "m". All four mutants
 #   are dead now, and the assertions are on the properties themselves
 #   rather than on something downstream of them.
-# - the sizes: `_TX_BODY_LEEWAY_WEIGHT`'s summands rearrange freely, the
-#   stack-limit term beside it takes `^` for `+`, and `_decomposed`'s
-#   `1 + 2 ** (op_code - 76)` -- the push-prefix width -- survives
-#   regardless of the operator. A wrong size here is a wrong fee
-#   estimate rather than an invalid spend, which is why nothing louder
-#   catches it. The prefix width wants a script whose push needs
-#   OP_PUSHDATA, which no standard fragment writes: every key is 33
-#   bytes and every hash 20 or 32.
+# - the sizes: `_TX_BODY_LEEWAY_WEIGHT`'s summands rearrange freely, and
+#   the stack-limit term beside it takes `^` for `+`. A wrong size here
+#   is a wrong fee estimate rather than an invalid spend, which is why
+#   nothing louder catches it. `_decomposed`'s push-prefix width,
+#   `1 + 2 ** (op_code - 76)`, is the script decoder's, below.
 #
 #   Read off the mutation run
 #   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
@@ -139,14 +137,33 @@ excluded-modules = []
 #   alphabetical extreme of the closed set it comes from, which is the
 #   class btclib's bms.toml states, and worth a look one by one rather than in
 #   bulk.
-# - `satisfy`'s `index: int = 0` default, `_thresh_input`'s `count ==
-#   node.threshold` and `_thresh_ops`' and `_thresh_witness`'
-#   `reached[1]`/`reached[-1]`: an undefended default and three indexes
-#   into what a `thresh` walk builds. The default wants a ranged key --
-#   with plain keys the index changes nothing -- and the `thresh` three
-#   want a satisfaction with more satisfiable branches than the quorum
-#   needs, which is where choosing exactly `threshold` of them is what
-#   makes the witness non-malleable.
+# - `_thresh_input`'s `count == node.threshold` and `_thresh_ops`' and
+#   `_thresh_witness`' `reached[1]`/`reached[-1]`: what a `thresh` walk
+#   builds. They want a satisfaction with more satisfiable branches than
+#   the quorum needs, which is where choosing exactly `threshold` of them
+#   is what makes the witness non-malleable.
+# - the satisfier's choices, read off the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41). `satisfy`'s `index: int = 0`
+#   default, which wants a ranged key, `_element`'s length prefix and
+#   `_better`'s size comparison die in
+#   tests/descriptors/satisfier_choice_test.py. These operators are
+#   equivalent:
+#   - `_better`'s `first.malleable != second.malleable` turned into
+#     `is not`: every `malleable` is a bool, and `True` and `False` are
+#     the only two.
+#   - `_or_input`'s `fragment == "or_b"` weakened to `<=`: it is reached
+#     for "or_b", "or_c", "or_d" and "or_i" only, and "or_b" sorts first.
+# - the defaults of descriptors.py and of miniscript.py's
+#   `SpendContext`, and the refusal beside one, read off the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41): the `index` of
+#   `Descriptor.expand` and the `multipath_index` of
+#   `wallet_policy_descriptor`, both 0, and `_resolved_placeholder`'s
+#   `match[0]`, the placeholder it names when it refuses one out of
+#   range. Each dies in tests/descriptors/defaults_test.py, and so does
+#   `SpendContext`'s `sequence: int = 0` turned into -1, a mutant the
+#   run did not sample.
 # - the script inference in descriptors.py, Core's `Solver`,
 #   `MatchMultisig` and `MatchMultiA` beside it, read off the mutation run
 #   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
@@ -171,6 +188,83 @@ excluded-modules = []
 #     kinds `_solved` answers that sort after it are
 #     "witness_v0_scripthash" and "witness_v1_taproot", whose 32-byte
 #     programs are never a key of `by_hash`, which holds 20-byte hashes.
+# - the reading of an expression back from its text and from its script
+#   in miniscript.py -- `_read_wrappers` of the parser, and the script
+#   decoder behind `from_script` and `reads_back` -- read off the
+#   mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41).
+#   tests/descriptors/script_decoder_test.py kills the survivors that
+#   change an answer: `_decomposed`'s push-prefix width and its bound at
+#   OP_PUSHDATA4, `_Decoder._key`'s count of the op codes a `pk_h()`
+#   needs, `_combinator`'s test for OP_ENDIF, `_thresh_end`'s slice of
+#   its branches, and the type check in `decode`'s loop, which names the
+#   innermost fragment without a type. These operators are equivalent:
+#   - `_op`'s `BYTE_FROM_OP_CODE_NAME[name][0]` turned into `[-1]`: every
+#     value of that table is one byte.
+#   - `_decomposed`'s `position + 1 < len(spans)` turned into `!=`:
+#     `position` enumerates `spans`, so `position + 1` is never above
+#     `len(spans)`.
+#   - a number of the states `_read_wrappers` and `_Decoder._expect`
+#     stack, or of the `_W_EXPR` `_thresh_branch` stacks, changed: only
+#     the states of a `thresh()` read their two numbers, and none of
+#     these is one.
+#   - `_Decoder._key`'s `self._op_code(4) == _OP_DUP` turned into `is`:
+#     an op code is an int from 0 to 255, and CPython and PyPy both
+#     answer `is` as `==` on those.
+#   - `_Decoder._multi_a`'s `self._data(offset + 1)` turned into
+#     `offset | 1`: `offset` starts at 2 and grows by 2, so it is even.
+#   - `reads_back`'s `node.script() == script` weakened to `>=`: the two
+#     differ only on a script `from_script` accepts whose node writes
+#     other bytes, sorting after it. That is the round trip `reads_back`
+#     checks, not shown here for every script: the mutant lives only
+#     while the decoder has no such defect.
+# - the removal of an `@override` mark, which the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41) let live wherever it sampled
+#   one. Any such removal is equivalent: the decorator only sets the
+#   method's `__override__`, which nothing in the tree reads, and the
+#   method still overrides a method of a base class, `object` and `list`
+#   included. The lint gate tells instead: mypy's `explicit-override`,
+#   which pyproject.toml enables, refuses the removal of every mark in
+#   this scope.
+# - the rest of the mutation run
+#   https://github.com/btclib-org/bip32-descriptors/actions/runs/41250474104
+#   (issue btclib-org/bip32-descriptors#41). These die under the
+#   profile's command: `__descsum_expand`'s `groups[0] * 3 + groups[1]`
+#   in tests/descriptors/descriptors_test.py; `_read_fragment`'s
+#   `pos + 1` in tests/descriptors/miniscript_fallback_test.py; and in
+#   tests/descriptors/miniscript_test.py, `context == TAPSCRIPT` turned
+#   into `is` in `_signature_size`, `Miniscript._assert_keys` and `_sec`,
+#   `_decomposed`'s `spans[-1][2] == len(script)` and
+#   `_Decoder._combinator`'s `op_code == _OP_EQUAL` weakened to `<=`,
+#   `_binary_ops`' `fragment == "or_i"` weakened to `<=`, `_better`'s
+#   `malleable=True` for two unsigned stacks, and `_thresh_input`'s
+#   `malleable=True` on an overcomplete dissatisfaction, without which
+#   an estimate takes that stack, the larger one. These operators are
+#   equivalent:
+#   - `_derived_origin`'s `key.wildcard + index` turned into `^`: a
+#     wildcard is 0 or 2**31, and each caller refuses an index outside
+#     0 to 2**31 - 1 before, by `_assert_index_range` or by
+#     `KeyExpression.sec`, so the two never share a bit.
+#   - `_assert_multi_size`'s `size > MAX_SCRIPT_ELEMENT_SIZE` weakened to
+#     `>=`: the size is 3 plus 34 or 66 for each key, so it is odd, and
+#     the bound is 520.
+#   - key_expression.py's `_origin_and_rest`'s `end < 0` turned into
+#     `end < 1`: the expression starts with "[", so a "]" is found at 1
+#     or later.
+#   - `Miniscript._assert_keys`' `!=` between its two context tests
+#     turned into `is not`: both sides are bools.
+#   - `max_witness_stack`'s index 0 turned into 1: the estimate reads only
+#     the lengths of what it builds, and a key's length does not depend
+#     on the index it is derived at. The two differ only where one index
+#     derives BIP32's invalid child, which BIP32 puts below 1 in 2**127
+#     and no test can find.
+#   - `_fragment_script`'s `subs[0]` for a `v:` turned into `subs[-1]`:
+#     a `v:` has one subexpression.
+#   - `_KEY_CALLS`' `node.keys[0]` for a `pk_k()` and a `pk_h()` turned
+#     into `keys[-1]`, a mutant the run did not sample: `_assert_keys`
+#     gives each of the two fragments one key.
 
 # one mutant at a time, in this working tree: see btclib's sig_hash.toml
 [cosmic-ray.distributor]

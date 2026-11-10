@@ -5,15 +5,17 @@
 """What `parse` never builds is refused when a descriptor is built by hand.
 
 A field of the wrong type, in every `Descriptor` fragment and in a
-`MultiA`, leaves as a `BTClibTypeError`. `TrDescriptor`,
-`MiniscriptDescriptor`, `UnusedDescriptor`, `ShDescriptor`,
-`WshDescriptor` and `MultiA` also refuse a value `parse` refuses, as a
-`BTClibValueError`, and every fragment holding a key that `parse` reads
-outside ``tr()`` and ``rawtr()``, and a P2WSH `Miniscript` node, refuses
-a ``musig()`` one and an x-only one. Issues
-btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
-btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119,
-btclib-org/bip32-descriptors#134, btclib-org/bip32-descriptors#150,
+`MultiA`, leaves as a `BTClibTypeError`, and so does a `Miniscript`
+node's fragment, threshold or digest of the wrong type, or its keys
+given as no tuple. `TrDescriptor`, `MiniscriptDescriptor`,
+`UnusedDescriptor`, `ShDescriptor`, `WshDescriptor` and `MultiA` also
+refuse a value `parse` refuses, as a `BTClibValueError`, and every
+fragment holding a key that `parse` reads outside ``tr()`` and
+``rawtr()``, and a P2WSH `Miniscript` node, refuses a ``musig()`` one
+and an x-only one. Issues btclib-org/bip32-descriptors#46,
+btclib-org/bip32-descriptors#85, btclib-org/bip32-descriptors#103,
+btclib-org/bip32-descriptors#119, btclib-org/bip32-descriptors#134,
+btclib-org/bip32-descriptors#141, btclib-org/bip32-descriptors#150,
 btclib-org/bip32-descriptors#158, btclib-org/bip32-descriptors#159 and
 btclib-org/bip32-descriptors#161.
 
@@ -31,6 +33,11 @@ btclib-org/bip32-descriptors#179.
 
 A ``musig()`` whose `hardening` is not h is refused too. Issue
 btclib-org/bip32-descriptors#181.
+
+`WshDescriptor` refuses an argument holding an uncompressed key, and
+both it and `ShDescriptor` refuse one whose script size or number of
+``multi()`` keys `parse` refuses there. Issue
+btclib-org/bip32-descriptors#175.
 """
 
 from __future__ import annotations
@@ -550,6 +557,45 @@ def test_a_multi_a_threshold_out_of_range_is_refused(
         MultiA(threshold, keys, sort=sort)
 
 
+# a hand-built `Miniscript` node for each field the tests below try,
+# carrying a valid value of it for `replace` to overtype
+_OLDER = miniscript.Miniscript("older", miniscript.P2WSH, threshold=1)
+_PK_K = miniscript.Miniscript("pk_k", miniscript.TAPSCRIPT, keys=(_KEY,))
+_SHA256 = miniscript.Miniscript("sha256", miniscript.P2WSH, data=bytes(32))
+
+
+@pytest.mark.parametrize("fragment", [[], 5, None])
+def test_a_miniscript_fragment_of_another_type_is_refused(fragment: Any) -> None:
+    """The fragment is the name BIP379 gives it, never another type."""
+    err_msg = f"^invalid fragment type: {type(fragment).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_OLDER, fragment=fragment)
+
+
+@pytest.mark.parametrize("threshold", ["1", 1.0, True, None])
+def test_a_miniscript_threshold_of_another_type_is_refused(threshold: Any) -> None:
+    """A bool is no number, though Python makes it an int."""
+    err_msg = f"^invalid threshold type: {type(threshold).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_OLDER, threshold=threshold)
+
+
+@pytest.mark.parametrize("keys", [5, [_KEY], None])
+def test_miniscript_keys_of_another_type_are_refused(keys: Any) -> None:
+    """The keys are a tuple, as `parse` builds them."""
+    err_msg = f"^invalid keys type: {type(keys).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_PK_K, keys=keys)
+
+
+@pytest.mark.parametrize("data", ["ab" * 32, 5, bytearray(32)])
+def test_miniscript_data_of_another_type_is_refused(data: Any) -> None:
+    """Hex text is not the digest: `parse` is what reads hex."""
+    err_msg = f"^invalid data type: {type(data).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_SHA256, data=data)
+
+
 _K = PrvKeyData(1).pub.sec.hex()
 _K2 = PrvKeyData(2).pub.sec.hex()
 _MINISCRIPT = parse(f"wsh(and_v(v:pk({_K}),older(1)))")
@@ -995,16 +1041,40 @@ def test_a_pub_key_of_another_type_is_refused(pub_key: Any) -> None:
         KeyExpression(pub_key=pub_key)
 
 
-@pytest.mark.parametrize(
-    "key",
-    [KeyExpression(), _RANGED_KEY, _MUSIG],
-    ids=["no key", "xkey", "musig"],
-)
+@pytest.mark.parametrize("key", [_RANGED_KEY, _MUSIG], ids=["xkey", "musig"])
 def test_an_x_only_key_with_no_pub_key_is_refused(key: KeyExpression) -> None:
     """`parse` reads an extended key and a ``musig()`` as not x-only."""
     assert not key.x_only
     with pytest.raises(BTClibValueError, match="^invalid x-only key: no pub_key$"):
         replace(key, x_only=True)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{}, {"wildcard": 0}, {"der_path": (0,)}],
+    ids=["empty", "wildcard", "der_path"],
+)
+def test_a_key_expression_with_no_key_is_refused(kwargs: dict[str, Any]) -> None:
+    """A key expression must have a pub_key, xkey, or participants."""
+    with pytest.raises(BTClibValueError, match="^No key provided$"):
+        KeyExpression(**kwargs)
+
+
+@pytest.mark.parametrize("step", [-1, 2**32, 2**32 + 1])
+def test_an_invalid_der_path_step_is_refused(step: int) -> None:
+    """A der_path step outside 0..2**32-1 is refused."""
+    with pytest.raises(
+        BTClibValueError, match=r"^invalid index: not in 0\.\.2\*\*32-1$"
+    ):
+        KeyExpression(xkey=_RANGED_KEY.xkey, der_path=(step,))
+
+
+@pytest.mark.parametrize("step", ["0", 1.5, True])
+def test_a_der_path_step_of_invalid_type_is_refused(step: Any) -> None:
+    """A der_path step that is not an integer is refused."""
+    err_msg = f"^invalid derivation index type: {type(step).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        KeyExpression(xkey=_RANGED_KEY.xkey, der_path=(step,))
 
 
 def test_an_uncompressed_x_only_key_is_refused_as_parse_refuses_it() -> None:
@@ -1014,6 +1084,119 @@ def test_an_uncompressed_x_only_key_is_refused_as_parse_refuses_it() -> None:
         parse(f"tr({_UNCOMPRESSED_WIF})")
     with pytest.raises(BTClibValueError, match=f"^{err_msg}$"):
         KeyExpression(pub_key=_UNCOMPRESSED, x_only=True)
+
+
+_U_KEY = KeyExpression(pub_key=_UNCOMPRESSED)
+_KEYS = tuple(KeyExpression(pub_key=PrvKeyData(i).pub.sec) for i in range(1, 22))
+_P2WSH = miniscript.P2WSH
+
+
+def _and_v_older(key: KeyExpression) -> MiniscriptDescriptor:
+    """Return ``and_v(v:pk(KEY),older(1))``, built by hand.
+
+    A P2WSH `Miniscript` node takes an uncompressed key when built, which
+    `miniscript.parse` refuses.
+    """
+    pk_k = miniscript.Miniscript("pk_k", _P2WSH, keys=(key,))
+    verify = miniscript.Miniscript(
+        "v:", _P2WSH, (miniscript.Miniscript("c:", _P2WSH, (pk_k,)),)
+    )
+    older = miniscript.Miniscript("older", _P2WSH, threshold=1)
+    return MiniscriptDescriptor(miniscript.Miniscript("and_v", _P2WSH, (verify, older)))
+
+
+_UNCOMPRESSED_HERE = "uncompressed public keys are not allowed here"
+# (wrapper, its argument, the refusal `parse` gives for their text)
+_REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]] = [
+    (WshDescriptor, PkDescriptor(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
+    (WshDescriptor, PkhDescriptor(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
+    (
+        WshDescriptor,
+        MultiDescriptor(1, (_C_KEY, _U_KEY)),
+        f"key 1: {_UNCOMPRESSED_HERE}",
+    ),
+    (
+        WshDescriptor,
+        MultiDescriptor(1, (_U_KEY, _C_KEY), sort=True),
+        f"key 0: {_UNCOMPRESSED_HERE}",
+    ),
+    (WshDescriptor, _and_v_older(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
+    (
+        WshDescriptor,
+        MultiDescriptor(1, _KEYS),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (
+        ShDescriptor,
+        MultiDescriptor(1, _KEYS),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (
+        ShDescriptor,
+        MultiDescriptor(1, _KEYS[:16]),
+        (
+            "multi() inside sh() is a 547-byte redeem script,"
+            " over the 520-byte push limit"
+        ),
+    ),
+    (
+        ShDescriptor,
+        MultiDescriptor(1, (_U_KEY,) * 8, sort=True),
+        (
+            "sortedmulti() inside sh() is a 531-byte redeem script,"
+            " over the 520-byte push limit"
+        ),
+    ),
+]
+_REFUSED_INSIDE_IDS = [
+    "wsh-pk",
+    "wsh-pkh",
+    "wsh-multi",
+    "wsh-sortedmulti",
+    "wsh-miniscript",
+    "wsh-21-keys",
+    "sh-21-keys",
+    "sh-547-bytes",
+    "sh-531-bytes",
+]
+
+
+@pytest.mark.parametrize(
+    "wrapper,inner,refusal", _REFUSED_INSIDE, ids=_REFUSED_INSIDE_IDS
+)
+def test_a_key_or_size_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
+    wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor, refusal: str
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    A ``raw()`` over the size limit is tried in `raw_descriptors_test`.
+    Issue btclib-org/bip32-descriptors#175.
+    """
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"{_WRAPPERS[wrapper]}({inner})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(inner)
+    parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
+@pytest.mark.parametrize(
+    "wrapper,inner",
+    [
+        (ShDescriptor, PkDescriptor(_U_KEY)),
+        (ShDescriptor, MultiDescriptor(1, (_U_KEY,) * 7)),
+        (ShDescriptor, MultiDescriptor(1, _KEYS[:15])),
+        (WshDescriptor, MultiDescriptor(1, _KEYS[:20])),
+    ],
+    ids=["sh-pk", "sh-465-bytes", "sh-513-bytes", "wsh-20-keys"],
+)
+def test_a_key_or_size_parse_takes_inside_sh_or_wsh_is_built(
+    wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor
+) -> None:
+    """The control: what `parse` reads there is built, and parses back."""
+    assert parse(str(wrapper(inner))) == wrapper(inner)
 
 
 @pytest.mark.parametrize(
@@ -1176,13 +1359,32 @@ def test_a_musig_with_an_xkey_is_refused() -> None:
         ),
         ({"xkey": _XPUB_A, "wildcard": "*"}, "invalid wildcard type: str"),
         ({"xkey": _XPUB_A, "wildcard": True}, "invalid wildcard type: bool"),
+        ({"der_path": [1]}, "invalid der_path type: list"),
+        ({"der_path": 1}, "invalid der_path type: int"),
+        ({"participants": [_FIXED_A, _FIXED_B]}, "invalid participants type: list"),
+        ({"participants": 1}, "invalid participants type: int"),
+        ({"participants": _FIXED_A}, "invalid participants type: KeyExpression"),
     ],
-    ids=["participant", "musig step", "wildcard", "bool wildcard"],
+    ids=[
+        "participant",
+        "musig step",
+        "wildcard",
+        "bool wildcard",
+        "der_path list",
+        "der_path int",
+        "participants list",
+        "participants int",
+        "participants KeyExpression",
+    ],
 )
-def test_a_musig_or_wildcard_field_of_another_type_is_refused(
+def test_a_key_field_of_another_type_is_refused(
     values: dict[str, Any], err_msg: str
 ) -> None:
-    """A participant is a `KeyExpression`, a step and a wildcard an int."""
+    """A key expression checks the type of its fields when built.
+
+    ``der_path`` and ``participants`` are tuples; a participant is a
+    `KeyExpression`, a step and a wildcard an int.
+    """
     with pytest.raises(BTClibTypeError, match=f"^{err_msg}$"):
         KeyExpression(**values)
 

@@ -200,16 +200,160 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 #   class `key_origin.py`'s `_pairs_from_der_path_str` and
 #   `_decode_from_bip32_deriv` are.
 #
-# Checked and left, though not equivalent: `__repr__`'s `self.key[:1] ==
-# b"\x00"` weakened to `<=`. The two differ only on an empty key, which
-# no validated instance holds: the mutant masks its chain code, which the
-# original prints, so the mutant hides more and leaks nothing.
+# `__repr__`'s `self.key[:1] == b"\x00"` weakened to `<=` dies in
+# tests/bip32/bip32_test.py. The two differ only on an empty key, which
+# an instance built with `check_validity=False` can hold: the mutant
+# masks its chain code as if the key were private, where the original
+# prints it.
 #
 # Not chased further, the same shape as the first pass's own note: the
 # `signed=False` reads and writes across the various `to_bytes`/
 # `int.from_bytes` calls in the derivation functions, and the
 # public-key-prefix set `{2, 3}`'s own numeric neighbors, both sampled
 # rather than exhausted.
+#
+# `der_path.py` and `key_origin.py` again, read off the mutation run
+# https://github.com/btclib-org/bip32-descriptors/actions/runs/42593958370
+# (issue btclib-org/bip32-descriptors#41), each survivor run again
+# against the whole suite. These die there, in tests outside tests/bip32
+# that this profile's command does not run, so a run of it reports them
+# alive again:
+#
+# - `_MAX_DIGITS` raised by one, in tests/descriptors/descriptors_test.py.
+# - the keyword-only `*` turned into `/` before `check_validity`, in
+#   tests/check_validity_test.py, and before the `bip380_enforced` of
+#   `int_from_index_str`, `indexes_from_der_path` and
+#   `hardenings_from_der_path`, in tests/bool_parameter_test.py.
+#
+# Of the rest, `BIP32KeyOrigin.assert_valid`'s `0 <= i` widened to
+# `-1 <= i`, `from_description`'s `data[8] != "/"` weakened to `>` and
+# its `data[9:]` widened to `data[8:]`, and `assert_valid_hd_key_paths`'
+# length comparison turned into `is not` die in
+# tests/bip32/key_origin_test.py. These operators are equivalent:
+#
+# - `_index_and_hardening_from_str`'s `index + (HARDENED_OFFSET if
+#   hardening else 0)` turned into `|` or `^`: the line before refuses
+#   an index at or above the offset, so its top bit is clear and the
+#   three agree.
+# - `str_from_index_int`'s `index - HARDENED_OFFSET` turned into `%` or
+#   `^`: the index there is at least the offset and at most 0xffffffff,
+#   so its top bit is set and the three agree.
+# - `_indexes_from_der_path`'s `len(der_path) % 4 != 0` weakened to
+#   `> 0`: a remainder by 4 is never negative.
+# - the keyword-only `*` turned into `/` in `_index_and_hardening_from_str`,
+#   `_pairs_from_der_path_str` and `_pairs_from_der_path`: the three are
+#   private, and every call passes the path, and `skip_m` where there is
+#   one, by position and `bip380_enforced` by keyword, which both
+#   signatures accept.
+# - `assert_valid_hd_key_paths`' `len(values) > len(serializations)`
+#   turned into `!=`: the set of the values' serializations is never
+#   larger than the values.
+# - `assert_valid_hd_key_paths`' `len(pub_key) != 78` weakened to `<`:
+#   the check before it has refused every length but 78, 33 and 65.
+# - `RemoveDecorator` on `BIP32KeyOrigin.__hash__`'s `@override`: it
+#   only marks the method, and nothing in the package reads the mark.
+#
+# `bip32.py` from the same run, its first part: `BIP32KeyData`, the
+# decoding cache and the validity checks it calls, each survivor again
+# run against the whole suite. These die there, outside tests/bip32:
+#
+# - the keyword-only `*` turned into `/` before `check_validity` in
+#   `serialize`, `b58encode`, `parse` and `b58decode`, in
+#   tests/check_validity_test.py.
+# - `parse`'s `len(key_bin) != _REQUIRED_LENGTH` weakened to `>`, in
+#   tests/fuzz_test.py.
+#
+# `_cached_base58_decode`'s cut of a quoted checksum, `maxsplit=1` turned
+# into 0, `[0]` into `[-1]` and its `not` dropped or doubled, and
+# `is_root`'s `parent_fingerprint == b"\x00" * 4` weakened to `<=` die in
+# tests/bip32/bip32_test.py. The lock's btclib quotes no checksum, so the
+# test hands `b58decode` the message the floor's does. These operators
+# are equivalent, where the paragraphs above have not named them:
+#
+# - `@functools.lru_cache(maxsize=2048)` on `_cached_base58_decode`
+#   removed, or its size moved by one: the function returns the bytes
+#   `base58.decode` does, a refusal is raised and never cached, and
+#   nothing reads the cache, so what changes is how often it decodes.
+# - `maxsplit=1` turned into 2: the part before the first ": " is the
+#   same.
+# - `_assert_valid_depth_and_index`'s `depth == 0` weakened to `<= 0`: a
+#   negative depth is refused by the check before it.
+# - `_assert_valid_key`'s `key[0] != 0` weakened to `> 0`: a byte is
+#   never below zero.
+# - `BIP32KeyData`'s `@dataclass(init=False)` turned into `init=True`:
+#   the class defines its own `__init__`, which `dataclass` keeps.
+# - `RemoveDecorator` on `BIP32KeyData.__repr__`'s `@override`: nothing
+#   in the package reads the mark.
+# - `assert_valid`'s `len(value) != size` and `parse`'s
+#   `len(key_bin) != _REQUIRED_LENGTH` turned into `is not`: the two
+#   differ only where the length equals the size, and the sizes are
+#   ints CPython keeps one object of.
+# - `parse`'s `len(key_bin) != _REQUIRED_LENGTH` weakened to `<`:
+#   `stream.read(_REQUIRED_LENGTH)` never returns more.
+#
+# `bip32.py` from the same run, its second part: the root key from a
+# seed and the reads of one half of a key from the other --
+# `_xpub_from_xprv`, `xpub_from_xprv`, `prv_keyinfo_from_xprv` and
+# `point_from_xpub` -- each survivor again run against the whole suite,
+# which kills none of them outside tests/bip32.
+# `prv_keyinfo_from_xprv`'s `key[:1]` widened to `key[:2]` in its "not a
+# private key" refusal, and `point_from_xpub`'s `ec != ec2` turned into
+# `is not`, die in tests/bip32/bip32_test.py: the first is now compared
+# whole, the second given a copy of secp256k1, an equal curve that is
+# another object. These operators are equivalent, where the paragraphs
+# above have not named them:
+#
+# - `_xpub_from_xprv`'s and `prv_keyinfo_from_xprv`'s `key[0] != 0`
+#   weakened to `> 0`: a byte is never below zero.
+# - `prv_keyinfo_from_xprv`'s `key[1:]` widened to `key[0:]`, for the
+#   reason the four reads above are: its `key[0] != 0` guard has
+#   confirmed that byte is zero.
+# - `_xpub_from_xprv`'s `check_validity=False` turned into `True`: every
+#   caller hands it a key that has been validated, by
+#   `key_data_from_bip32_key` or by the `_derive` of one, and the
+#   neutered key of a valid xprv is valid, so the check passes.
+# - `xpub_from_xprv`'s `b58encode(check_validity=False)` turned into
+#   `True`: `xpub_from_xprv_` has validated the key it answers, so the
+#   second check passes too.
+#
+# `bip32.py` from the same run, its last part: the derivations -- the
+# working copy `_BIP32KeyData`, the public step, the account and range
+# spellings -- and `crack_prv_key`, each survivor again run against the
+# whole suite. `_assert_valid_branch`'s `branch > max_index` weakened to
+# `>=` dies there, in tests/integer_policy_test.py, and now in
+# tests/bip32 too. These die in tests/bip32/bip32_test.py:
+# `_BIP32KeyData`'s `@dataclass(repr=False)` turned into `repr=True`,
+# which would print the key and its scalar; the `max_index` default of
+# `derive_from_account_`, `derive_from_account_range_` and
+# `derive_from_account_range` moved by one, and the last one's
+# `branches_0_1_only` default turned into `False`;
+# `derive_from_account_range_`'s loop of output checks replaced with one
+# over nothing, which a count of `assert_valid` calls sees; and
+# `crack_prv_key`'s `parent_fingerprint != ...` weakened to `<`, which a
+# wrong fingerprint above the parent's tells apart. These operators are
+# equivalent, where the paragraphs above have not named them:
+#
+# - `_BIP32KeyData.is_private`'s and `crack_prv_key`'s `key[0] == 0` and
+#   `!= 0` weakened to `<=` and `>`: a byte is never below zero.
+# - `_derive`'s `key[1:]` widened to `key[0:]`, behind `is_private`, for
+#   the reason the four reads above are; and its `else 0`, the scalar of
+#   a public key, turned into 1 or -1: only the private derivation
+#   reads the scalar, and it runs only for a private key.
+# - `_pub_key_offset`'s and `crack_prv_key`'s `index.to_bytes(4, ...,
+#   signed=False)` turned into `signed=True`: each is reached only past
+#   a refusal of a hardened index, and below 2**31 both write the same
+#   four bytes.
+# - `pub_key_derivation_tweaks`' `secp256k1.p_size + 1` turned into `|`
+#   or `^`: `p_size` is 32, and all three give 33.
+# - `crack_prv_key`'s `c.depth != p.depth + 1` turned into `is not`: a
+#   depth is at most 255, and the ints up to 256 are ones CPython keeps
+#   one object of.
+# - `derive_from_account_range`'s and `derive_from_account`'s
+#   `b58encode(check_validity=False)` turned into `True`: the underscore
+#   spelling each calls has validated the keys it answers.
+# - `crack_prv_key`'s `check_validity=False` turned into `True`: the
+#   `b58encode()` after it makes the same `assert_valid` on the same key,
+#   so the check moves and refuses nothing more.
 
 [cosmic-ray.distributor]
 name = "local"

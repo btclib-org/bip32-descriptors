@@ -3,11 +3,11 @@
 What this repository holds in common with the others of the organization
 — the toolchain, the lint gate, the tool tables behind it, the workflow
 set and the branch rules — is stated once in the
-[btclib-org repository standard](https://github.com/btclib-org/.github),
-each rule with the alternative it was decided against. It binds this
+[organization's standard](https://github.com/btclib-org/.github), each
+rule with the alternative it was decided against. It binds this
 repository, so a change departing from it is a divergence, and one filed
-as an issue in that repository rather than here: a difference between two
-repositories belongs to neither of them.
+as an issue in btclib-org/.github rather than here: a difference between
+two repositories belongs to neither of them.
 
 **This file is the same in every repository of the organization up to
 its last section.** What is true of one tree only — the commands that
@@ -713,7 +713,7 @@ same sha, which is the reliance `REVIEWING.md` provides for.
 Which workflows that last row covers is
 `grep -n 'uses: \./\.github/workflows/' .github/workflows/release.yml`,
 not a list here. Which day each of the rest runs is section 10 of
-[the organization standard](https://github.com/btclib-org/.github), and
+[the organization's standard](https://github.com/btclib-org/.github), and
 not this file's to restate.
 
 The `test`, `lint`, `docs` and `integration-bitcoind` rows run one image on one
