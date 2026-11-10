@@ -560,7 +560,7 @@ def test_a_multi_a_threshold_out_of_range_is_refused(
 # a hand-built `Miniscript` node for each field the tests below try,
 # carrying a valid value of it for `replace` to overtype
 _OLDER = miniscript.Miniscript("older", miniscript.P2WSH, threshold=1)
-_PK_K = miniscript.Miniscript("pk_k", miniscript.P2WSH, keys=(_KEY,))
+_PK_K = miniscript.Miniscript("pk_k", miniscript.TAPSCRIPT, keys=(_KEY,))
 _SHA256 = miniscript.Miniscript("sha256", miniscript.P2WSH, data=bytes(32))
 
 
