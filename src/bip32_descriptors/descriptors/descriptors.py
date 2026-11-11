@@ -1817,7 +1817,8 @@ class ShDescriptor(Descriptor):
     `WshDescriptor` refuses one, before ``sh()`` writes its text.
 
     An unpickled ``multi()`` argument is refused for a field of the
-    wrong type and for its threshold as `WshDescriptor` says.
+    wrong type and for its threshold as `WshDescriptor` says, and an
+    unpickled ``rawpkh()`` one for the size of its hash.
     """
 
     inner: Descriptor
@@ -1913,7 +1914,9 @@ class WshDescriptor(Descriptor):
     An unpickled ``multi()`` argument skips its own check. A field of
     the wrong type is refused first, as `_assert_multi_types` says, and
     a threshold out of range whose text can be written in `parse`'s
-    order, as `_assert_embedded` says.
+    order, as `_assert_embedded` says. An unpickled ``rawpkh()`` argument
+    skips its own check too, and a hash of other than 20 bytes is
+    refused as `_assert_embedded` says.
     """
 
     inner: Descriptor
@@ -3026,6 +3029,10 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     A key that is no `KeyExpression` is refused before any of these,
     whatever its position, with the message `_assert_key_types` gives:
     an unpickled argument skips that check of its own too.
+
+    The hash of a ``rawpkh()`` argument is refused empty or of other than
+    20 bytes, with `_assert_key_hash_size`'s message: an unpickled
+    ``rawpkh()`` skips its own check of it.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
@@ -3042,6 +3049,8 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     _assert_keys(inner.key_expressions, check)
     if isinstance(inner, RawDescriptor):
         _assert_raw_size(inner.script, context)
+    if isinstance(inner, RawPkhDescriptor):
+        _assert_key_hash_size(inner.key_hash)
 
 
 def _assert_multi_embedded(

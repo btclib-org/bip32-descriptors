@@ -113,6 +113,11 @@ descriptor function, or that is not sane, with `MiniscriptDescriptor`'s
 message, once its nodes and keys pass. They do not ask again the sanity
 of one `parse` or `infer_descriptor` has read. Issue
 btclib-org/bip32-descriptors#267.
+
+`WshDescriptor`, and `ShDescriptor` for a ``rawpkh()`` argument and for
+one inside a ``wsh()`` argument, refuse an unpickled ``rawpkh()`` whose
+hash is empty or of other than 20 bytes, with `parse`'s message. Issue
+btclib-org/bip32-descriptors#281.
 """
 
 from __future__ import annotations
@@ -2631,6 +2636,31 @@ def test_a_rawpkh_hash_of_other_than_20_bytes_is_refused_when_built(
     object.__setattr__(unpickled, "key_hash", key_hash)
     with pytest.raises(BTClibValueError, match=err_msg):
         unpickled.script_pub_key()
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [WshDescriptor, ShDescriptor, lambda inner: ShDescriptor(_unpickled_wsh(inner))],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+@pytest.mark.parametrize(
+    "size,refusal",
+    [(0, "Rawpkh hash is not hex"), (19, "160 bits digest expected")],
+    ids=["empty", "19-bytes"],
+)
+def test_an_unpickled_rawpkh_hash_of_other_than_20_bytes_is_refused_inside(
+    size: int, refusal: str, wrap: Callable[[Descriptor], Descriptor]
+) -> None:
+    """By the wrapper when built, with the message `parse` gives.
+
+    An unpickled ``rawpkh()`` skips its own check of the hash. Issue
+    btclib-org/bip32-descriptors#281.
+    """
+    parsed = _PARSED[RawPkhDescriptor]
+    unpickled: RawPkhDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(unpickled, "key_hash", bytes(size))
+    with pytest.raises(BTClibValueError, match=f"^{refusal}$"):
+        wrap(unpickled)
 
 
 _TAPSCRIPT = miniscript.TAPSCRIPT
