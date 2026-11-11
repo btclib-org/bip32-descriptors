@@ -59,6 +59,10 @@ an uncompressed key and the node's text can be written, the node is left
 to the descriptor's text and sanity checks; where it passes them,
 ``tr()`` and ``wsh()`` refuse that key by its position, and a bare
 `MiniscriptDescriptor` builds it. Issue btclib-org/bip32-descriptors#235.
+
+`TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
+holding a key that is no `KeyExpression`, before they count its keys.
+Issue btclib-org/bip32-descriptors#246.
 """
 
 from __future__ import annotations
@@ -341,7 +345,8 @@ def test_an_unpickled_node_holding_a_key_of_another_type_is_refused(
 ) -> None:
     """In a ``tr()`` leaf and in a ``wsh()``, naming the type alone.
 
-    An unpickled node skips `Miniscript`'s own check of its keys.
+    An unpickled node skips `Miniscript`'s own check of its keys. Issue
+    btclib-org/bip32-descriptors#246.
     """
     err_msg = f"^invalid key type: {type(key).__name__}$"
     leaf = _unpickled(miniscript.parse(f"pk({_X})", miniscript.TAPSCRIPT))
@@ -2427,4 +2432,21 @@ def test_a_node_s_keys_given_as_a_list_are_refused(wrapped: str) -> None:
     root = _holding("pk_k", context, (own[2],))
     object.__setattr__(_node_at(root, (1, 0)), "keys", [own[2]])
     with pytest.raises(BTClibTypeError, match="^invalid keys type: list$"):
+        wrap(root)
+
+
+@pytest.mark.parametrize("first", [False, True], ids=["second", "first"])
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_key_of_another_type_is_refused_before_the_number_of_keys(
+    wrapped: str, first: bool
+) -> None:
+    """In a ``pk_k`` holding two keys, naming the type alone.
+
+    Issue btclib-org/bip32-descriptors#246.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    keys: tuple[object, ...] = ("abc", own[2]) if first else (own[2], "abc")
+    root = _holding("pk_k", context, cast("tuple[KeyExpression, ...]", keys))
+    with pytest.raises(BTClibTypeError, match="^invalid key type: str$"):
         wrap(root)

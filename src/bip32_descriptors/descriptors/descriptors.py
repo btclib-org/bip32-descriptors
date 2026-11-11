@@ -762,11 +762,11 @@ def _assert_key_numbers(
     """Refuse a node holding a number of keys its fragment does not take.
 
     Each root and every node below it, which a walk has already checked
-    for their type and context; `keys` are the keys the nodes hold, and
-    in ``tr()`` those of its other leaves. An unpickled node skips
-    `Miniscript`'s own check, and the text of a ``pk_k`` or ``pk_h``
-    reads only its first key. A fragment the library does not define is
-    named "a node", and taken to hold no key.
+    for their type, their context and the type of their keys; `keys` are
+    the keys the nodes hold, and in ``tr()`` those of its other leaves.
+    An unpickled node skips `Miniscript`'s own check, and the text of a
+    ``pk_k`` or ``pk_h`` reads only its first key. A fragment the library
+    does not define is named "a node", and taken to hold no key.
 
     Such a node is refused for a multisig outside its context, as its
     build refuses it. Otherwise, where `keys` hold an uncompressed one,
@@ -840,7 +840,9 @@ def _assert_key_types(node: Miniscript) -> None:
     """Refuse a node whose keys are not a tuple of KEY expressions.
 
     `Miniscript` refuses them when it is built, but an unpickled node
-    skips that check, and a walk of its keys would read any value.
+    skips that check. A walk calls this where it reaches the node, before
+    anything reads a key, so the refusal comes before a fault of any node
+    the walk reaches later.
     """
     assert_type(node.keys, tuple, "keys")
     for key in node.keys:
@@ -859,6 +861,9 @@ def _assert_tree(tree: DescriptorTree) -> None:
     tapscript context. Each node writes its keys in its own context, and
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
+
+    A miniscript node is refused where its keys are not a tuple of KEY
+    expressions, as `_assert_key_types` says.
 
     Once the walk is done, so that a node of the wrong type or context is
     named first, a miniscript leaf is refused where any of its nodes holds
@@ -1929,6 +1934,9 @@ def _assert_p2wsh(node: Miniscript) -> None:
     built, but an unpickled node skips that check and holds any context,
     so every node is walked, and only the library's own context and
     fragments are named.
+
+    A node is also refused where its keys are not a tuple of KEY
+    expressions, as `_assert_key_types` says.
     """
     stack = [node]
     while stack:
@@ -2440,12 +2448,11 @@ class TrDescriptor(Descriptor):
 
     An uncompressed key is refused when built, with `parse`'s message.
     The internal key is refused before the tree, as `parse` reads them,
-    and a leaf key once the tree passes its other checks: its shape, its
-    nodes' context and number of keys, its leaves' text and their sanity.
-    `parse` refuses instead whichever fault it reads first. A `MultiA`
-    leaf and a tapscript `Miniscript` node refuse one when they are
-    built, before the ``tr()`` that holds them, and their message lacks
-    the ``key N:`` that names the key's position in the ``tr()``.
+    and a leaf key once the tree passes its other checks. `parse` refuses
+    instead whichever fault it reads first. A `MultiA` leaf and a
+    tapscript `Miniscript` node refuse one when they are built, before
+    the ``tr()`` that holds them, and their message lacks the ``key N:``
+    that names the key's position in the ``tr()``.
     """
 
     internal_key: KeyExpression
