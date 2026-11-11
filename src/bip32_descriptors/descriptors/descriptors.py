@@ -1815,6 +1815,9 @@ class ShDescriptor(Descriptor):
     that check of its own. A miniscript there is refused as
     `WshDescriptor` refuses one, before its text is written.
 
+    A ``multi()`` argument whose keys are no tuple is refused as
+    `WshDescriptor` refuses one.
+
     A ``multi()`` argument, and one inside a ``wsh()`` argument, is
     refused for a field of the wrong type as `MultiDescriptor` refuses
     it, before its text is written: an unpickled one skips that check.
@@ -1908,6 +1911,11 @@ class WshDescriptor(Descriptor):
     check, and its text need not be written without raising. Its
     sanity, and whether `parse` reads its text as a descriptor function,
     are left to its own build.
+
+    A ``multi()`` argument whose keys are no tuple is refused as
+    `MultiDescriptor` refuses it, before its function: its text is
+    written with its keys, and an unpickled ``multi()`` skips that check
+    of its own.
 
     A ``multi()`` argument is refused for a field of the wrong type as
     `MultiDescriptor` refuses it, before its text is written: an
@@ -2971,7 +2979,12 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     `parse` names for it. A name `_PARSERS` does not hold, as a subclass
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
+
+    A ``multi()`` whose keys are no tuple is refused first, as
+    `MultiDescriptor` refuses it: `str` writes its keys.
     """
+    if isinstance(inner, MultiDescriptor):
+        assert_type(inner.keys, tuple, "keys")
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
