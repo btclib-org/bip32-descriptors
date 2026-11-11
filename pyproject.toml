@@ -325,9 +325,10 @@ ignore-regex = '`[^`]*`'
 # glob syntax differs: "*/_data/*.json" matches at any depth for codespell
 # and one directory deep for typos.
 #
-# .bestpractices.json is not in [tool.codespell]'s skip: it holds the
-# bestpractices.dev answers of record, which --write-changes would
-# rewrite, printing nothing
+# .bestpractices.json is not in [tool.codespell]'s skip, and codespell
+# flags nothing in it. typos flags words there that are no typo, `CPY`
+# of the rule id CPY001 and `ba` of the commit sha 910ba96, and the file
+# is the bestpractices.dev answers of record, not text to correct
 extend-exclude = [
     "**/_data/*.json",
     "**/_data/*.csv",
