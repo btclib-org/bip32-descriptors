@@ -249,6 +249,7 @@ from bip32_descriptors.descriptors.miniscript import (
     _assert_key_number,
     _assert_sane,
     _assert_sane_script,
+    _assert_sub_number,
     _has_raw_key_hash,
     _multisig_context_fault,
     _read_unclosed_multisig_keys,
@@ -825,10 +826,13 @@ def _tapscript_node(node: object) -> Miniscript:
     """Return a miniscript node of a tr() leaf, refusing what is none.
 
     A node that skipped `Miniscript`'s own checks, as an unpickled one
-    does, holds any value as a subexpression, a context or a fragment, so
-    only the library's own context is named, a refusal echoing no value
-    it holds. Once its context passes, its fragment is refused as
-    `_assert_fragment_type` says.
+    does, holds any value as a subexpression, a context or a fragment,
+    so only the library's own context is named, a refusal echoing no
+    value it holds. Once its context passes, its fragment is refused as
+    `_assert_fragment_type` says, then its number of subexpressions as
+    `_assert_sub_number` says, with `Miniscript`'s message: a node
+    holding another number writes no text, or one that does not parse
+    back as itself.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -838,6 +842,7 @@ def _tapscript_node(node: object) -> Miniscript:
         err_msg = f"not a tapscript node: {_named_fragment(node)} in {context}"
         raise BTClibValueError(err_msg)
     _assert_fragment_type(node.fragment)
+    _assert_sub_number(node.fragment, len(node.subs))
     return node
 
 
@@ -877,8 +882,9 @@ def _assert_tree(tree: DescriptorTree) -> None:
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
 
-    A miniscript node of that context is then refused for its fragment,
-    before its keys are read, as `_tapscript_node` says.
+    A miniscript node of that context is then refused for its fragment
+    and its number of subexpressions, before its keys are read, as
+    `_tapscript_node` says.
 
     A miniscript node and a `MultiA` leaf are refused where their keys are
     not a tuple of KEY expressions, as `_assert_key_types` says.
@@ -1921,13 +1927,14 @@ class WshDescriptor(Descriptor):
     skips its own check, and what it holds need not be written without
     raising.
 
-    A miniscript argument is refused before its text is written: for
-    its nodes as `MiniscriptDescriptor` refuses them, their type,
-    context, fragment and the type of their keys, then for its keys as
-    above, then for a node holding a number of keys its fragment does
-    not take, with `MiniscriptDescriptor`'s message, as `parse` reads the
-    keys of a node before it counts them. An unpickled one skips its own
-    check, and its text need not be written without raising.
+    A miniscript argument is refused before its text is written: for its
+    nodes as `MiniscriptDescriptor` refuses them, their type, context,
+    fragment, number of subexpressions and the type of their keys, then
+    for its keys as above, then for a node holding a number of keys its
+    fragment does not take, with `MiniscriptDescriptor`'s message, as
+    `parse` reads the keys of a node before it counts them. An unpickled
+    one skips its own check, and its text need not be written without
+    raising.
 
     Once those pass, a miniscript argument whose text `parse` reads as a
     descriptor function, such as ``pk()``, and then one that is not sane,
@@ -2028,6 +2035,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
 
     A node is refused first where it is no `Miniscript`, and, once its
     context passes, where `_assert_fragment_type` refuses its fragment,
+    then where `_assert_sub_number` refuses its number of subexpressions,
     before its keys are read.
 
     A node is also refused where its keys are not a tuple of KEY
@@ -2044,6 +2052,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
         _assert_fragment_type(sub.fragment)
+        _assert_sub_number(sub.fragment, len(sub.subs))
         _assert_key_types(sub)
         stack += sub.subs
 

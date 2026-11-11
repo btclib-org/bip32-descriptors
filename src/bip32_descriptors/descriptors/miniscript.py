@@ -298,6 +298,19 @@ def _assert_fragment_type(fragment: object) -> None:
         raise BTClibTypeError(err_msg)
 
 
+def _assert_sub_number(fragment: str, subs: int) -> None:
+    """Refuse a number of subexpressions the fragment does not take.
+
+    A fragment the library does not define is left to the caller.
+    """
+    if fragment == "thresh":
+        if not subs:
+            raise BTClibValueError("thresh() takes at least one subexpression")
+    elif fragment in _ARITY and subs != _ARITY[fragment]:
+        err_msg = f"{fragment} takes {_ARITY[fragment]} subexpressions, {subs} given"
+        raise BTClibValueError(err_msg)
+
+
 def _multisig_context_fault(fragment: str) -> str:
     """Return the fault of a multisig outside its context."""
     if fragment == "multi":
@@ -1217,17 +1230,9 @@ class Miniscript:
             raise BTClibValueError(err_msg)
         fragment = self.fragment
         _assert_fragment_type(fragment)
-        if fragment == "thresh":
-            if not self.subs:
-                raise BTClibValueError("thresh() takes at least one subexpression")
-        elif fragment not in _ARITY:
+        if fragment != "thresh" and fragment not in _ARITY:
             raise BTClibValueError("unknown miniscript fragment")
-        elif len(self.subs) != _ARITY[fragment]:
-            err_msg = (
-                f"{fragment} takes {_ARITY[fragment]} subexpressions, "
-                f"{len(self.subs)} given"
-            )
-            raise BTClibValueError(err_msg)
+        _assert_sub_number(fragment, len(self.subs))
         # each node writes its keys in its own context, so a subexpression
         # of the other one would put keys of the wrong size in the script
         if any(sub.context != self.context for sub in self.subs):
