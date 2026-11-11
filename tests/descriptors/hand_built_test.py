@@ -52,7 +52,9 @@ names. Issue btclib-org/bip32-descriptors#221.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse a node holding a number
 of keys its fragment does not take, with the node's own message,
-before its text is written. Issue btclib-org/bip32-descriptors#235.
+before its text is written, unless the node holds an uncompressed key:
+``tr()`` and ``wsh()`` refuse that key by its position, and a bare
+`MiniscriptDescriptor` builds it. Issue btclib-org/bip32-descriptors#235.
 """
 
 from __future__ import annotations

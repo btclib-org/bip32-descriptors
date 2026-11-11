@@ -768,7 +768,8 @@ def _assert_key_numbers(roots: Iterable[Miniscript]) -> None:
     Such a node is refused as its build refuses it: for a multisig
     outside its context, and otherwise for the number of keys. One
     holding an uncompressed key is left to the key check of ``tr()`` or
-    ``wsh()``, which names the key by its position, as `parse` does.
+    ``wsh()``, which names the key by its position among the keys the
+    nodes hold.
     """
     stack = list(roots)
     while stack:
