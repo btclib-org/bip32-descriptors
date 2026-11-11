@@ -3590,11 +3590,9 @@ def test_too_many_keys_for_a_multi_a() -> None:
 def test_a_multi_a_of_1000_keys_is_refused_for_its_count_before_its_threshold(
     name: str, threshold: int
 ) -> None:
-    """Bitcoin Core checks the count before the threshold, so parse does too.
+    """Refuse 1000 keys as `_assert_multi_a_count` says, at parse and build.
 
-    A leaf of 1000 keys is refused as such whatever the threshold names,
-    at parse and at the build of a leaf made by hand, and the same
-    threshold with the 999 keys BIP387 allows is the k that is wrong.
+    With the 999 keys BIP387 allows, the same threshold is refused as k.
     """
     too_many = ",".join([XONLY] * 1000)
     count_err = rf"^invalid n in k-of-n {name}: 1000$"
