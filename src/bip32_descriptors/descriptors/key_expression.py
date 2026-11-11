@@ -595,7 +595,7 @@ class KeyExpression:
         if self.participants:
             text = _expression("musig", *(str(key) for key in self.participants))
             for index in self.der_path:
-                text += "/" + str_from_index_int(index, self.hardening)
+                text += f"/{str_from_index_int(index, self.hardening)}"
             if self.wildcard is not None:
                 text += "/*"
             return text
@@ -609,7 +609,7 @@ class KeyExpression:
             return text + _printed_pub_key(self)
         text += _printed_xkey(self.xkey)
         for index in self.der_path:
-            text += "/" + str_from_index_int(index, self.hardening)
+            text += f"/{str_from_index_int(index, self.hardening)}"
         if self.wildcard is not None:
             text += "/*" + (self.hardening if self.wildcard else "")
         return text
@@ -633,9 +633,7 @@ def _offered_signature(
     """
     if sec in signatures:
         return signatures[sec]
-    if x_only and sec[1:] in signatures:
-        return signatures[sec[1:]]
-    return None
+    return signatures[sec[1:]] if x_only and sec[1:] in signatures else None
 
 
 def _split_arguments(arguments: str) -> list[str]:

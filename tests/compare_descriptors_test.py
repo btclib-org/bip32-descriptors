@@ -360,7 +360,7 @@ class FakeCore:
         elif method == "deriveaddresses":
             address = f"{params[0]} {params[1:]}"
             two = "<" in params[0]
-            answer["result"] = [[address], [address + " 1"]] if two else [address]
+            answer["result"] = [[address], [f"{address} 1"]] if two else [address]
         else:
             answer["result"] = {}
         return answer

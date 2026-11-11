@@ -209,10 +209,10 @@ BIP_INVALID = [
 X1 = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
 X2 = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
 X3 = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
-KEY = "03" + XONLY
+KEY = f"03{XONLY}"
 HASH160_KEY = "9a1c78a507689f6f54b847ad1cef1e614ee23f1e"
 # a second compressed key, the key of X2, and its hash160
-KEY_B = "02" + X2
+KEY_B = f"02{X2}"
 HASH160_B = "06afd46bcdfd22ef94ac122aa11f241244a37ecc"
 # the hash160 of the x-only key X2, which is what a tapscript pkh() hashes
 HASH160_X2 = "9b652a14674a506079f574d20ca7daef6f9a66bb"
@@ -654,7 +654,7 @@ def test_a_bare_leaf_has_no_other_version() -> None:
 def test_rawnode_and_the_leaves_are_numbered_apart() -> None:
     """Number only the leaves a descriptor shows."""
     parsed = _tr(f"tr({XONLY},{{rawnode({NODE}),{{pk({X1}),raw(51)}}}})")
-    assert parsed.key_expressions[1].pub_key == bytes.fromhex("02" + X1)
+    assert parsed.key_expressions[1].pub_key == bytes.fromhex(f"02{X1}")
     leaves = parsed.taproot_leaf_scripts()
     assert sorted(script for script, _ in leaves.values()) == sorted(
         [bytes.fromhex(f"20{X1}ac"), b"\x51"]
@@ -759,7 +759,7 @@ def test_infer_reads_no_rawpkh_in_a_miniscript() -> None:
         (f"{HASH160_B[:20]} {HASH160_B[20:]}", r"^Rawpkh hash is not hex$"),
         (f"{HASH160_B} ", r"^Rawpkh hash is not hex$"),
         (HASH160_B[:-2], r"^160 bits digest expected$"),
-        (HASH160_B + "00", r"^160 bits digest expected$"),
+        (f"{HASH160_B}00", r"^160 bits digest expected$"),
     ],
 )
 def test_a_rawpkh_in_a_miniscript_is_read_as_rawpkh_is_elsewhere(
@@ -833,12 +833,12 @@ def test_raw_inside_sh_and_wsh_is_a_script_and_no_key() -> None:
         (
             f"sh(rawpkh({HASH160_KEY}))",
             "redeem_script",
-            "76a914" + HASH160_KEY + "88ac",
+            f"76a914{HASH160_KEY}88ac",
         ),
         (
             f"wsh(rawpkh({HASH160_KEY}))",
             "witness_script",
-            "76a914" + HASH160_KEY + "88ac",
+            f"76a914{HASH160_KEY}88ac",
         ),
     ],
 )
@@ -897,7 +897,7 @@ def _spend(descriptor: str, signer: str) -> tuple[bytes, bytes, bytes]:
     [
         pytest.param(descriptor, id=vector_id(index, descriptor))
         for index, (descriptor, _, _) in enumerate(OWN_VECTORS)
-        if "pk(" + X1 in descriptor and "rawleaf(51,c2)" not in descriptor
+        if f"pk({X1}" in descriptor and "rawleaf(51,c2)" not in descriptor
     ],
 )
 def test_a_leaf_is_spent_with_a_control_block_through_a_hidden_node(
