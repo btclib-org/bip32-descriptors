@@ -4159,3 +4159,21 @@ def test_an_unpickled_node_of_a_threshold_its_fragment_does_not_take_is_refused(
     object.__setattr__(_node_at(root, path), "threshold", threshold)
     with pytest.raises(BTClibValueError, match=f"^{re.escape(refusal)}$"):
         wrap(root)
+
+
+@pytest.mark.parametrize("name", _DERIVED_FIELDS)
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_an_unpickled_node_lacking_a_field_its_build_computes_is_refused(
+    wrapped: str, name: str
+) -> None:
+    """As one holding a type or bounds its build does not compute.
+
+    A stream can leave a field out, and unpickling then leaves it unset.
+    Issue btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    root = _forged_and_v(context, forged=False)
+    object.__delattr__(root.subs[1], name)
+    err_msg = "^c: holds a type or bounds its build does not compute$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _outermost(wrapped, root)

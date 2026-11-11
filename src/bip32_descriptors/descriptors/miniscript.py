@@ -1175,9 +1175,10 @@ def _assert_derived(root: Miniscript) -> None:
     asked: what its build computes depends on its number of keys, and no
     build takes that number. Nor are the nodes above it: they would be
     computed from what it holds, which nothing asks. Any other node is
-    asked whatever its keys, which what its build computes does not read.
-    The caller has checked the type of every node, its context, and the
-    types of its fragment and its keys.
+    asked whatever its keys hold: what its build computes reads at most
+    their number, which its fragment takes. A node lacking a field its
+    build computes is refused too. The caller has checked the type of
+    every node, its context, and the types of its fragment and its keys.
     """
     nodes: list[Miniscript] = []
     stack = [root]
@@ -1199,7 +1200,8 @@ def _assert_derived(root: Miniscript) -> None:
                 continue
         node._assert_arity()
         node._assert_number()
-        if _derived(node) != tuple(getattr(node, name) for name in _DERIVED):
+        # None, which no build computes, for a field an unpickled node lacks
+        if _derived(node) != tuple(getattr(node, name, None) for name in _DERIVED):
             fragment = node.fragment
             err_msg = f"{fragment} holds a type or bounds its build does not compute"
             raise BTClibValueError(err_msg)
