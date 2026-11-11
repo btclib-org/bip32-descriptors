@@ -2781,13 +2781,22 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 def _assert_embedded(inner: Descriptor, context: str) -> None:
     """Refuse an argument `parse` refuses in `context` past its function.
 
-    An uncompressed key, the number of keys of a ``multi()``, and the
-    size of its script, in `parse`'s order and with its messages.
-    ``sh()`` and ``wsh()`` hold no key of their own, so a key's index in
-    `inner` is the position `parse` names.
+    A key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, the
+    number of keys of a ``multi()``, and the size of its script, in
+    `parse`'s order and with its messages: key by key, each refused for
+    its taproot spelling before its compression. An unpickled argument
+    skips its own check of the keys. ``sh()`` and ``wsh()`` hold no key
+    of their own, so a key's index in `inner` is the position `parse`
+    names.
     """
-    if _no_uncompressed(context):
-        _assert_keys(inner.key_expressions, _assert_compressed)
+    no_uncompressed = _no_uncompressed(context)
+
+    def check(key: KeyExpression) -> None:
+        _assert_outside_taproot(key)
+        if no_uncompressed:
+            _assert_compressed(key)
+
+    _assert_keys(inner.key_expressions, check)
     if isinstance(inner, MultiDescriptor):
         name = str(inner).partition("(")[0]
         _assert_multi_count(name, inner.keys)
