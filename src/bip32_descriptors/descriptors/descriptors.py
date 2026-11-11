@@ -1724,8 +1724,9 @@ class ShDescriptor(Descriptor):
     unless the argument is invalid by itself, as `Descriptor` says.
 
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
-    refuses it, its function before its keys, as `parse` reads it: an
-    unpickled ``wsh()`` skips that check of its own.
+    refuses it, a value of the wrong type included, and its function
+    before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
+    that check of its own.
     """
 
     inner: Descriptor
@@ -1736,6 +1737,7 @@ class ShDescriptor(Descriptor):
         assert_type(self.inner, Descriptor, "inner descriptor")
         _assert_inner(self.inner, _P2SH)
         if isinstance(self.inner, WshDescriptor):
+            assert_type(self.inner.inner, Descriptor, "inner descriptor")
             _assert_inner(self.inner.inner, _P2WSH)
             _assert_embedded(self.inner.inner, _P2WSH)
         _assert_embedded(self.inner, _P2SH)

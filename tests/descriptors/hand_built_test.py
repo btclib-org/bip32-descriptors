@@ -42,8 +42,9 @@ btclib-org/bip32-descriptors#181.
 btclib-org/bip32-descriptors#175 and btclib-org/bip32-descriptors#233.
 
 `ShDescriptor` refuses the argument of a ``wsh()`` argument as
-`WshDescriptor` refuses it, by its function before its keys, as `parse`
-does. Issue btclib-org/bip32-descriptors#242.
+`WshDescriptor` refuses it, a value of the wrong type included, and by
+its function before its keys, as `parse` does. Issue
+btclib-org/bip32-descriptors#242.
 
 `WpkhDescriptor` and a P2WSH `Miniscript` node refuse an uncompressed
 key, `MultiDescriptor` no keys, more than 20 keys and a k outside 1 to
@@ -1488,6 +1489,27 @@ def test_what_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
         wrapper(inner)
     parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
     with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
+@pytest.mark.parametrize(
+    "value", [5, None, f"pk({_C})"], ids=["int", "none", "str"]
+)
+def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
+    value: Any,
+) -> None:
+    """Refused with `WshDescriptor`'s type error, directly or by `replace`.
+
+    Issue btclib-org/bip32-descriptors#242.
+    """
+    err_msg = f"^invalid inner descriptor type: {type(value).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        WshDescriptor(value)
+    inner = _unpickled_wsh(value)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        ShDescriptor(inner)
+    parsed = cast("ShDescriptor", _PARSED[ShDescriptor])
+    with pytest.raises(BTClibTypeError, match=err_msg):
         replace(parsed, inner=inner)
 
 
