@@ -594,20 +594,23 @@ def test_an_unpickled_node_whose_subexpressions_are_no_tuple_is_refused(
         root = _unpickled(miniscript.parse(f"and_v(v:pk({key}),older(1))", context))
         target = root.subs[0] if nested else root
         object.__setattr__(target, "subs", subs)
-        if fault == "keys":
-            object.__setattr__(target, "keys", ("abc",))
-        elif fault == "unknown":
-            object.__setattr__(target, "fragment", _RANDOM_HEX)
-            error = BTClibValueError
-            err_msg = "^unknown miniscript fragment$"
-        elif fault == "fragment":
-            object.__setattr__(target, "fragment", 5)
-            err_msg = "^invalid fragment type: int$"
-        elif fault == "context":
-            _with_context(target, other)
-            error = BTClibValueError
-            node = "tapscript" if context == miniscript.TAPSCRIPT else "P2WSH"
-            err_msg = f"^not a {node} node: {target.fragment} in {other}$"
+        match fault:
+            case "keys":
+                object.__setattr__(target, "keys", ("abc",))
+            case "unknown":
+                object.__setattr__(target, "fragment", _RANDOM_HEX)
+                error = BTClibValueError
+                err_msg = "^unknown miniscript fragment$"
+            case "fragment":
+                object.__setattr__(target, "fragment", 5)
+                err_msg = "^invalid fragment type: int$"
+            case "context":
+                _with_context(target, other)
+                error = BTClibValueError
+                node = "tapscript" if context == miniscript.TAPSCRIPT else "P2WSH"
+                err_msg = f"^not a {node} node: {target.fragment} in {other}$"
+            case _:
+                assert fault == "none"
         with pytest.raises(error, match=err_msg) as e:
             wrap(root)
         assert_secret_free(e.value, [spelling])
