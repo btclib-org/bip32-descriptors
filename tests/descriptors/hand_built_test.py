@@ -1498,7 +1498,13 @@ class _NoText:
 
     @override
     def __str__(self) -> str:
-        raise RuntimeError
+        raise RuntimeError("no text")
+
+
+def test_a_value_with_no_text_raises_when_written_out() -> None:
+    """The control of the no-text case: `str` cannot write `_NoText` out."""
+    with pytest.raises(RuntimeError, match="^no text$"):
+        str(_NoText())
 
 
 @pytest.mark.parametrize(
