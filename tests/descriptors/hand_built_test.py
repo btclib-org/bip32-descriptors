@@ -554,7 +554,7 @@ _SUBS_OF_ANOTHER_TYPE = [
 ]
 
 
-@pytest.mark.parametrize("fault", ["none", "keys", "fragment", "context"])
+@pytest.mark.parametrize("fault", ["none", "keys", "unknown", "fragment", "context"])
 @pytest.mark.parametrize("nested", [False, True], ids=["root", "nested"])
 @pytest.mark.parametrize(
     "subs,spelling",
@@ -567,9 +567,10 @@ def test_an_unpickled_node_whose_subexpressions_are_no_tuple_is_refused(
     """In a ``tr()`` leaf and in a P2WSH miniscript, naming the type alone.
 
     The miniscript bare, in ``wsh()`` and in ``sh(wsh())``. After the
-    node's context and fragment and before its keys, as its build refuses
-    it. An unpickled node skips `Miniscript`'s own check of its
-    subexpressions. Issue btclib-org/bip32-descriptors#287.
+    node's context, its fragment's type and whether the library defines
+    it, and before its keys, as its build refuses it. An unpickled node
+    skips `Miniscript`'s own check of its subexpressions. Issue
+    btclib-org/bip32-descriptors#287.
     """
     wraps: list[tuple[str, str, str, Callable[[miniscript.Miniscript], object]]] = [
         (miniscript.TAPSCRIPT, _X, miniscript.P2WSH, lambda n: TrDescriptor(_KEY, n)),
@@ -595,6 +596,10 @@ def test_an_unpickled_node_whose_subexpressions_are_no_tuple_is_refused(
         object.__setattr__(target, "subs", subs)
         if fault == "keys":
             object.__setattr__(target, "keys", ("abc",))
+        elif fault == "unknown":
+            object.__setattr__(target, "fragment", _RANDOM_HEX)
+            error = BTClibValueError
+            err_msg = "^unknown miniscript fragment$"
         elif fault == "fragment":
             object.__setattr__(target, "fragment", 5)
             err_msg = "^invalid fragment type: int$"
