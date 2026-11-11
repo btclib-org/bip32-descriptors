@@ -289,8 +289,9 @@ def _assert_valid_context(context: str) -> None:
 def _assert_fragment_type(fragment: object) -> None:
     """Refuse a fragment that is no `str`, a subclass of it included.
 
-    A subclass may hash as no `str` does, or not at all, and the fragment
-    is looked up in dicts and sets, so its refusal names its type alone.
+    The fragment is looked up in dicts and sets, and a subclass can hash
+    as no `str` does, or not hash at all. `_named_fragment` makes the same
+    test. The refusal names the type alone, echoing no value.
     """
     if type(fragment) is not str:
         err_msg = f"invalid fragment type: {type(fragment).__name__}"
@@ -1205,8 +1206,8 @@ class Miniscript:
 
         The fragment, the keys, the digest and the number each have their
         type asserted just before their value is checked, the fragment as
-        a `str` and no subclass of it, the keys as a tuple and each key as
-        a `KeyExpression`: a field of another type leaves as a
+        `_assert_fragment_type` says, the keys as a tuple and each key as a
+        `KeyExpression`: a field of another type leaves as a
         `BTClibTypeError` naming the field and the type alone.
         """
         assert_type(self.context, str, "context")
