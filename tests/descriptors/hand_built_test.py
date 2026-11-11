@@ -98,6 +98,11 @@ and for a node holding a number of keys its fragment does not take, as
 its own build refuses them, and for its keys between the two, as
 `parse` refuses them. Issues btclib-org/bip32-descriptors#259 and
 btclib-org/bip32-descriptors#261.
+
+`ShDescriptor` and `WshDescriptor` refuse an unpickled ``multi()``
+argument, and one inside a ``wsh()`` argument, whose threshold or sort
+is of the wrong type, with `MultiDescriptor`'s message and in its order.
+Issue btclib-org/bip32-descriptors#272.
 """
 
 from __future__ import annotations
@@ -1814,6 +1819,81 @@ def test_an_argument_parse_refuses_by_function_is_refused_before_its_key_type(
     """
     with pytest.raises(BTClibValueError, match=refusal):
         wrapper(holding(key))
+
+
+def _unpickled_multi_with(**values: Any) -> Descriptor:
+    """Return ``multi(1,KEY,KEY)``, unpickled, given `values` for its fields.
+
+    `MultiDescriptor` refuses a field of the wrong type when built, and
+    unpickling skips that check, so the values are given to an unpickled
+    copy.
+    """
+    multi = _unpickled_multi(_PARSED[MultiDescriptor].key_expressions)
+    for name, value in values.items():
+        object.__setattr__(multi, name, value)
+    return multi
+
+
+# (wrapper, its argument holding the multi()) for each place an unpickled
+# multi() reaches a wrapper
+_HOLDING_MULTI: list[
+    tuple[type[ShDescriptor | WshDescriptor], Callable[[Descriptor], Descriptor]]
+] = [
+    (WshDescriptor, lambda multi: multi),
+    (ShDescriptor, lambda multi: multi),
+    (ShDescriptor, _unpickled_wsh),
+]
+_HOLDING_MULTI_IDS = ["wsh-multi", "sh-multi", "sh-wsh-multi"]
+_KEYS_LIST = list(_PARSED[MultiDescriptor].key_expressions)
+# (the fields given, the refusal `MultiDescriptor` gives for them)
+_MULTI_WRONG: list[tuple[dict[str, Any], str]] = [
+    *(
+        ({"threshold": value}, f"threshold type: {type(value).__name__}")
+        for value in (None, "1", 1.0, True)
+    ),
+    *(
+        ({"sort": value}, f"sort type: {type(value).__name__}")
+        for value in ("x", None, 1)
+    ),
+    ({"threshold": None, "sort": "x"}, "threshold type: NoneType"),
+    ({"threshold": None, "keys": _KEYS_LIST}, "threshold type: NoneType"),
+    ({"keys": _KEYS_LIST, "sort": "x"}, "keys type: list"),
+    ({"keys": (_C_KEY, "abc"), "sort": None}, "key type: str"),
+]
+_MULTI_WRONG_IDS = [
+    "threshold-none",
+    "threshold-str",
+    "threshold-float",
+    "threshold-bool",
+    "sort-str",
+    "sort-none",
+    "sort-int",
+    "threshold-then-sort",
+    "threshold-then-keys",
+    "keys-then-sort",
+    "key-then-sort",
+]
+
+
+@pytest.mark.parametrize("values,refusal", _MULTI_WRONG, ids=_MULTI_WRONG_IDS)
+@pytest.mark.parametrize("wrapper,holding", _HOLDING_MULTI, ids=_HOLDING_MULTI_IDS)
+def test_a_multi_field_of_another_type_inside_sh_or_wsh_is_refused_when_built(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    holding: Callable[[Descriptor], Descriptor],
+    values: dict[str, Any],
+    refusal: str,
+) -> None:
+    """With `MultiDescriptor`'s message, for the field it names first.
+
+    An unpickled ``multi()`` skips its own check, and a threshold of the
+    wrong type writes a text `parse` refuses, a sort one read for its
+    truth. Issue btclib-org/bip32-descriptors#272.
+    """
+    err_msg = f"^invalid {refusal}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_PARSED[MultiDescriptor], **values)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        wrapper(holding(_unpickled_multi_with(**values)))
 
 
 @pytest.mark.parametrize(

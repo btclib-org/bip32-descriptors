@@ -1814,6 +1814,10 @@ class ShDescriptor(Descriptor):
     before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
     that check of its own. A miniscript there is refused as
     `WshDescriptor` refuses one, before its text is written.
+
+    A ``multi()`` argument, and one inside a ``wsh()`` argument, is
+    refused for a field of the wrong type as `MultiDescriptor` refuses
+    it, before its text is written: an unpickled one skips that check.
     """
 
     inner: Descriptor
@@ -1822,6 +1826,8 @@ class ShDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
+        if isinstance(self.inner, MultiDescriptor):
+            _assert_multi_types(self.inner)
         if isinstance(self.inner, WshDescriptor):
             # before anything writes the argument out: a value of the wrong
             # type need not write itself without raising
@@ -1902,6 +1908,10 @@ class WshDescriptor(Descriptor):
     check, and its text need not be written without raising. Its
     sanity, and whether `parse` reads its text as a descriptor function,
     are left to its own build.
+
+    A ``multi()`` argument is refused for a field of the wrong type as
+    `MultiDescriptor` refuses it, before its text is written: an
+    unpickled one skips that check.
     """
 
     inner: Descriptor
@@ -1966,6 +1976,8 @@ def _assert_wsh_argument(inner: Descriptor) -> None:
 
     Nothing here writes the text of a miniscript argument.
     """
+    if isinstance(inner, MultiDescriptor):
+        _assert_multi_types(inner)
     _assert_inner(inner, _P2WSH)
     if isinstance(inner, MiniscriptDescriptor):
         assert_type(inner.node, Miniscript, "miniscript")
@@ -2131,13 +2143,7 @@ class MultiDescriptor(Descriptor):
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
-        if not is_integer(self.threshold):
-            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
-            raise BTClibTypeError(err_msg)
-        assert_type(self.keys, tuple, "keys")
-        for key in self.keys:
-            assert_type(key, KeyExpression, "key")
-        assert_type(self.sort, bool, "sort")
+        _assert_multi_types(self)
         name = "sortedmulti" if self.sort else "multi"
         _assert_uint32_threshold(name, self.threshold)
         if not self.keys:
@@ -2211,6 +2217,22 @@ class MultiDescriptor(Descriptor):
             err_msg = f"{len(found)} signatures of {self.threshold}, missing {missing}"
             raise BTClibValueError(err_msg)
         return [b"", *found[: self.threshold]]
+
+
+def _assert_multi_types(multi: MultiDescriptor) -> None:
+    """Refuse a field of a ``multi()`` of the wrong type.
+
+    The threshold, the keys, each key and the sort, in that order. An
+    unpickled ``multi()`` skips this check of its own, so ``sh()`` and
+    ``wsh()`` call it too, before anything writes the argument out.
+    """
+    if not is_integer(multi.threshold):
+        err_msg = f"invalid threshold type: {type(multi.threshold).__name__}"
+        raise BTClibTypeError(err_msg)
+    assert_type(multi.keys, tuple, "keys")
+    for key in multi.keys:
+        assert_type(key, KeyExpression, "key")
+    assert_type(multi.sort, bool, "sort")
 
 
 @dataclass(frozen=True)
