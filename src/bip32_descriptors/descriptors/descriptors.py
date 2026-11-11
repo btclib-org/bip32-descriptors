@@ -245,6 +245,7 @@ from bip32_descriptors.descriptors.miniscript import (
     Miniscript,
     Preimages,
     SpendContext,
+    _assert_fragment_type,
     _assert_key_number,
     _assert_sane,
     _assert_sane_script,
@@ -825,8 +826,8 @@ def _tapscript_node(node: object) -> Miniscript:
     A node that skipped `Miniscript`'s own checks, as an unpickled one
     does, holds any value as a subexpression, a context or a fragment, so
     only the library's own context is named, a refusal echoing no value
-    it holds. Once its context passes, a fragment that is no `str` is
-    refused, naming its type alone.
+    it holds. Once its context passes, its fragment is refused as
+    `_assert_fragment_type` says.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -835,7 +836,7 @@ def _tapscript_node(node: object) -> Miniscript:
         context = miniscript.P2WSH if known else "another context"
         err_msg = f"not a tapscript node: {_named_fragment(node)} in {context}"
         raise BTClibValueError(err_msg)
-    assert_type(node.fragment, str, "fragment")
+    _assert_fragment_type(node.fragment)
     return node
 
 
@@ -875,8 +876,8 @@ def _assert_tree(tree: DescriptorTree) -> None:
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
 
-    A miniscript node of that context is then refused where its fragment
-    is no `str`, before its keys are read, as `_tapscript_node` says.
+    A miniscript node of that context is then refused for its fragment,
+    before its keys are read, as `_tapscript_node` says.
 
     A miniscript node and a `MultiA` leaf are refused where their keys are
     not a tuple of KEY expressions, as `_assert_key_types` says.
@@ -1809,9 +1810,13 @@ class ShDescriptor(Descriptor):
     unless the argument is invalid by itself, as `Descriptor` says.
 
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
-    refuses it, a value of the wrong type and a miniscript `parse` does
-    not read back included, and its function before its keys, as `parse`
-    reads them: an unpickled ``wsh()`` skips that check of its own.
+    refuses it, a value of the wrong type included, and its function
+    before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
+    that check of its own. A miniscript there is refused as
+    `WshDescriptor` refuses one, before its text is written.
+
+    A ``multi()`` argument whose keys are no tuple is refused as
+    `WshDescriptor` refuses one.
     """
 
     inner: Descriptor
@@ -1824,12 +1829,8 @@ class ShDescriptor(Descriptor):
             # before anything writes the argument out: a value of the wrong
             # type need not write itself without raising
             assert_type(self.inner.inner, Descriptor, "inner descriptor")
+            _assert_wsh_argument(self.inner.inner)
         _assert_inner(self.inner, _P2SH)
-        if isinstance(self.inner, WshDescriptor):
-            _assert_inner(self.inner.inner, _P2WSH)
-            _assert_embedded(self.inner.inner, _P2WSH)
-            if isinstance(self.inner.inner, MiniscriptDescriptor):
-                _assert_miniscript_read(self.inner.inner.node)
         _assert_embedded(self.inner, _P2SH)
 
     @override
@@ -1895,9 +1896,19 @@ class WshDescriptor(Descriptor):
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
 
-    A miniscript argument whose text `parse` reads as a descriptor
-    function, or refuses where not sane, is refused after its keys, with
-    `MiniscriptDescriptor`'s message: an unpickled one skips that check
+    A miniscript argument is refused before its text is written: for
+    its nodes as `MiniscriptDescriptor` refuses them, their type,
+    context, fragment and the type of their keys, then for its keys as
+    above, then for a node holding a number of keys its fragment does
+    not take, with `MiniscriptDescriptor`'s message, as `parse` reads the
+    keys of a node before it counts them. An unpickled one skips its own
+    check, and its text need not be written without raising. Then one
+    whose text `parse` reads as a descriptor function, or refuses where
+    not sane, is refused with `MiniscriptDescriptor`'s message.
+
+    A ``multi()`` argument whose keys are no tuple is refused as
+    `MultiDescriptor` refuses it, before its function: its text is
+    written with its keys, and an unpickled ``multi()`` skips that check
     of its own.
     """
 
@@ -1907,10 +1918,7 @@ class WshDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
-        _assert_inner(self.inner, _P2WSH)
-        _assert_embedded(self.inner, _P2WSH)
-        if isinstance(self.inner, MiniscriptDescriptor):
-            _assert_miniscript_read(self.inner.node)
+        _assert_wsh_argument(self.inner)
 
     @override
     def __str__(self) -> str:
@@ -1961,6 +1969,21 @@ class WshDescriptor(Descriptor):
         )
 
 
+def _assert_wsh_argument(inner: Descriptor) -> None:
+    """Refuse an argument of ``wsh()`` as `WshDescriptor` says.
+
+    Nothing here writes the text of a miniscript argument.
+    """
+    _assert_inner(inner, _P2WSH)
+    if isinstance(inner, MiniscriptDescriptor):
+        assert_type(inner.node, Miniscript, "miniscript")
+        _assert_p2wsh(inner.node)
+    _assert_embedded(inner, _P2WSH)
+    if isinstance(inner, MiniscriptDescriptor):
+        _assert_key_numbers([inner.node], inner.node.key_expressions)
+        _assert_miniscript_read(inner.node)
+
+
 def _assert_p2wsh(node: Miniscript) -> None:
     """Refuse a miniscript any of whose nodes is not of the P2WSH context.
 
@@ -1972,8 +1995,8 @@ def _assert_p2wsh(node: Miniscript) -> None:
     fragments are named.
 
     A node is refused first where it is no `Miniscript`, and, once its
-    context passes, where its fragment is no `str`, naming the type
-    alone, before its keys are read.
+    context passes, where `_assert_fragment_type` refuses its fragment,
+    before its keys are read.
 
     A node is also refused where its keys are not a tuple of KEY
     expressions, as `_assert_key_types` says.
@@ -1988,7 +2011,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
             context = miniscript.TAPSCRIPT if known else "another context"
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
-        assert_type(sub.fragment, str, "fragment")
+        _assert_fragment_type(sub.fragment)
         _assert_key_types(sub)
         stack += sub.subs
 
@@ -2947,7 +2970,12 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     `parse` names for it. A name `_PARSERS` does not hold, as a subclass
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
+
+    A ``multi()`` whose keys are no tuple is refused first, as
+    `MultiDescriptor` refuses it: `str` writes its keys.
     """
+    if isinstance(inner, MultiDescriptor):
+        assert_type(inner.keys, tuple, "keys")
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
