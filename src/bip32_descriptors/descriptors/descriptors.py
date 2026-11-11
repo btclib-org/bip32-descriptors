@@ -1805,7 +1805,8 @@ class ShDescriptor(Descriptor):
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
     refuses it, a value of the wrong type included, and its function
     before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
-    that check of its own.
+    that check of its own. A miniscript there is refused for its nodes,
+    as `WshDescriptor` says, before its text is written.
     """
 
     inner: Descriptor
@@ -1818,6 +1819,7 @@ class ShDescriptor(Descriptor):
             # before anything writes the argument out: a value of the wrong
             # type need not write itself without raising
             assert_type(self.inner.inner, Descriptor, "inner descriptor")
+            _assert_miniscript_nodes(self.inner.inner)
         _assert_inner(self.inner, _P2SH)
         if isinstance(self.inner, WshDescriptor):
             _assert_inner(self.inner.inner, _P2WSH)
@@ -1886,6 +1888,12 @@ class WshDescriptor(Descriptor):
     the size of its script or by the number of keys of a ``multi()`` is
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
+
+    A miniscript argument is refused for its nodes as
+    `MiniscriptDescriptor` refuses them, with its messages: for their
+    type, their context and the type of their keys, then for a number of
+    keys a node's fragment does not take. An unpickled one skips that
+    check of its own, and its text need not be written without raising.
     """
 
     inner: Descriptor
@@ -1894,6 +1902,7 @@ class WshDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
+        _assert_miniscript_nodes(self.inner)
         _assert_inner(self.inner, _P2WSH)
         _assert_embedded(self.inner, _P2WSH)
 
@@ -1944,6 +1953,19 @@ class WshDescriptor(Descriptor):
             _inner_expansion(self.inner, index, prv_keys),
             witness_script=_embedded(self, index, prv_keys),
         )
+
+
+def _assert_miniscript_nodes(inner: Descriptor) -> None:
+    """Refuse a miniscript argument's nodes as `MiniscriptDescriptor` does.
+
+    Their type, their context and the type of their keys, then their
+    number of keys, as `_assert_key_numbers` says; the rest of its checks
+    is left to those that follow.
+    """
+    if isinstance(inner, MiniscriptDescriptor):
+        assert_type(inner.node, Miniscript, "miniscript")
+        _assert_p2wsh(inner.node)
+        _assert_key_numbers([inner.node], inner.node.key_expressions)
 
 
 def _assert_p2wsh(node: Miniscript) -> None:

@@ -64,6 +64,9 @@ an uncompressed key and the node's text can be written, the node is left
 to the descriptor's text and sanity checks; where it passes them,
 ``tr()`` and ``wsh()`` refuse that key by its position, and a bare
 `MiniscriptDescriptor` builds it. Issue btclib-org/bip32-descriptors#235.
+`WshDescriptor`, and `ShDescriptor` for a ``wsh()`` argument, refuse
+such a node in an unpickled `MiniscriptDescriptor` with its message.
+Issue btclib-org/bip32-descriptors#261.
 
 A `MultiDescriptor` of more than three keys builds, and as a top-level
 descriptor writes a text `parse` refuses: its docstring says why. Issue
@@ -2540,6 +2543,28 @@ def test_a_pk_k_holding_no_key_is_refused_beside_an_uncompressed_key(
     object.__setattr__(_node_at(root, (0, 0, 0)), "keys", (_U_KEY,))
     with pytest.raises(BTClibValueError, match="^invalid number of keys in pk_k: 0$"):
         wrap(root)
+
+
+@pytest.mark.parametrize("wrapped", ["wsh", "sh-wsh"])
+def test_an_unpickled_miniscript_holding_a_pk_k_of_no_key_is_refused(
+    wrapped: str,
+) -> None:
+    """With `MiniscriptDescriptor`'s message, before its text is written.
+
+    An unpickled `MiniscriptDescriptor` skips its own check of its nodes,
+    and the text of a ``pk_k`` holding no key raises. Issue
+    btclib-org/bip32-descriptors#261.
+    """
+    parsed = parse(f"wsh(and_v(v:pk({_C}),pk({_C2})))")
+    assert isinstance(parsed, WshDescriptor)
+    ms: MiniscriptDescriptor = pickle.loads(pickle.dumps(parsed.inner))  # noqa: S301
+    object.__setattr__(ms.node.subs[0].subs[0].subs[0], "keys", ())
+    err_msg = "^invalid number of keys in pk_k: 0$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        MiniscriptDescriptor(ms.node)
+    inner = ms if wrapped == "wsh" else _unpickled_wsh(ms)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
 
 
 @pytest.mark.parametrize("wrapped", _WRAPPED)
