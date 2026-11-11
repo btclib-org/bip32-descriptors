@@ -111,8 +111,8 @@ def test_subexpressions_of_another_type_are_refused(
 ) -> None:
     """They are a tuple, and the refusal names the type alone.
 
-    After the fragment and before the keys. Issue
-    btclib-org/bip32-descriptors#287.
+    After the fragment's type and value, a ``thresh()`` included, and
+    before the keys. Issue btclib-org/bip32-descriptors#287.
     """
     err_msg = f"^invalid subs type: {type(subs).__name__}$"
     no_keys: tuple[Any, ...] = ()
@@ -120,8 +120,15 @@ def test_subexpressions_of_another_type_are_refused(
         with pytest.raises(BTClibTypeError, match=err_msg) as e:
             Miniscript(fragment, P2WSH, subs, keys)
         assert_secret_free(e.value, [spelling])
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        Miniscript("thresh", P2WSH, subs, threshold=1)
     with pytest.raises(BTClibTypeError, match="^invalid fragment type: int$"):
         Miniscript(5, P2WSH, subs)  # type: ignore[arg-type]
+    with pytest.raises(
+        BTClibValueError, match="^unknown miniscript fragment$"
+    ) as unknown:
+        Miniscript(_RANDOM_HEX, P2WSH, subs)
+    assert_secret_free(unknown.value, [_RANDOM_HEX])
 
 
 def test_a_p2wsh_node_of_a_tapscript_subexpression_is_refused() -> None:

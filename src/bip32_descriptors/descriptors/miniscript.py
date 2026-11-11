@@ -1218,12 +1218,12 @@ class Miniscript:
             raise BTClibValueError(err_msg)
         fragment = self.fragment
         _assert_fragment_type(fragment)
+        if fragment != "thresh" and fragment not in _ARITY:
+            raise BTClibValueError("unknown miniscript fragment")
         assert_type(self.subs, tuple, "subs")
         if fragment == "thresh":
             if not self.subs:
                 raise BTClibValueError("thresh() takes at least one subexpression")
-        elif fragment not in _ARITY:
-            raise BTClibValueError("unknown miniscript fragment")
         elif len(self.subs) != _ARITY[fragment]:
             err_msg = (
                 f"{fragment} takes {_ARITY[fragment]} subexpressions, "
