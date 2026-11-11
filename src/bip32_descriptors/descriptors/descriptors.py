@@ -1809,9 +1809,9 @@ class ShDescriptor(Descriptor):
     unless the argument is invalid by itself, as `Descriptor` says.
 
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
-    refuses it, a value of the wrong type included, and its function
-    before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
-    that check of its own.
+    refuses it, a value of the wrong type and a miniscript `parse` does
+    not read back included, and its function before its keys, as `parse`
+    reads them: an unpickled ``wsh()`` skips that check of its own.
     """
 
     inner: Descriptor
@@ -1828,6 +1828,8 @@ class ShDescriptor(Descriptor):
         if isinstance(self.inner, WshDescriptor):
             _assert_inner(self.inner.inner, _P2WSH)
             _assert_embedded(self.inner.inner, _P2WSH)
+            if isinstance(self.inner.inner, MiniscriptDescriptor):
+                _assert_miniscript_read(self.inner.inner.node)
         _assert_embedded(self.inner, _P2SH)
 
     @override
@@ -1892,6 +1894,11 @@ class WshDescriptor(Descriptor):
     the size of its script or by the number of keys of a ``multi()`` is
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
+
+    A miniscript argument whose text `parse` reads as a descriptor
+    function, or refuses where not sane, is refused after its keys, with
+    `MiniscriptDescriptor`'s message: an unpickled one skips that check
+    of its own.
     """
 
     inner: Descriptor
@@ -1902,6 +1909,8 @@ class WshDescriptor(Descriptor):
         assert_type(self.inner, Descriptor, "inner descriptor")
         _assert_inner(self.inner, _P2WSH)
         _assert_embedded(self.inner, _P2WSH)
+        if isinstance(self.inner, MiniscriptDescriptor):
+            _assert_miniscript_read(self.inner.node)
 
     @override
     def __str__(self) -> str:
@@ -1984,6 +1993,23 @@ def _assert_p2wsh(node: Miniscript) -> None:
         stack += sub.subs
 
 
+def _assert_miniscript_read(node: Miniscript) -> None:
+    """Refuse a P2WSH miniscript `parse` does not read back as itself.
+
+    One whose text `parse` reads as a descriptor function, such as
+    ``pk()``, and one it refuses where not sane, unless `parse` has
+    checked its sanity already, as `_SANE_BY_PARSE` says. The last checks
+    of `MiniscriptDescriptor`, which ``wsh()`` and ``sh(wsh())`` run again
+    on their argument: an unpickled one skips its own.
+    """
+    name = _function_read(str(node))
+    if name is not None:
+        err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
+        raise BTClibValueError(err_msg)
+    if not _SANE_BY_PARSE.get():
+        _assert_sane_script(node)
+
+
 @dataclass(frozen=True)
 class MiniscriptDescriptor(Descriptor):
     """A BIP379 miniscript where a SCRIPT expression may be one.
@@ -2036,12 +2062,7 @@ class MiniscriptDescriptor(Descriptor):
         # and an unpickled node skips that check
         _assert_keys_outside_taproot(self.node.key_expressions)
         _assert_key_numbers([self.node], self.node.key_expressions)
-        name = _function_read(str(self.node))
-        if name is not None:
-            err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
-            raise BTClibValueError(err_msg)
-        if not _SANE_BY_PARSE.get():
-            _assert_sane_script(self.node)
+        _assert_miniscript_read(self.node)
 
     @override
     def __str__(self) -> str:
@@ -3287,7 +3308,10 @@ def _parse_sh(
     args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     inner = _parse_inner(args[0], _P2SH, network, prv_keys)
-    return ShDescriptor(inner, network=network)
+    # a miniscript inside the wsh() argument was refused where not sane as
+    # it was read
+    with _sane_by_parse():
+        return ShDescriptor(inner, network=network)
 
 
 def _parse_wsh(
@@ -3297,7 +3321,9 @@ def _parse_wsh(
         inner = _parse_inner(args[0], _P2WSH, network, prv_keys)
     except miniscript._CoreFallbackError as error:
         raise BTClibValueError("A function is needed within P2WSH") from error
-    return WshDescriptor(inner, network=network)
+    # a miniscript argument was refused where not sane as it was read
+    with _sane_by_parse():
+        return WshDescriptor(inner, network=network)
 
 
 def _parse_multi(

@@ -87,6 +87,12 @@ btclib-org/bip32-descriptors#253.
 a key that is no `KeyExpression`, after its function and before its
 other keys, their number and its script size. Issue
 btclib-org/bip32-descriptors#257.
+
+`WshDescriptor`, and `ShDescriptor` for a ``wsh()`` argument, refuse an
+unpickled `MiniscriptDescriptor` that is not sane, or whose text `parse`
+reads as a descriptor function, with `MiniscriptDescriptor`'s message,
+and do not check again the sanity of one `parse` has read. Issue
+btclib-org/bip32-descriptors#267.
 """
 
 from __future__ import annotations
@@ -2800,3 +2806,64 @@ def test_an_unpickled_multi_a_leaf_holding_keys_of_another_type_is_refused(
     other = miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT)
     with pytest.raises(BTClibTypeError, match=err_msg):
         TrDescriptor(_KEY, (leaf, other) if beside else leaf)
+
+
+def _unpickled_miniscript(expression: str) -> MiniscriptDescriptor:
+    """Return a `MiniscriptDescriptor` of the P2WSH EXPRESSION, unpickled.
+
+    `MiniscriptDescriptor` refuses a node `parse` does not read back as
+    itself when built, and unpickling skips that check, so the node is
+    given to an unpickled copy.
+    """
+    inner = cast("WshDescriptor", _MINISCRIPT).inner
+    ms: MiniscriptDescriptor = pickle.loads(pickle.dumps(inner))  # noqa: S301
+    object.__setattr__(ms, "node", _unpickled(miniscript.parse(expression)))
+    return ms
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [f"and_v(v:pk({_C}),pk({_C}))", f"pk({_C})"],
+    ids=["not-sane", "read-as-pk"],
+)
+def test_an_unpickled_miniscript_parse_does_not_read_back_is_refused_inside_wsh(
+    expression: str,
+) -> None:
+    """In ``wsh()`` and ``sh(wsh())``, with `MiniscriptDescriptor`'s message.
+
+    Directly or by `replace`. Issue btclib-org/bip32-descriptors#267.
+    """
+    with pytest.raises(BTClibValueError) as bare:
+        MiniscriptDescriptor(miniscript.parse(expression))
+    err_msg = f"^{re.escape(str(bare.value))}$"
+    inner = _unpickled_miniscript(expression)
+    wsh = cast("WshDescriptor", _PARSED[WshDescriptor])
+    sh = cast("ShDescriptor", _PARSED[ShDescriptor])
+    builds: list[Callable[[], object]] = [
+        lambda: WshDescriptor(inner),
+        lambda: replace(wsh, inner=inner),
+        lambda: ShDescriptor(_unpickled_wsh(inner)),
+        lambda: replace(sh, inner=_unpickled_wsh(inner)),
+    ]
+    for build in builds:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            build()
+
+
+def test_a_parsed_wsh_miniscript_is_checked_for_sanity_by_parse_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither ``wsh()`` nor ``sh()`` asks again what `parse` has asked.
+
+    The control beside it: one built by hand is asked once, by
+    `MiniscriptDescriptor`, and once more by each wrapper. Issue
+    btclib-org/bip32-descriptors#267.
+    """
+    asked: list[miniscript.Miniscript] = []
+    monkeypatch.setattr(descriptors_module, "_assert_sane_script", asked.append)
+    expression = f"and_v(v:pk({_C}),pk({_C2}))"
+    parse(f"wsh({expression})")
+    parse(f"sh(wsh({expression}))")
+    assert asked == []
+    ShDescriptor(WshDescriptor(MiniscriptDescriptor(miniscript.parse(expression))))
+    assert len(asked) == 3
