@@ -1810,6 +1810,10 @@ class ShDescriptor(Descriptor):
     keys of a ``multi()`` is refused when built, with `parse`'s message,
     unless the argument is invalid by itself, as `Descriptor` says.
 
+    An argument whose network is no `str` is refused first, as
+    `WshDescriptor` says. So is the argument of a ``wsh()`` argument,
+    once that ``wsh()``'s own network passes.
+
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
     refuses it, a value of the wrong type included, and its function
     before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
@@ -1819,10 +1823,6 @@ class ShDescriptor(Descriptor):
     An unpickled ``multi()`` argument is refused for a field of the
     wrong type and for its threshold as `WshDescriptor` says, and a
     ``raw()`` or ``rawpkh()`` one for its bytes.
-
-    An argument whose network is no `str`, and the argument of a
-    ``wsh()`` argument, is refused as `WshDescriptor` refuses one, the
-    ``wsh()`` argument's own network first.
     """
 
     inner: Descriptor
@@ -1905,6 +1905,9 @@ class WshDescriptor(Descriptor):
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
 
+    An argument whose network is no `str` is refused first, as
+    `_assert_inner` says.
+
     A miniscript argument is refused before its text is written: for
     its nodes as `MiniscriptDescriptor` refuses them, their type,
     context, fragment and the type of their keys, then for its keys as
@@ -1919,15 +1922,12 @@ class WshDescriptor(Descriptor):
     skips that check of its own too.
 
     An unpickled ``multi()`` argument skips its own check. A field of
-    the wrong type is refused first, as `_assert_multi_types` says, and
-    a threshold out of range whose text can be written in `parse`'s
-    order, as `_assert_embedded` says. A ``raw()`` script or a
-    ``rawpkh()`` key hash that is no bytes is refused first too, as
-    `_assert_script_only_types` says.
-
-    An argument whose network is no `str` is refused as `Descriptor`
-    refuses it, before anything else about the argument: an unpickled
-    one skips that check of its own, and its keys are read with it.
+    the wrong type is refused right after the network, as
+    `_assert_multi_types` says, and a threshold out of range whose text
+    can be written in `parse`'s order, as `_assert_embedded` says. A
+    ``raw()`` script or a ``rawpkh()`` key hash that is no bytes is
+    refused right after the network too, as `_assert_script_only_types`
+    says.
     """
 
     inner: Descriptor
@@ -3012,9 +3012,12 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
 
-    A field of the wrong type that `_assert_multi_types` or
-    `_assert_script_only_types` checks is refused first, as those
-    functions say.
+    A network that is no `str` is refused first, with `Descriptor`'s
+    message: an unpickled argument skips that check of its own, and the
+    scripts of the ``sh()`` or ``wsh()`` are made with it. A field of the
+    wrong type that `_assert_multi_types` or `_assert_script_only_types`
+    checks is refused next, as those functions say. This is the order of
+    the argument's own build, which checks its network before its fields.
     """
     assert_type(inner.network, str, "network")
     if isinstance(inner, MultiDescriptor):
