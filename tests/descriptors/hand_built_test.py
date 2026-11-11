@@ -114,9 +114,11 @@ message, once its nodes and keys pass. They do not ask again the sanity
 of one `parse` or `infer_descriptor` has read. Issue
 btclib-org/bip32-descriptors#267.
 
-`ShDescriptor` and `WshDescriptor` refuse an unpickled ``sh()`` or
-``wsh()`` argument by its position without writing the text of what it
-holds. Issue btclib-org/bip32-descriptors#269.
+`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
+a ``wsh()`` argument, refuse an unpickled ``sh()`` or ``wsh()`` by its
+position without writing the text of what it holds, a subclass writing
+its text with their own `str` included. Issue
+btclib-org/bip32-descriptors#269.
 """
 
 from __future__ import annotations
@@ -1829,12 +1831,22 @@ def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
         replace(parsed, inner=inner)
 
 
-def _unpickled_sh(inner: Descriptor) -> Descriptor:
-    """Return ``sh(INNER)``, unpickled, as `_unpickled_wsh` does."""
-    parsed = _PARSED[ShDescriptor]
-    sh: ShDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
-    object.__setattr__(sh, "inner", inner)
-    return sh
+class _PlainSh(ShDescriptor):
+    """A subclass writing its text with `ShDescriptor`'s own `str`."""
+
+
+class _PlainWsh(WshDescriptor):
+    """A subclass writing its text with `WshDescriptor`'s own `str`."""
+
+
+def _unpickled_holding(
+    cls: type[ShDescriptor | WshDescriptor], inner: Descriptor
+) -> Descriptor:
+    """Return a `cls` holding `inner`, unpickled, as `_unpickled_wsh` does."""
+    built = cls(PkDescriptor(_C_KEY))
+    outer: Descriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
+    object.__setattr__(outer, "inner", inner)
+    return outer
 
 
 def _keyless_pk_k() -> Descriptor:
@@ -1856,7 +1868,7 @@ def test_a_pk_k_of_no_key_raises_when_written_out() -> None:
     [
         (
             WshDescriptor,
-            _unpickled_sh(_keyless_pk_k()),
+            _unpickled_holding(ShDescriptor, _keyless_pk_k()),
             "sh() is not allowed inside wsh()",
         ),
         (
@@ -1871,11 +1883,40 @@ def test_a_pk_k_of_no_key_raises_when_written_out() -> None:
         ),
         (
             ShDescriptor,
-            _unpickled_sh(_keyless_pk_k()),
+            _unpickled_wsh(_unpickled_holding(ShDescriptor, _keyless_pk_k())),
+            "sh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_holding(ShDescriptor, _keyless_pk_k()),
+            "sh() is not allowed inside sh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_holding(_PlainSh, _keyless_pk_k()),
+            "sh() is not allowed inside wsh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_holding(_PlainWsh, _keyless_pk_k()),
+            "wsh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_holding(_PlainSh, _keyless_pk_k()),
             "sh() is not allowed inside sh()",
         ),
     ],
-    ids=["wsh-sh", "wsh-wsh", "sh-wsh-wsh", "sh-sh"],
+    ids=[
+        "wsh-sh",
+        "wsh-wsh",
+        "sh-wsh-wsh",
+        "sh-wsh-sh",
+        "sh-sh",
+        "wsh-subclass-sh",
+        "wsh-subclass-wsh",
+        "sh-subclass-sh",
+    ],
 )
 def test_an_unpickled_sh_or_wsh_is_refused_by_position_without_its_text(
     wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor, refusal: str

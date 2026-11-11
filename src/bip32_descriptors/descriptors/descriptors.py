@@ -1810,6 +1810,9 @@ class ShDescriptor(Descriptor):
     keys of a ``multi()`` is refused when built, with `parse`'s message,
     unless the argument is invalid by itself, as `Descriptor` says.
 
+    A ``sh()`` argument is refused by its function before what it holds
+    is written, as `WshDescriptor` says of one.
+
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
     refuses it, a value of the wrong type included, and its function
     before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
@@ -1896,6 +1899,10 @@ class WshDescriptor(Descriptor):
     the size of its script or by the number of keys of a ``multi()`` is
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
+
+    A ``sh()`` or ``wsh()`` argument is refused by its function before
+    what it holds is written: an unpickled one skips its own check, and
+    what it holds need not be written without raising.
 
     A miniscript argument is refused before its text is written: for
     its nodes as `MiniscriptDescriptor` refuses them, their type,
@@ -2989,9 +2996,9 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     A ``multi()`` holding a field of the wrong type is refused first, as
     `_assert_multi_types` says.
 
-    A ``sh()`` or a ``wsh()``, of its exact type, is named by its type
-    without writing its text: an unpickled one can hold an argument whose
-    text cannot be written. A subclass is still named by its `str`.
+    A ``sh()`` or a ``wsh()`` written by `ShDescriptor`'s or
+    `WshDescriptor`'s own `str` is named without writing its text: an
+    unpickled one can hold an argument whose text cannot be written.
     """
     if isinstance(inner, MultiDescriptor):
         _assert_multi_types(inner)
@@ -2999,9 +3006,9 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
         return
-    if type(inner) is ShDescriptor:
+    if type(inner).__str__ is ShDescriptor.__str__:
         name = "sh"
-    elif type(inner) is WshDescriptor:
+    elif type(inner).__str__ is WshDescriptor.__str__:
         name = "wsh"
     else:
         name = str(inner).partition("(")[0]
