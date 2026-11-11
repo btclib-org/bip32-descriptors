@@ -2949,11 +2949,19 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     `parse` names for it. A name `_PARSERS` does not hold, as a subclass
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
+
+    A ``raw()`` script and a ``rawpkh()`` key hash that are no bytes are
+    refused before the text is written, with their own build's message:
+    an unpickled argument skips that check of its own.
     """
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
         return
+    if isinstance(inner, RawDescriptor):
+        assert_type(inner.script, bytes, "script")
+    elif isinstance(inner, RawPkhDescriptor):
+        assert_type(inner.key_hash, bytes, "key hash")
     name = str(inner).partition("(")[0]
     if name not in _PARSERS:
         err_msg = f"{type(inner).__name__} writes no function parse reads"

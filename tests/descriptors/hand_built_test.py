@@ -98,6 +98,11 @@ and for a node holding a number of keys its fragment does not take, as
 its own build refuses them, and for its keys between the two, as
 `parse` refuses them. Issues btclib-org/bip32-descriptors#259 and
 btclib-org/bip32-descriptors#261.
+
+`ShDescriptor` and `WshDescriptor` refuse an unpickled ``raw()`` whose
+script, or ``rawpkh()`` whose key hash, is no bytes, with its own
+build's message, before writing its text. Issue
+btclib-org/bip32-descriptors#271.
 """
 
 from __future__ import annotations
@@ -2977,3 +2982,36 @@ def test_an_unpickled_multi_a_leaf_holding_keys_of_another_type_is_refused(
     other = miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT)
     with pytest.raises(BTClibTypeError, match=err_msg):
         TrDescriptor(_KEY, (leaf, other) if beside else leaf)
+
+
+@pytest.mark.parametrize("value", [None, 5], ids=["none", "int"])
+@pytest.mark.parametrize("wrapped", ["wsh", "sh", "sh-wsh"])
+@pytest.mark.parametrize(
+    "parsed_type,field,what",
+    [
+        (RawDescriptor, "script", "script"),
+        (RawPkhDescriptor, "key_hash", "key hash"),
+    ],
+    ids=["raw", "rawpkh"],
+)
+def test_an_unpickled_raw_argument_holding_no_bytes_is_refused(
+    parsed_type: type[RawDescriptor | RawPkhDescriptor],
+    field: str,
+    what: str,
+    wrapped: str,
+    value: Any,
+) -> None:
+    """With its own build's message, before its text is written.
+
+    An unpickled ``raw()`` or ``rawpkh()`` skips its own check of its
+    bytes' type. Issue btclib-org/bip32-descriptors#271.
+    """
+    err_msg = f"^invalid {what} type: {type(value).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        parsed_type(value)
+    inner = pickle.loads(pickle.dumps(_PARSED[parsed_type]))  # noqa: S301
+    object.__setattr__(inner, field, value)
+    if wrapped == "sh-wsh":
+        inner = _unpickled_wsh(inner)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
