@@ -850,9 +850,9 @@ def _assert_key_types(node: Miniscript | MultiA) -> None:
 
 
 def _assert_tree_leaf(node: object) -> None:
-    """Refuse a tree leaf of the wrong type, and a `MultiA` one's keys.
+    """Refuse a tree node of the wrong type, and a `MultiA` leaf's keys.
 
-    The keys as `_assert_key_types` refuses them.
+    A `MultiA` leaf is refused where `_assert_key_types` refuses its keys.
     """
     assert_type(node, _TREE_NODE_TYPES, "script tree node")
     if isinstance(node, MultiA):
