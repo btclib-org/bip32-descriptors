@@ -2943,8 +2943,9 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     context, because `parse` reads it compressed only: an unpickled
     ``wpkh()`` skips its own check of it.
 
-    Each key is refused first if it is no `KeyExpression`, which an
-    unpickled argument skips the check of too.
+    A key that is no `KeyExpression` is refused before any of these,
+    whatever its position, with the message `_assert_key_types` gives:
+    an unpickled argument skips that check of its own too.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
