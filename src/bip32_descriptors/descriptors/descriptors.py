@@ -245,9 +245,11 @@ from bip32_descriptors.descriptors.miniscript import (
     Miniscript,
     Preimages,
     SpendContext,
+    _assert_key_number,
     _assert_sane,
     _assert_sane_script,
     _has_raw_key_hash,
+    _multisig_context_fault,
     _read_unclosed_multisig_keys,
     _script_number,
     _tree_eval,
@@ -754,6 +756,53 @@ def _named_fragment(node: Miniscript) -> str:
     return fragment if known else "a node"
 
 
+def _assert_key_numbers(
+    roots: Iterable[Miniscript], keys: Iterable[KeyExpression]
+) -> None:
+    """Refuse a node holding a number of keys its fragment does not take.
+
+    Each root and every node below it, which a walk has already checked
+    for their type and context; `keys` are the keys the nodes hold, and
+    in ``tr()`` those of its other leaves. An unpickled node skips
+    `Miniscript`'s own check, and the text of a ``pk_k`` or ``pk_h``
+    reads only its first key. A fragment the library does not define is
+    named "a node", and taken to hold no key.
+
+    Such a node is refused for a multisig outside its context, as its
+    build refuses it. Otherwise, where `keys` hold an uncompressed one,
+    in that node or any other, it is left to the checks that follow: the
+    text and the sanity of what holds it, then the key check of ``tr()``
+    or ``wsh()``, which names the first such key by its position there,
+    counted as `_assert_keys` counts it: every key of each node counts,
+    not only those its text writes. A bare `MiniscriptDescriptor` that
+    passes its other checks builds it. A ``pk_k`` or ``pk_h`` holding no
+    key, which has no text to write, is not left so. A node not left so
+    is refused for its number of keys.
+    """
+    uncompressed = not all(key.is_compressed for key in keys)
+    stack = list(roots)
+    while stack:
+        sub = stack.pop()
+        stack += sub.subs
+        _assert_node_key_number(sub, uncompressed=uncompressed)
+
+
+def _assert_node_key_number(node: Miniscript, *, uncompressed: bool) -> None:
+    """Refuse one node as `_assert_key_numbers` says.
+
+    `uncompressed` says whether the descriptor holds an uncompressed key.
+    """
+    fragment = _named_fragment(node)
+    try:
+        _assert_key_number(fragment, len(node.keys))
+    except BTClibValueError:
+        tapscript = node.context == miniscript.TAPSCRIPT
+        if fragment in {"multi", "multi_a"} and (fragment == "multi_a") != tapscript:
+            raise BTClibValueError(_multisig_context_fault(fragment)) from None
+        if not uncompressed or (fragment in {"pk_k", "pk_h"} and not node.keys):
+            raise
+
+
 # True while `parse` builds a descriptor from a miniscript it has just
 # refused where not sane, with its `prv_keys`, so that the constructor does
 # not ask again without them
@@ -811,11 +860,13 @@ def _assert_tree(tree: DescriptorTree) -> None:
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
 
-    A miniscript leaf is then refused where `parse` reads its text as a
-    function, such as ``pk()`` or ``multi_a()``, or would refuse it
-    without `prv_keys`: either way the descriptor would not parse back
-    from its text. The leaves are checked once the walk is done, so that
-    a node of the wrong type or context is named first.
+    Once the walk is done, so that a node of the wrong type or context is
+    named first, a miniscript leaf is refused where any of its nodes holds
+    a number of keys its fragment does not take, as `_assert_key_numbers`
+    says. It is then refused where `parse` reads its text as a function,
+    such as ``pk()`` or ``multi_a()``, or would refuse it without
+    `prv_keys`: either way the descriptor would not parse back from its
+    text.
     """
     # each entry carries whether it is a node under a miniscript leaf
     stack: list[tuple[object, int, bool]] = [(tree, 0, False)]
@@ -840,6 +891,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
         if depth == MAX_TREE_DEPTH:
             raise BTClibValueError(f"script tree deeper than {MAX_TREE_DEPTH}")
         stack += [(node[1], depth + 1, False), (node[0], depth + 1, False)]
+    _assert_key_numbers(leaves, _tree_keys(tree))
     for leaf in leaves:
         name = _leaf_function(str(leaf))
         if name is not None:
@@ -1731,9 +1783,10 @@ class ShDescriptor(Descriptor):
 
     An argument `parse` refuses inside ``sh()`` by its function, by a
     key ``tr()`` and ``rawtr()`` alone take, by an uncompressed key of a
-    ``wsh()`` argument, by the size of its script or by the number of
-    keys of a ``multi()`` is refused when built, with `parse`'s message,
-    unless the argument is invalid by itself, as `Descriptor` says.
+    ``wsh()`` or ``wpkh()`` argument, by the size of its script or by the
+    number of keys of a ``multi()`` is refused when built, with `parse`'s
+    message, unless the argument is invalid by itself, as `Descriptor`
+    says.
     """
 
     inner: Descriptor
@@ -1914,6 +1967,14 @@ class MiniscriptDescriptor(Descriptor):
     parse back from its text. So is one whose text `parse` reads as a
     descriptor function, such as ``pk()``, ``pkh()`` or ``multi()``: it
     would parse back as that function.
+
+    A node holding a number of keys its fragment does not take, as an
+    unpickled one can, is refused before its text is written: for its
+    context, where it is a multisig of the other one, and otherwise for
+    its number of keys, unless the miniscript holds an uncompressed key
+    and the node's text can be written: the node is then left to the
+    text and sanity checks above, and the key to ``wsh()``, which refuses
+    it by its position.
     """
 
     node: Miniscript
@@ -1926,6 +1987,7 @@ class MiniscriptDescriptor(Descriptor):
         # `Miniscript` refuses these keys in a P2WSH node when it is built,
         # and an unpickled node skips that check
         _assert_keys_outside_taproot(self.node.key_expressions)
+        _assert_key_numbers([self.node], self.node.key_expressions)
         name = _function_read(str(self.node))
         if name is not None:
             err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
@@ -2379,11 +2441,11 @@ class TrDescriptor(Descriptor):
     An uncompressed key is refused when built, with `parse`'s message.
     The internal key is refused before the tree, as `parse` reads them,
     and a leaf key once the tree passes its other checks: its shape, its
-    nodes' context, its leaves' text and their sanity. `parse` refuses
-    instead whichever fault it reads first. A `MultiA` leaf and a
-    tapscript `Miniscript` node refuse one when they are built, before
-    the ``tr()`` that holds them, and their message lacks the ``key N:``
-    that names the key's position in the ``tr()``.
+    nodes' context and number of keys, its leaves' text and their sanity.
+    `parse` refuses instead whichever fault it reads first. A `MultiA`
+    leaf and a tapscript `Miniscript` node refuse one when they are
+    built, before the ``tr()`` that holds them, and their message lacks
+    the ``key N:`` that names the key's position in the ``tr()``.
     """
 
     internal_key: KeyExpression
@@ -2825,19 +2887,26 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 def _assert_embedded(inner: Descriptor, context: str) -> None:
     """Refuse an argument `parse` refuses in `context` past its function.
 
-    A key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, the
-    number of keys of a ``multi()``, and the size of its script, in
-    `parse`'s order and with its messages: key by key, each refused for
-    its taproot spelling before its compression. An unpickled argument
-    skips its own check of the keys. ``sh()`` and ``wsh()`` hold no key
-    of their own, so a key's position in `inner`, counted as
-    `_assert_keys` counts it, is the one `parse` names.
+    A key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, a
+    ``multi()`` with no key, the number of keys of a ``multi()``, and
+    the size of its script, in `parse`'s order and with its messages:
+    key by key, each refused for its taproot spelling before its
+    compression. An unpickled argument skips its own check of the keys.
+    ``sh()`` and ``wsh()`` hold no key of their own, so a key's position
+    in `inner`, counted as `_assert_keys` counts it, is the one `parse`
+    names.
 
     Inside ``sh()``, the keys of a ``wsh()`` argument are refused
     uncompressed too, because `parse` reads them in the ``wsh()``
     context: an unpickled ``wsh()`` skips its own check of them.
+
+    The key of a ``wpkh()`` argument is refused uncompressed in any
+    context, because `parse` reads it compressed only: an unpickled
+    ``wpkh()`` skips its own check of it.
     """
-    no_uncompressed = _no_uncompressed(context) or isinstance(inner, WshDescriptor)
+    no_uncompressed = _no_uncompressed(context) or isinstance(
+        inner, (WshDescriptor, WpkhDescriptor)
+    )
 
     def check(key: KeyExpression) -> None:
         _assert_outside_taproot(key)
@@ -2847,6 +2916,8 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     _assert_keys(inner.key_expressions, check)
     if isinstance(inner, MultiDescriptor):
         name = str(inner).partition("(")[0]
+        if not inner.keys:
+            raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
         _assert_multi_count(name, inner.keys)
         _assert_multi_size(name, inner.keys, context)
     elif isinstance(inner, RawDescriptor):
