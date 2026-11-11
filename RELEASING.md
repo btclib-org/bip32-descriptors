@@ -1111,12 +1111,12 @@ dist=bip32-descriptors
 test_dist=bip32-descriptors
 pkg=bip32_descriptors
 rtd=bip32-descriptors
-python=3.15
+python=$(grep -Ev '^[[:space:]]*(#|$)' .python-version)
 smoke='import bip32_descriptors; print(bip32_descriptors.__version__)'
 ```
 
-`python` is the version `.python-version` pins, one of the interpreters
-`pypi-install.yml`'s matrix installs on.
+The block runs from the checkout's root, because `python` reads
+`.python-version` there.
 
 The bypass that an emergency merge adds back is added and removed by the
 commands in `REPOSITORY.md`'s *Branch protection*.
