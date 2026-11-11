@@ -74,9 +74,6 @@ holding a key that is no `KeyExpression`, before they count its keys.
 Issue btclib-org/bip32-descriptors#246. `TrDescriptor` refuses an
 unpickled `MultiA` leaf whose keys are not a tuple of `KeyExpression`,
 before it reads a key. Issue btclib-org/bip32-descriptors#249.
-`WshDescriptor` and `ShDescriptor` refuse an unpickled ``multi()``
-argument, and one inside a ``wsh()`` argument, whose keys are no tuple,
-before they write it out. Issue btclib-org/bip32-descriptors#264.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node whose
 fragment is no `str`, after its context and before its keys. Issue
@@ -101,6 +98,11 @@ and for a node holding a number of keys its fragment does not take, as
 its own build refuses them, and for its keys between the two, as
 `parse` refuses them. Issues btclib-org/bip32-descriptors#259 and
 btclib-org/bip32-descriptors#261.
+
+`WshDescriptor`, and `ShDescriptor` for a ``multi()`` argument and for
+one inside a ``wsh()`` argument, refuse an unpickled ``multi()`` whose
+keys are no tuple as `MultiDescriptor` refuses it, before its function
+and its other checks. Issue btclib-org/bip32-descriptors#264.
 """
 
 from __future__ import annotations
@@ -1722,7 +1724,11 @@ def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
 @pytest.mark.parametrize(
     "unpickled", [_unpickled_multi, _unpickled_sortedmulti], ids=["multi", "sorted"]
 )
-@pytest.mark.parametrize("keys", [None, 5, [_C_KEY]], ids=["None", "int", "list"])
+@pytest.mark.parametrize(
+    "keys",
+    [None, 5, [_C_KEY], "ab", b"ab"],
+    ids=["None", "int", "list", "str", "bytes"],
+)
 def test_an_unpickled_multi_holding_keys_of_another_type_is_refused(
     keys: object,
     unpickled: Callable[[tuple[KeyExpression, ...]], Descriptor],
@@ -1737,6 +1743,35 @@ def test_an_unpickled_multi_holding_keys_of_another_type_is_refused(
         MultiDescriptor(1, cast("tuple[KeyExpression, ...]", keys))
     multi = unpickled(cast("tuple[KeyExpression, ...]", keys))
     with pytest.raises(BTClibTypeError, match=err_msg):
+        wrap(multi)
+
+
+class _RenamedMulti(MultiDescriptor):
+    """A subclass writing a function name `parse` has no parser for."""
+
+    @override
+    def __str__(self) -> str:
+        return "foo()"
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [WshDescriptor, ShDescriptor, lambda multi: ShDescriptor(_unpickled_wsh(multi))],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+def test_the_keys_of_a_multi_are_refused_before_its_function(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """Even where its text holds no keys, as a ``multi()``'s text does.
+
+    Issue btclib-org/bip32-descriptors#264.
+    """
+    multi = _RenamedMulti(1, (_C_KEY,))
+    err_msg = r"^_RenamedMulti writes no function parse reads inside w?sh\(\)$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(multi)
+    object.__setattr__(multi, "keys", None)
+    with pytest.raises(BTClibTypeError, match="^invalid keys type: NoneType$"):
         wrap(multi)
 
 
