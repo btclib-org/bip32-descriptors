@@ -762,11 +762,11 @@ def _assert_key_numbers(
     """Refuse a node holding a number of keys its fragment does not take.
 
     Each root and every node below it, which a walk has already checked
-    for their type and context; `keys` are the keys the nodes hold, and
-    in ``tr()`` those of its other leaves. An unpickled node skips
-    `Miniscript`'s own check, and the text of a ``pk_k`` or ``pk_h``
-    reads only its first key. A fragment the library does not define is
-    named "a node", and taken to hold no key.
+    for their type, their context and the type of their keys; `keys` are
+    the keys the nodes hold, and in ``tr()`` those of its other leaves.
+    An unpickled node skips `Miniscript`'s own check, and the text of a
+    ``pk_k`` or ``pk_h`` reads only its first key. A fragment the library
+    does not define is named "a node", and taken to hold no key.
 
     Such a node is refused for a multisig outside its context, as its
     build refuses it. Otherwise, where `keys` hold an uncompressed one,
@@ -836,6 +836,29 @@ def _tapscript_node(node: object) -> Miniscript:
     return node
 
 
+def _assert_key_types(node: Miniscript | MultiA) -> None:
+    """Refuse a node whose keys are not a tuple of KEY expressions.
+
+    `Miniscript` and `MultiA` refuse them when they are built, but an
+    unpickled one skips that check. A walk calls this where it reaches
+    the node, before anything reads a key, so the refusal comes before a
+    fault of any node the walk reaches later.
+    """
+    assert_type(node.keys, tuple, "keys")
+    for key in node.keys:
+        assert_type(key, KeyExpression, "key")
+
+
+def _assert_tree_leaf(node: object) -> None:
+    """Refuse a tree node of the wrong type, and a `MultiA` leaf's keys.
+
+    A `MultiA` leaf is refused where `_assert_key_types` refuses its keys.
+    """
+    assert_type(node, _TREE_NODE_TYPES, "script tree node")
+    if isinstance(node, MultiA):
+        _assert_key_types(node)
+
+
 def _assert_tree(tree: DescriptorTree) -> None:
     """Refuse a node of the wrong type, and a tree deeper than MAX_TREE_DEPTH.
 
@@ -848,6 +871,9 @@ def _assert_tree(tree: DescriptorTree) -> None:
     tapscript context. Each node writes its keys in its own context, and
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
+
+    A miniscript node and a `MultiA` leaf are refused where their keys are
+    not a tuple of KEY expressions, as `_assert_key_types` says.
 
     Once the walk is done, so that a node of the wrong type or context is
     named first, a miniscript leaf is refused where any of its nodes holds
@@ -866,13 +892,13 @@ def _assert_tree(tree: DescriptorTree) -> None:
         # unpickled leaf holds there
         if in_leaf or isinstance(node, Miniscript):
             node = _tapscript_node(node)
-            assert_type(node.keys, tuple, "keys")
+            _assert_key_types(node)
             if not in_leaf:
                 leaves.append(node)
             stack += [(sub, depth, True) for sub in node.subs]
             continue
         if not isinstance(node, tuple):
-            assert_type(node, _TREE_NODE_TYPES, "script tree node")
+            _assert_tree_leaf(node)
             continue
         if len(node) != 2:
             err_msg = f"a script tree branch takes two subtrees, {len(node)} given"
@@ -1772,10 +1798,14 @@ class ShDescriptor(Descriptor):
 
     An argument `parse` refuses inside ``sh()`` by its function, by a
     key ``tr()`` and ``rawtr()`` alone take, by an uncompressed key of a
-    ``wsh()`` or ``wpkh()`` argument, by the size of its script or by the
-    number of keys of a ``multi()`` is refused when built, with `parse`'s
-    message, unless the argument is invalid by itself, as `Descriptor`
-    says.
+    ``wpkh()`` argument, by the size of its script or by the number of
+    keys of a ``multi()`` is refused when built, with `parse`'s message,
+    unless the argument is invalid by itself, as `Descriptor` says.
+
+    The argument of a ``wsh()`` argument is refused as `WshDescriptor`
+    refuses it, a value of the wrong type included, and its function
+    before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
+    that check of its own.
     """
 
     inner: Descriptor
@@ -1784,7 +1814,14 @@ class ShDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
+        if isinstance(self.inner, WshDescriptor):
+            # before anything writes the argument out: a value of the wrong
+            # type need not write itself without raising
+            assert_type(self.inner.inner, Descriptor, "inner descriptor")
         _assert_inner(self.inner, _P2SH)
+        if isinstance(self.inner, WshDescriptor):
+            _assert_inner(self.inner.inner, _P2WSH)
+            _assert_embedded(self.inner.inner, _P2WSH)
         _assert_embedded(self.inner, _P2SH)
 
     @override
@@ -1918,6 +1955,9 @@ def _assert_p2wsh(node: Miniscript) -> None:
     built, but an unpickled node skips that check and holds any context,
     so every node is walked, and only the library's own context and
     fragments are named.
+
+    A node is also refused where its keys are not a tuple of KEY
+    expressions, as `_assert_key_types` says.
     """
     stack = [node]
     while stack:
@@ -1929,7 +1969,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
             context = miniscript.TAPSCRIPT if known else "another context"
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
-        assert_type(sub.keys, tuple, "keys")
+        _assert_key_types(sub)
         stack += sub.subs
 
 
@@ -1964,6 +2004,14 @@ class MiniscriptDescriptor(Descriptor):
     and the node's text can be written: the node is then left to the
     text and sanity checks above, and the key to ``wsh()``, which refuses
     it by its position.
+
+    `parse` takes one only inside ``wsh()``. The refusal of a top-level one
+    is `parse`'s alone: the build cannot know whether the value will be
+    wrapped, and ``sh()`` refuses it when it wraps it. One built by hand
+    at the top level builds, gives its script, and writes a text `parse`
+    refuses, as Bitcoin Core's parser does. `infer_descriptor` answers the
+    ``raw()`` of that script, since Core's `InferDescriptor` reads a
+    miniscript only inside ``wsh()`` and ``tr()``.
     """
 
     node: Miniscript
@@ -2030,6 +2078,13 @@ class MultiDescriptor(Descriptor):
     OP_CHECKMULTISIG takes, and a k outside 1 to n are refused when built,
     in `parse`'s order and with its messages. A negative threshold, which
     no text holds, is refused as one over 2**32-1 is.
+
+    The bound of three keys on a bare ``multi()`` or ``sortedmulti()`` is
+    `parse`'s alone: the build cannot know whether the value will be bare,
+    and ``sh()`` and ``wsh()`` check their own bounds when they wrap it.
+    One of more than three keys builds, gives a bare multisig script, and
+    writes a text `parse` refuses. Bitcoin Core's `InferDescriptor` writes
+    such a ``multi()`` for that script too, as `infer_descriptor` says.
     """
 
     threshold: int
@@ -2429,12 +2484,11 @@ class TrDescriptor(Descriptor):
 
     An uncompressed key is refused when built, with `parse`'s message.
     The internal key is refused before the tree, as `parse` reads them,
-    and a leaf key once the tree passes its other checks: its shape, its
-    nodes' context and number of keys, its leaves' text and their sanity.
-    `parse` refuses instead whichever fault it reads first. A `MultiA`
-    leaf and a tapscript `Miniscript` node refuse one when they are
-    built, before the ``tr()`` that holds them, and their message lacks
-    the ``key N:`` that names the key's position in the ``tr()``.
+    and a leaf key once the tree passes its other checks. `parse` refuses
+    instead whichever fault it reads first. A `MultiA` leaf and a
+    tapscript `Miniscript` node refuse one when they are built, before
+    the ``tr()`` that holds them, and their message lacks the ``key N:``
+    that names the key's position in the ``tr()``.
     """
 
     internal_key: KeyExpression
@@ -2885,17 +2939,11 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     in `inner`, counted as `_assert_keys` counts it, is the one `parse`
     names.
 
-    Inside ``sh()``, the keys of a ``wsh()`` argument are refused
-    uncompressed too, because `parse` reads them in the ``wsh()``
-    context: an unpickled ``wsh()`` skips its own check of them.
-
     The key of a ``wpkh()`` argument is refused uncompressed in any
     context, because `parse` reads it compressed only: an unpickled
     ``wpkh()`` skips its own check of it.
     """
-    no_uncompressed = _no_uncompressed(context) or isinstance(
-        inner, (WshDescriptor, WpkhDescriptor)
-    )
+    no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
     def check(key: KeyExpression) -> None:
         _assert_outside_taproot(key)
