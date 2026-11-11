@@ -284,6 +284,27 @@ def test_a_node_of_another_context_and_an_unknown_fragment_is_not_echoed() -> No
     assert_secret_free(e.value, [_RANDOM_HEX])
 
 
+def test_a_node_whose_fragment_is_no_str_is_refused() -> None:
+    """An unpickled node holds any fragment, so its type alone is named.
+
+    In a ``tr()`` leaf and in a ``wsh()``. Issue
+    btclib-org/bip32-descriptors#250.
+    """
+    err_msg = "^invalid fragment type: list$"
+    expression = f"and_v(v:pk({_X}),older(1))"
+    leaf = _unpickled(miniscript.parse(expression, miniscript.TAPSCRIPT))
+    object.__setattr__(leaf.subs[1], "fragment", ["older"])
+    with pytest.raises(BTClibTypeError, match=err_msg) as e:
+        TrDescriptor(_KEY, leaf)
+    assert_secret_free(e.value, ["older"])
+    expression = f"and_v(v:pk({_C}),older(1))"
+    node = _unpickled(miniscript.parse(expression, miniscript.P2WSH))
+    object.__setattr__(node.subs[1], "fragment", ["older"])
+    with pytest.raises(BTClibTypeError, match=err_msg) as e:
+        MiniscriptDescriptor(node)
+    assert_secret_free(e.value, ["older"])
+
+
 def test_a_wsh_miniscript_holding_what_is_no_node_is_refused() -> None:
     """As a ``tr()`` leaf holding one is, naming the type alone."""
     node = _unpickled(miniscript.parse(f"pk({_C})", miniscript.P2WSH))

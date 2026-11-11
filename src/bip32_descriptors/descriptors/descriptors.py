@@ -798,7 +798,8 @@ def _assert_tree(tree: DescriptorTree) -> None:
     A miniscript leaf is refused where any of its nodes is not of the
     tapscript context. Each node writes its keys in its own context, and
     BIP342 reads a 33-byte key as an unknown public key type, which any
-    non-empty signature satisfies.
+    non-empty signature satisfies. A node whose fragment is no `str`, as
+    an unpickled one may hold, is refused too, before its text is written.
 
     A miniscript leaf is then refused where `parse` reads its text as a
     function, such as ``pk()`` or ``multi_a()``, or would refuse it
@@ -815,6 +816,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
         # unpickled leaf holds there
         if in_leaf or isinstance(node, Miniscript):
             node = _tapscript_node(node)
+            assert_type(node.fragment, str, "fragment")
             if not in_leaf:
                 leaves.append(node)
             stack += [(sub, depth, True) for sub in node.subs]
@@ -1863,7 +1865,8 @@ def _assert_p2wsh(node: Miniscript) -> None:
     refuses a subexpression of its parent's other context when it is
     built, but an unpickled node skips that check and holds any context,
     so every node is walked, and only the library's own context and
-    fragments are named.
+    fragments are named. Such a node may also hold a fragment that is no
+    `str`, which is refused before the text is written.
     """
     stack = [node]
     while stack:
@@ -1875,6 +1878,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
             context = miniscript.TAPSCRIPT if known else "another context"
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
+        assert_type(sub.fragment, str, "fragment")
         stack += sub.subs
 
 
