@@ -2810,8 +2810,9 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 def _assert_embedded(inner: Descriptor, context: str) -> None:
     """Refuse an argument `parse` refuses in `context` past its function.
 
-    An uncompressed key, the number of keys of a ``multi()``, and the
-    size of its script, in `parse`'s order and with its messages.
+    An uncompressed key, a ``multi()`` with no key, the number of keys
+    of a ``multi()``, and the size of its script, in `parse`'s order and
+    with its messages.
     ``sh()`` and ``wsh()`` hold no key of their own, so a key's
     position in `inner`, counted as `_assert_keys` counts it, is the one
     `parse` names.
@@ -2820,6 +2821,8 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
         _assert_keys(inner.key_expressions, _assert_compressed)
     if isinstance(inner, MultiDescriptor):
         name = str(inner).partition("(")[0]
+        if not inner.keys:
+            raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
         _assert_multi_count(name, inner.keys)
         _assert_multi_size(name, inner.keys, context)
     elif isinstance(inner, RawDescriptor):
