@@ -804,15 +804,16 @@ def _assert_node_key_number(node: Miniscript, *, uncompressed: bool) -> None:
             raise
 
 
-# True while `parse` builds a descriptor from a miniscript it has just
-# refused where not sane, with its `prv_keys`, so that the constructor does
-# not ask again without them
+# True while a descriptor is built from a miniscript already refused where
+# not sane: by `parse`, with its `prv_keys`, so that the constructor does
+# not ask again without them, and by `infer_descriptor`, so that ``wsh()``
+# and ``sh()`` do not ask again what the argument they wrap has just asked
 _SANE_BY_PARSE: ContextVar[bool] = ContextVar("_SANE_BY_PARSE", default=False)
 
 
 @contextmanager
 def _sane_by_parse() -> Iterator[None]:
-    """Build, inside the block, from the miniscript `parse` has checked."""
+    """Build, inside the block, from a miniscript whose sanity was asked."""
     token = _SANE_BY_PARSE.set(True)
     try:
         yield
@@ -1813,7 +1814,7 @@ class ShDescriptor(Descriptor):
     refuses it, a value of the wrong type included, and its function
     before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
     that check of its own. A miniscript there is refused as
-    `WshDescriptor` refuses one, before its text is written.
+    `WshDescriptor` refuses one, before ``sh()`` writes its text.
 
     A ``multi()`` argument whose keys are no tuple is refused as
     `WshDescriptor` refuses one.
@@ -1902,9 +1903,12 @@ class WshDescriptor(Descriptor):
     above, then for a node holding a number of keys its fragment does
     not take, with `MiniscriptDescriptor`'s message, as `parse` reads the
     keys of a node before it counts them. An unpickled one skips its own
-    check, and its text need not be written without raising. Then one
-    whose text `parse` reads as a descriptor function, or refuses where
-    not sane, is refused with `MiniscriptDescriptor`'s message.
+    check, and its text need not be written without raising.
+
+    Once those pass, a miniscript argument whose text `parse` reads as a
+    descriptor function, such as ``pk()``, and then one that is not sane,
+    is refused with `MiniscriptDescriptor`'s message: an unpickled one
+    skips that check of its own too.
 
     A ``multi()`` argument whose keys are no tuple is refused as
     `MultiDescriptor` refuses it, before its function: its text is
@@ -1972,7 +1976,8 @@ class WshDescriptor(Descriptor):
 def _assert_wsh_argument(inner: Descriptor) -> None:
     """Refuse an argument of ``wsh()`` as `WshDescriptor` says.
 
-    Nothing here writes the text of a miniscript argument.
+    Nothing here writes the text of a miniscript argument before its nodes
+    and their number of keys pass.
     """
     _assert_inner(inner, _P2WSH)
     if isinstance(inner, MiniscriptDescriptor):
@@ -2020,10 +2025,9 @@ def _assert_miniscript_read(node: Miniscript) -> None:
     """Refuse a P2WSH miniscript `parse` does not read back as itself.
 
     One whose text `parse` reads as a descriptor function, such as
-    ``pk()``, and one it refuses where not sane, unless `parse` has
-    checked its sanity already, as `_SANE_BY_PARSE` says. The last checks
-    of `MiniscriptDescriptor`, which ``wsh()`` and ``sh(wsh())`` run again
-    on their argument: an unpickled one skips its own.
+    ``pk()``, and one `parse` refuses where not sane, unless its sanity
+    was asked already, as `_SANE_BY_PARSE` says. The last two checks of
+    `MiniscriptDescriptor`; `WshDescriptor` says when ``wsh()`` runs them.
     """
     name = _function_read(str(node))
     if name is not None:
@@ -4804,14 +4808,20 @@ def _inferred(  # noqa: C901, PLR0911, PLR0912  # sourcery skip: low-code-qualit
             # refused for a multisig redeem script over the push limit,
             # which Core infers and `parse` refuses: the output is then
             # an addr(), as for any text that does not parse back
-            with suppress(BTClibValueError):
+            #
+            # a miniscript in the argument was refused where not sane as
+            # it was built
+            with suppress(BTClibValueError), _sane_by_parse():
                 return ShDescriptor(inner, network=network)
     if kind == "witness_v0_scripthash" and context in (_TOP, _P2SH):
         witness_script = known.scripts.get(ripemd160(data[0]))
         if witness_script is not None:
             inner = _inferred(witness_script, _P2WSH, known, network)
             if inner is not None:
-                return WshDescriptor(inner, network=network)
+                # a miniscript argument was refused where not sane as it was
+                # built
+                with _sane_by_parse():
+                    return WshDescriptor(inner, network=network)
     if kind == "witness_v1_taproot" and context == _TOP:
         tr = _inferred_tr(data[0], known, network)
         if tr is not None:
