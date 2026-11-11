@@ -761,12 +761,12 @@ def _assert_key_numbers(
 ) -> None:
     """Refuse a node holding a number of keys its fragment does not take.
 
-    Each root and every node below it, which a walk has already checked
-    for their type, their context and the type of their keys; `keys` are
-    the keys the nodes hold, and in ``tr()`` those of its other leaves.
-    An unpickled node skips `Miniscript`'s own check, and the text of a
-    ``pk_k`` or ``pk_h`` reads only its first key. A fragment the library
-    does not define is named "a node", and taken to hold no key.
+    Each root and every node below it, which `_assert_tree` or
+    `_assert_p2wsh` has already walked; `keys` are the keys the nodes
+    hold, and in ``tr()`` those of its other leaves. An unpickled node
+    skips `Miniscript`'s own check, and the text of a ``pk_k`` or
+    ``pk_h`` reads only its first key. A fragment the library does not
+    define is named "a node", and taken to hold no key.
 
     Such a node is refused for a multisig outside its context, as its
     build refuses it. Otherwise, where `keys` hold an uncompressed one,
@@ -823,11 +823,14 @@ def _tapscript_node(node: object) -> Miniscript:
     """Return a miniscript node of a tr() leaf, refusing what is none.
 
     A node that skipped `Miniscript`'s own checks, as an unpickled one
-    does, holds any value as a subexpression and any context, so only the
-    library's own context is named, a refusal echoing no value it holds.
+    does, holds any value as a subexpression, a fragment or a context. A
+    fragment that is no `str` is refused before the context is read,
+    naming its type alone, and only the library's own context is named,
+    a refusal echoing no value it holds.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
+    assert_type(node.fragment, str, "fragment")
     if node.context != miniscript.TAPSCRIPT:
         known = node.context == miniscript.P2WSH
         context = miniscript.P2WSH if known else "another context"
@@ -870,8 +873,10 @@ def _assert_tree(tree: DescriptorTree) -> None:
     A miniscript leaf is refused where any of its nodes is not of the
     tapscript context. Each node writes its keys in its own context, and
     BIP342 reads a 33-byte key as an unknown public key type, which any
-    non-empty signature satisfies. A node whose fragment is no `str`, as
-    an unpickled one may hold, is refused too, before its text is written.
+    non-empty signature satisfies.
+
+    A miniscript node is refused where its fragment is no `str`, before
+    its context is read, as `_tapscript_node` says.
 
     A miniscript node and a `MultiA` leaf are refused where their keys are
     not a tuple of KEY expressions, as `_assert_key_types` says.
@@ -893,7 +898,6 @@ def _assert_tree(tree: DescriptorTree) -> None:
         # unpickled leaf holds there
         if in_leaf or isinstance(node, Miniscript):
             node = _tapscript_node(node)
-            assert_type(node.fragment, str, "fragment")
             _assert_key_types(node)
             if not in_leaf:
                 leaves.append(node)
@@ -1956,8 +1960,10 @@ def _assert_p2wsh(node: Miniscript) -> None:
     refuses a subexpression of its parent's other context when it is
     built, but an unpickled node skips that check and holds any context,
     so every node is walked, and only the library's own context and
-    fragments are named. Such a node may also hold a fragment that is no
-    `str`, which is refused before the text is written.
+    fragments are named.
+
+    A node is refused where its fragment is no `str`, before its context
+    is read, naming its type alone.
 
     A node is also refused where its keys are not a tuple of KEY
     expressions, as `_assert_key_types` says.
@@ -1966,13 +1972,13 @@ def _assert_p2wsh(node: Miniscript) -> None:
     while stack:
         sub = stack.pop()
         assert_type(sub, Miniscript, "miniscript node")
+        assert_type(sub.fragment, str, "fragment")
         assert_type(sub.context, str, "context")
         if sub.context != miniscript.P2WSH:
             known = sub.context == miniscript.TAPSCRIPT
             context = miniscript.TAPSCRIPT if known else "another context"
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
-        assert_type(sub.fragment, str, "fragment")
         _assert_key_types(sub)
         stack += sub.subs
 
