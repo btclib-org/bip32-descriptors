@@ -1719,9 +1719,10 @@ class ShDescriptor(Descriptor):
 
     An argument `parse` refuses inside ``sh()`` by its function, by a
     key ``tr()`` and ``rawtr()`` alone take, by an uncompressed key of a
-    ``wsh()`` argument, by the size of its script or by the number of
-    keys of a ``multi()`` is refused when built, with `parse`'s message,
-    unless the argument is invalid by itself, as `Descriptor` says.
+    ``wsh()`` or ``wpkh()`` argument, by the size of its script or by the
+    number of keys of a ``multi()`` is refused when built, with `parse`'s
+    message, unless the argument is invalid by itself, as `Descriptor`
+    says.
     """
 
     inner: Descriptor
