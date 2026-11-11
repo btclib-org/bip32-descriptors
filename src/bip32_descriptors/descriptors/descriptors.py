@@ -1735,9 +1735,12 @@ class ShDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
+        if isinstance(self.inner, WshDescriptor):
+            # before anything writes the argument out: a value of the wrong
+            # type need not write itself without raising
+            assert_type(self.inner.inner, Descriptor, "inner descriptor")
         _assert_inner(self.inner, _P2SH)
         if isinstance(self.inner, WshDescriptor):
-            assert_type(self.inner.inner, Descriptor, "inner descriptor")
             _assert_inner(self.inner.inner, _P2WSH)
             _assert_embedded(self.inner.inner, _P2WSH)
         _assert_embedded(self.inner, _P2SH)

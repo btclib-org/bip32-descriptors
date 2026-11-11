@@ -1276,8 +1276,9 @@ def _unpickled_wsh(inner: Descriptor) -> Descriptor:
     """Return ``wsh(INNER)``, unpickled.
 
     `WshDescriptor` refuses an argument `parse` refuses inside ``wsh()``
-    when built, and unpickling skips that check, so the argument is given
-    to an unpickled copy.
+    when built, unless the argument is invalid by itself, as `Descriptor`
+    says. Unpickling skips that check, so the argument is given to an
+    unpickled copy.
     """
     parsed = _PARSED[WshDescriptor]
     wsh: WshDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
@@ -1492,7 +1493,19 @@ def test_what_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
         replace(parsed, inner=inner)
 
 
-@pytest.mark.parametrize("value", [5, None, f"pk({_C})"], ids=["int", "none", "str"])
+class _NoText:
+    """A value whose `str` raises."""
+
+    @override
+    def __str__(self) -> str:
+        raise RuntimeError
+
+
+@pytest.mark.parametrize(
+    "value",
+    [5, None, f"pk({_C})", _NoText()],
+    ids=["int", "none", "str", "no-text"],
+)
 def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
     value: Any,
 ) -> None:
