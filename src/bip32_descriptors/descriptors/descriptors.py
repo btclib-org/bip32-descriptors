@@ -2812,11 +2812,12 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
 
     An uncompressed key, the number of keys of a ``multi()``, and the
     size of its script, in `parse`'s order and with its messages.
-    ``sh()`` and ``wsh()`` hold no key of their own, so a key's
-    position in `inner`, counted as `_assert_keys` counts it, is the one
-    `parse` names.
+    ``wpkh()`` refuses an uncompressed key in any context, a check an
+    unpickled one has skipped. ``sh()`` and ``wsh()`` hold no key of
+    their own, so a key's position in `inner`, counted as `_assert_keys`
+    counts it, is the one `parse` names.
     """
-    if _no_uncompressed(context):
+    if _no_uncompressed(context) or isinstance(inner, WpkhDescriptor):
         _assert_keys(inner.key_expressions, _assert_compressed)
     if isinstance(inner, MultiDescriptor):
         name = str(inner).partition("(")[0]
