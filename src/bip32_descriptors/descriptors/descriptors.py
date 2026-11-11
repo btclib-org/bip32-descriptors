@@ -2118,8 +2118,8 @@ class MiniscriptDescriptor(Descriptor):
     unpickled one can, is refused before the sanity check reads them, and
     so is one of a fragment the library does not define, or of a number
     of subexpressions or a threshold its fragment does not take. A
-    multisig node left as the paragraph above says is not asked, as
-    `_assert_derived` says, and the nodes above it are.
+    multisig node left as the paragraph above says is not asked, nor are
+    the nodes above it, as `_assert_derived` says.
 
     `parse` takes one only inside ``wsh()``. The refusal of a top-level one
     is `parse`'s alone: the build cannot know whether the value will be

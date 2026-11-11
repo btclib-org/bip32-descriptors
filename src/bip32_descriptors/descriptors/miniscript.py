@@ -1173,10 +1173,11 @@ def _assert_derived(root: Miniscript) -> None:
 
     A multisig node of a number of keys its fragment does not take is not
     asked: what its build computes depends on its number of keys, and no
-    build takes that number. The nodes above it are asked against what it
-    holds. Any other node is asked whatever its keys, which what its build
-    computes does not read. The caller has checked the type of every node,
-    its context, and the types of its fragment and its keys.
+    build takes that number. Nor are the nodes above it: they would be
+    computed from what it holds, which nothing asks. Any other node is
+    asked whatever its keys, which what its build computes does not read.
+    The caller has checked the type of every node, its context, and the
+    types of its fragment and its keys.
     """
     nodes: list[Miniscript] = []
     stack = [root]
@@ -1184,11 +1185,17 @@ def _assert_derived(root: Miniscript) -> None:
         node = stack.pop()
         nodes.append(node)
         stack += node.subs
+    # the ids of the nodes not asked, each before the nodes above it
+    unasked: set[int] = set()
     for node in reversed(nodes):
+        if any(id(sub) in unasked for sub in node.subs):
+            unasked.add(id(node))
+            continue
         if node.fragment in {"multi", "multi_a"}:
             try:
                 _assert_key_number(node.fragment, len(node.keys))
             except BTClibValueError:
+                unasked.add(id(node))
                 continue
         node._assert_arity()
         node._assert_number()

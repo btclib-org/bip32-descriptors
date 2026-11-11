@@ -150,7 +150,7 @@ btclib-org/bip32-descriptors#292.
 `ShDescriptor` refuse an unpickled node whose type and bounds are not
 those its build computes from its subexpressions, before its sanity is
 asked. A node left to those checks for its number of keys, as above, is
-asked unless it is a multisig, and so are the nodes above it. Issue
+asked, and so are the nodes above it, unless it is a multisig. Issue
 btclib-org/bip32-descriptors#286.
 """
 
@@ -4004,3 +4004,34 @@ def test_a_node_beside_an_uncompressed_key_is_asked_its_type_and_bounds(
         err_msg = f"^{stale} holds a type or bounds its build does not compute$"
     with pytest.raises(BTClibValueError, match=err_msg):
         _outermost(wrapped, root)
+
+
+@pytest.mark.parametrize("field", ["properties", "script_size"])
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+def test_a_node_above_a_multisig_of_no_key_is_not_asked_its_type_and_bounds(
+    wrapped: str, field: str
+) -> None:
+    """Where the multisig holds a field of the wrong type, and no key.
+
+    An ``older(2)`` beside it holds an uncompressed key, so
+    `_assert_key_numbers` leaves the multisig to the checks that follow.
+    What its build computes reads its number of keys, which no build
+    takes, so neither it nor the ``and_v`` above it is asked: ``tr()``
+    refuses the key by its position, and a bare `MiniscriptDescriptor`
+    builds it. Issue btclib-org/bip32-descriptors#286.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    fragment, own = (
+        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
+    )
+    expression = f"and_v(v:{fragment}(1,{own[0]},{own[1]}),older(2))"
+    root = _unpickled(miniscript.parse(expression, context))
+    multisig = _node_at(root, (0, 0))
+    object.__setattr__(multisig, "keys", ())
+    object.__setattr__(multisig, field, None)
+    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
+    if wrapped == "tr":
+        with pytest.raises(BTClibValueError, match=f"^key 1: {_UNCOMPRESSED_HERE}$"):
+            wrap(root)
+    else:
+        assert str(wrap(root)) == str(root)
