@@ -826,8 +826,7 @@ def _tapscript_node(node: object) -> Miniscript:
     does, holds any value as a subexpression, a context or a fragment, so
     only the library's own context is named, a refusal echoing no value
     it holds. Once its context passes, a fragment that is no `str` is
-    refused, naming its type alone: `Miniscript` checks them in that
-    order too.
+    refused, naming its type alone.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -1963,9 +1962,9 @@ def _assert_p2wsh(node: Miniscript) -> None:
     so every node is walked, and only the library's own context and
     fragments are named.
 
-    A node of the P2WSH context is then refused where its fragment is no
-    `str`, naming its type alone, before its keys are read: `Miniscript`
-    checks the context first too.
+    A node is refused first where it is no `Miniscript`, and, once its
+    context passes, where its fragment is no `str`, naming the type
+    alone, before its keys are read.
 
     A node is also refused where its keys are not a tuple of KEY
     expressions, as `_assert_key_types` says.

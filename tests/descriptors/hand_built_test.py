@@ -76,8 +76,8 @@ unpickled `MultiA` leaf whose keys are not a tuple of `KeyExpression`,
 before it reads a key. Issue btclib-org/bip32-descriptors#249.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node whose
-fragment is no `str`, after its context and before its keys, as its
-build does. Issue btclib-org/bip32-descriptors#250.
+fragment is no `str`, after its context and before its keys. Issue
+btclib-org/bip32-descriptors#250.
 
 A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
 text `parse` refuses: its docstring says why. Issue
@@ -348,8 +348,7 @@ def test_a_node_whose_fragment_is_no_str_is_refused(
     """An unpickled node holds any fragment, so its type alone is named.
 
     In a ``tr()`` leaf and in a ``wsh()``, after the node's context and
-    before its keys, as its build checks them. Issue
-    btclib-org/bip32-descriptors#250.
+    before its keys. Issue btclib-org/bip32-descriptors#250.
     """
     wraps: list[tuple[str, str, str, Callable[[miniscript.Miniscript], object]]] = [
         (miniscript.TAPSCRIPT, _X, miniscript.P2WSH, lambda n: TrDescriptor(_KEY, n)),
