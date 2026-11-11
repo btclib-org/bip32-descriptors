@@ -4197,6 +4197,58 @@ def test_a_node_above_a_multisig_of_no_key_is_not_asked_its_type_and_bounds(
         assert str(wrap(root)) == str(root)
 
 
+@pytest.mark.parametrize("name", _DERIVED_FIELDS)
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+def test_a_node_above_a_multisig_of_no_key_is_refused_lacking_a_field(
+    wrapped: str, name: str
+) -> None:
+    """Though it is not asked its type and bounds, as the test above says.
+
+    Issue btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    fragment, own = (
+        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
+    )
+    expression = f"and_v(v:{fragment}(1,{own[0]},{own[1]}),older(2))"
+    root = _unpickled(miniscript.parse(expression, context))
+    object.__setattr__(_node_at(root, (0, 0)), "keys", ())
+    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
+    object.__delattr__(root, name)
+    err_msg = "^and_v holds a type or bounds its build does not compute$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _outermost(wrapped, root)
+
+
+@pytest.mark.parametrize(
+    "threshold, refusal",
+    [
+        (0, BTClibValueError("invalid thresh() threshold: 0 of 2")),
+        (3, BTClibValueError("invalid thresh() threshold: 3 of 2")),
+        ("2", BTClibTypeError("invalid threshold type: str")),
+    ],
+)
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+def test_a_node_above_a_multisig_of_no_key_is_refused_for_its_threshold(
+    wrapped: str, threshold: object, refusal: Exception
+) -> None:
+    """With its build's message, though it is not asked its type and bounds.
+
+    Issue btclib-org/bip32-descriptors#284.
+    """
+    context, _ = _WRAPPED[wrapped]
+    fragment, own = (
+        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
+    )
+    expression = f"thresh(1,{fragment}(1,{own[0]},{own[1]}),s:pk({own[2]}))"
+    root = _unpickled(miniscript.parse(expression, context))
+    object.__setattr__(_node_at(root, (0,)), "keys", ())
+    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
+    object.__setattr__(root, "threshold", threshold)
+    with pytest.raises(type(refusal), match=f"^{re.escape(str(refusal))}$"):
+        _outermost(wrapped, root)
+
+
 @pytest.mark.parametrize("wrapped", _WRAPPED)
 def test_an_unpickled_node_of_more_subexpressions_than_it_takes_is_refused(
     wrapped: str,
