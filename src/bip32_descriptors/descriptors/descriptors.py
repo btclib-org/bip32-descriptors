@@ -245,6 +245,7 @@ from bip32_descriptors.descriptors.miniscript import (
     Miniscript,
     Preimages,
     SpendContext,
+    _assert_key_number,
     _assert_sane,
     _assert_sane_script,
     _has_raw_key_hash,
@@ -747,6 +748,17 @@ def _named_fragment(node: Miniscript) -> str:
     return fragment if known else "a node"
 
 
+def _assert_node_keys(node: Miniscript) -> None:
+    """Refuse a node holding a number of keys its fragment does not take.
+
+    With `Miniscript`'s message. An unpickled node skips that check, and
+    its text reads the key a ``pk_k`` holds. A fragment the library does
+    not define is named "a node", and taken to hold no key.
+    """
+    assert_type(node.keys, tuple, "keys")
+    _assert_key_number(_named_fragment(node), len(node.keys))
+
+
 # True while `parse` builds a descriptor from a miniscript it has just
 # refused where not sane, with its `prv_keys`, so that the constructor does
 # not ask again without them
@@ -791,7 +803,8 @@ def _assert_tree(tree: DescriptorTree) -> None:
     A miniscript leaf is refused where any of its nodes is not of the
     tapscript context. Each node writes its keys in its own context, and
     BIP342 reads a 33-byte key as an unknown public key type, which any
-    non-empty signature satisfies.
+    non-empty signature satisfies. So is one any of whose nodes holds a
+    number of keys its fragment does not take, as an unpickled node can.
 
     A miniscript leaf is then refused where `parse` reads its text as a
     function, such as ``pk()`` or ``multi_a()``, or would refuse it
@@ -808,6 +821,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
         # unpickled leaf holds there
         if in_leaf or isinstance(node, Miniscript):
             node = _tapscript_node(node)
+            _assert_node_keys(node)
             if not in_leaf:
                 leaves.append(node)
             stack += [(sub, depth, True) for sub in node.subs]
@@ -1849,7 +1863,8 @@ def _assert_p2wsh(node: Miniscript) -> None:
     refuses a subexpression of its parent's other context when it is
     built, but an unpickled node skips that check and holds any context,
     so every node is walked, and only the library's own context and
-    fragments are named.
+    fragments are named. A node holding a number of keys its fragment
+    does not take is refused too, before its text is written.
     """
     stack = [node]
     while stack:
@@ -1861,6 +1876,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
             context = miniscript.TAPSCRIPT if known else "another context"
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
+        _assert_node_keys(sub)
         stack += sub.subs
 
 

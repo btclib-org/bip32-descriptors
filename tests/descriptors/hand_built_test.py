@@ -289,6 +289,25 @@ def test_a_wsh_miniscript_holding_what_is_no_node_is_refused() -> None:
     assert_secret_free(e.value, [_RANDOM_HEX])
 
 
+def test_a_node_holding_no_key_its_fragment_takes_is_refused() -> None:
+    """With `Miniscript`'s message, before the node's text is written.
+
+    In a ``tr()`` leaf and in a ``wsh()``. Issue
+    btclib-org/bip32-descriptors#235.
+    """
+    err_msg = "^invalid number of keys in pk_k: 0$"
+    expression = f"and_v(v:pk({_X}),pk({_X2}))"
+    leaf = _unpickled(miniscript.parse(expression, miniscript.TAPSCRIPT))
+    object.__setattr__(leaf.subs[1].subs[0], "keys", ())
+    with pytest.raises(BTClibValueError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
+    expression = f"and_v(v:pk({_C}),pk({_C2}))"
+    node = _unpickled(miniscript.parse(expression, miniscript.P2WSH))
+    object.__setattr__(node.subs[1].subs[0], "keys", ())
+    with pytest.raises(BTClibValueError, match=err_msg):
+        WshDescriptor(MiniscriptDescriptor(node))
+
+
 @pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "None"])
 @pytest.mark.parametrize(
     "context",
