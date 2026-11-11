@@ -823,19 +823,20 @@ def _tapscript_node(node: object) -> Miniscript:
     """Return a miniscript node of a tr() leaf, refusing what is none.
 
     A node that skipped `Miniscript`'s own checks, as an unpickled one
-    does, holds any value as a subexpression, a fragment or a context. A
-    fragment that is no `str` is refused before the context is read,
-    naming its type alone, and only the library's own context is named,
-    a refusal echoing no value it holds.
+    does, holds any value as a subexpression, a context or a fragment, so
+    only the library's own context is named, a refusal echoing no value
+    it holds. Once its context passes, a fragment that is no `str` is
+    refused, naming its type alone: `Miniscript` checks them in that
+    order too.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
-    assert_type(node.fragment, str, "fragment")
     if node.context != miniscript.TAPSCRIPT:
         known = node.context == miniscript.P2WSH
         context = miniscript.P2WSH if known else "another context"
         err_msg = f"not a tapscript node: {_named_fragment(node)} in {context}"
         raise BTClibValueError(err_msg)
+    assert_type(node.fragment, str, "fragment")
     return node
 
 
@@ -875,8 +876,8 @@ def _assert_tree(tree: DescriptorTree) -> None:
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
 
-    A miniscript node is refused where its fragment is no `str`, before
-    its context is read, as `_tapscript_node` says.
+    A miniscript node of that context is then refused where its fragment
+    is no `str`, before its keys are read, as `_tapscript_node` says.
 
     A miniscript node and a `MultiA` leaf are refused where their keys are
     not a tuple of KEY expressions, as `_assert_key_types` says.
@@ -1962,8 +1963,9 @@ def _assert_p2wsh(node: Miniscript) -> None:
     so every node is walked, and only the library's own context and
     fragments are named.
 
-    A node is refused where its fragment is no `str`, before its context
-    is read, naming its type alone.
+    A node of the P2WSH context is then refused where its fragment is no
+    `str`, naming its type alone, before its keys are read: `Miniscript`
+    checks the context first too.
 
     A node is also refused where its keys are not a tuple of KEY
     expressions, as `_assert_key_types` says.
@@ -1972,13 +1974,13 @@ def _assert_p2wsh(node: Miniscript) -> None:
     while stack:
         sub = stack.pop()
         assert_type(sub, Miniscript, "miniscript node")
-        assert_type(sub.fragment, str, "fragment")
         assert_type(sub.context, str, "context")
         if sub.context != miniscript.P2WSH:
             known = sub.context == miniscript.TAPSCRIPT
             context = miniscript.TAPSCRIPT if known else "another context"
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
+        assert_type(sub.fragment, str, "fragment")
         _assert_key_types(sub)
         stack += sub.subs
 

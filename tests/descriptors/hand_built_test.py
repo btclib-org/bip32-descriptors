@@ -76,8 +76,8 @@ unpickled `MultiA` leaf whose keys are not a tuple of `KeyExpression`,
 before it reads a key. Issue btclib-org/bip32-descriptors#249.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node whose
-fragment is no `str`, before they read its context or its keys. Issue
-btclib-org/bip32-descriptors#250.
+fragment is no `str`, after its context and before its keys, as its
+build does. Issue btclib-org/bip32-descriptors#250.
 
 A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
 text `parse` refuses: its docstring says why. Issue
@@ -347,23 +347,28 @@ def test_a_node_whose_fragment_is_no_str_is_refused(
 ) -> None:
     """An unpickled node holds any fragment, so its type alone is named.
 
-    In a ``tr()`` leaf and in a ``wsh()``, before the node's context and
-    its keys are read. Issue btclib-org/bip32-descriptors#250.
+    In a ``tr()`` leaf and in a ``wsh()``, after the node's context and
+    before its keys, as its build checks them. Issue
+    btclib-org/bip32-descriptors#250.
     """
-    err_msg = f"^invalid fragment type: {type(fragment).__name__}$"
     wraps: list[tuple[str, str, str, Callable[[miniscript.Miniscript], object]]] = [
         (miniscript.TAPSCRIPT, _X, miniscript.P2WSH, lambda n: TrDescriptor(_KEY, n)),
         (miniscript.P2WSH, _C, miniscript.TAPSCRIPT, MiniscriptDescriptor),
     ]
     for context, key, other, wrap in wraps:
+        error: type[Exception] = BTClibTypeError
+        err_msg = f"^invalid fragment type: {type(fragment).__name__}$"
         expression = f"and_v(v:pk({key}),older(1))"
         root = _unpickled(miniscript.parse(expression, context))
         object.__setattr__(root.subs[1], "fragment", fragment)
         if fault == "context":
             _with_context(root.subs[1], other)
+            error = BTClibValueError
+            node = "tapscript" if context == miniscript.TAPSCRIPT else "P2WSH"
+            err_msg = f"^not a {node} node: a node in {other}$"
         elif fault == "keys":
             object.__setattr__(root.subs[1], "keys", ("abc",))
-        with pytest.raises(BTClibTypeError, match=err_msg) as e:
+        with pytest.raises(error, match=err_msg) as e:
             wrap(root)
         assert_secret_free(e.value, [spelling])
 
