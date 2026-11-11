@@ -502,6 +502,25 @@ def test_a_sh_multisig_over_the_push_limit_is_an_address() -> None:
     assert inferred.startswith("addr(")
 
 
+@pytest.mark.parametrize("wrapped", [False, True], ids=["bare", "sh"])
+def test_a_multisig_of_keys_no_position_takes_is_a_raw_or_an_address(
+    wrapped: bool,
+) -> None:
+    """Core infers a ``multi()`` or a ``sh(multi())``, which `parse` refuses.
+
+    Eight uncompressed keys, which `MultiDescriptor` refuses when built.
+    """
+    keys = [PrvKeyData(prv_key, compressed=False).pub.sec for prv_key in range(1, 9)]
+    inner = serialize(["OP_1", *keys, "OP_8", "OP_CHECKMULTISIG"])
+    script = b"\xa9\x14" + hash160(inner) + b"\x87" if wrapped else inner
+    inferred = infer_descriptor(script, Provider(scripts=(inner,)), "regtest")
+    if wrapped:
+        assert inferred == _addr(script)
+        assert inferred.startswith("addr(")
+    else:
+        assert inferred == add_checksum(f"raw({inner.hex()})")
+
+
 def test_a_miniscript_core_refuses_is_no_miniscript() -> None:
     """One that is not sane, and one holding a key that is no key."""
     not_sane = bytes.fromhex("5ab2")
@@ -510,6 +529,17 @@ def test_a_miniscript_core_refuses_is_no_miniscript() -> None:
         script = ScriptPubKey.p2wsh(inner).script
         inferred = infer_descriptor(script, Provider(scripts=(inner,)), "regtest")
         assert inferred == _addr(script)
+
+
+def test_a_multi_of_a_negative_number_of_keys_is_an_address() -> None:
+    """OP_1 <-127> OP_CHECKMULTISIG, a ``wsh()`` script no descriptor is.
+
+    Core's `DecodeScript` refuses its key count before it reads a key.
+    """
+    inner = bytes.fromhex("5101ffae")
+    script = ScriptPubKey.p2wsh(inner).script
+    inferred = infer_descriptor(script, Provider(scripts=(inner,)), "regtest")
+    assert inferred == _addr(script)
 
 
 def _tr(tree: list) -> tuple[bytes, Provider]:  # type: ignore[type-arg]
@@ -560,6 +590,24 @@ def test_a_pkh_leaf_of_an_unknown_key_is_a_rawleaf_and_a_known_one_a_pkh() -> No
     assert infer_descriptor(script, known, "regtest") == add_checksum(
         f"tr({X1},pkh(02{X34}))"
     )
+
+
+def test_a_pkh_leaf_of_a_provider_key_of_no_compressed_prefix_is_a_rawleaf() -> None:
+    """A key of 33 bytes whose first byte is 04 is no compressed key.
+
+    The leaf is what a key the provider does not hold gives.
+    """
+    leaf: list = [  # type: ignore[type-arg]
+        "OP_DUP",
+        "OP_HASH160",
+        hash160(bytes.fromhex(X34)),
+        "OP_EQUALVERIFY",
+        "OP_CHECKSIG",
+    ]
+    script, provider = _tr([(0xC0, leaf)])
+    unknown = infer_descriptor(script, provider, "regtest")
+    known = replace(provider, keys={**provider.keys, bytes.fromhex("04" + X34): None})
+    assert infer_descriptor(script, known, "regtest") == unknown
 
 
 def test_a_leaf_that_infers_to_nothing_else_is_a_rawleaf() -> None:

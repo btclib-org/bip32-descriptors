@@ -109,7 +109,6 @@ from btclib.utils import (
     is_integer,
 )
 from btclib.var_int import serialize as var_int_serialize
-from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import BIP32KeyData
@@ -117,10 +116,12 @@ from bip32_descriptors.bip32.der_path import _int_from_digits
 from bip32_descriptors.descriptors.key_expression import (
     KeyExpression,
     PrvKeys,
+    _assert_compressed,
     _assert_outside_taproot,
     _assert_prv_keys,
     _offered_signature,
     _parse_key,
+    _script_keys,
     _split_arguments,
     _wifs_filed_in,
 )
@@ -285,11 +286,37 @@ def _assert_valid_context(context: str) -> None:
         raise BTClibValueError(err_msg)
 
 
+def _assert_fragment_type(fragment: object) -> None:
+    """Refuse a fragment that is no `str`, a subclass of it included.
+
+    The fragment is looked up in dicts and sets, and a subclass can hash
+    as no `str` does, or not hash at all. `_named_fragment` makes the same
+    test. The refusal names the type alone, echoing no value.
+    """
+    if type(fragment) is not str:
+        err_msg = f"invalid fragment type: {type(fragment).__name__}"
+        raise BTClibTypeError(err_msg)
+
+
 def _multisig_context_fault(fragment: str) -> str:
     """Return the fault of a multisig outside its context."""
     if fragment == "multi":
         return "multi() is not allowed in a tapscript"
     return "multi_a() is only allowed in a tapscript"
+
+
+def _assert_key_number(fragment: str, keys: int) -> None:
+    """Refuse a number of keys the fragment does not take."""
+    if fragment in {"pk_k", "pk_h"}:
+        allowed = keys == 1
+    elif fragment == "multi":
+        allowed = 1 <= keys <= MAX_PUBKEYS_PER_MULTISIG
+    elif fragment == "multi_a":
+        allowed = 1 <= keys <= _MAX_PUBKEYS_PER_MULTI_A
+    else:
+        allowed = keys == 0
+    if not allowed:
+        raise BTClibValueError(f"invalid number of keys in {fragment}: {keys}")
 
 
 def _t(properties: str) -> frozenset[str]:
@@ -1178,9 +1205,10 @@ class Miniscript:
         names only the library's own.
 
         The fragment, the keys, the digest and the number each have their
-        type asserted just before their value is checked, the keys only as
-        a tuple: a field of another type leaves as a `BTClibTypeError`
-        naming the field and the type alone.
+        type asserted just before their value is checked, the fragment as
+        `_assert_fragment_type` says, the keys as a tuple and each key as a
+        `KeyExpression`: a field of another type leaves as a
+        `BTClibTypeError` naming the field and the type alone.
         """
         assert_type(self.context, str, "context")
         if self.context not in (P2WSH, TAPSCRIPT):
@@ -1188,7 +1216,7 @@ class Miniscript:
             err_msg += f"; it must be one of {sorted((P2WSH, TAPSCRIPT))}"
             raise BTClibValueError(err_msg)
         fragment = self.fragment
-        assert_type(fragment, str, "fragment")
+        _assert_fragment_type(fragment)
         if fragment == "thresh":
             if not self.subs:
                 raise BTClibValueError("thresh() takes at least one subexpression")
@@ -1218,31 +1246,30 @@ class Miniscript:
     def _assert_keys(self) -> None:
         """Refuse the keys no fragment holds, and the ones a context forbids.
 
-        A P2WSH node refuses a ``musig()`` key and an x-only one, with
-        `parse`'s message, since its text would not parse back. A
-        ``musig()`` key would also want an ECDSA signature, which a MuSig2
-        group does not make (BIP327).
+        A node of either context refuses an uncompressed key, and a P2WSH
+        node a ``musig()`` key and an x-only one, with `parse`'s message,
+        since its text would not parse back. A ``musig()`` key would also
+        want an ECDSA signature, which a MuSig2 group does not make
+        (BIP327).
         """
         assert_type(self.keys, tuple, "keys")
+        for key in self.keys:
+            assert_type(key, KeyExpression, "key")
         fragment = self.fragment
         keys = len(self.keys)
         if fragment in {"multi", "multi_a"} and (fragment == "multi_a") != (
             self.context == TAPSCRIPT
         ):
             raise BTClibValueError(_multisig_context_fault(fragment))
-        if fragment in {"pk_k", "pk_h"}:
-            allowed = keys == 1
-        elif fragment == "multi":
-            allowed = 1 <= keys <= MAX_PUBKEYS_PER_MULTISIG
-        elif fragment == "multi_a":
-            allowed = 1 <= keys <= _MAX_PUBKEYS_PER_MULTI_A
-        else:
-            allowed = keys == 0
-        if not allowed:
-            raise BTClibValueError(f"invalid number of keys in {fragment}: {keys}")
-        if self.context == P2WSH:
-            for key in self.keys:
+        # a key the context refuses, before the number of keys: `parse`
+        # reads the keys of a fragment that takes them before it counts
+        # them. A fragment that takes none and holds such a key is refused
+        # for the key too
+        for key in self.keys:
+            if self.context == P2WSH:
                 _assert_outside_taproot(key)
+            _assert_compressed(key)
+        _assert_key_number(fragment, keys)
 
     def _assert_number(self) -> None:
         """Refuse a lock time or a threshold not an integer or out of bounds."""
@@ -3008,6 +3035,8 @@ class _Decoder:
         count = _script_number(self.entries[self.pos + 1])
         if count is None or self._remaining() < 3 + count:
             raise BTClibValueError("not a multi(): no number of keys")
+        # Core's DecodeScript refuses the count before it reads a key
+        _assert_key_number("multi", count)
         keys = []
         for i in range(count):
             sec = self._data(2 + i)
@@ -3283,8 +3312,10 @@ def from_script(
     miniscript, and this is what answers the question -- a caller asking
     it catches the refusal.
 
-    A key that is no point is refused as `KeyExpression` refuses it, by
-    the curve library.
+    A key is read as Bitcoin Core's signer reads it, by its size and, in
+    P2WSH, its prefix: a key that is no point is read too. The `str` of
+    what holds it is then a text that `parse` refuses, as Core's parser
+    does, and a descriptor refuses the key when built.
 
     `key_hashes` maps a hash160 to the public key behind it, for the one
     fragment that keeps no key in the script: ``pk_h()`` and its sugared
@@ -3309,7 +3340,8 @@ def from_script(
             for key_hash, key in (key_hashes or {}).items()
         },
     )
-    node = decoder.decode()
+    with _script_keys():
+        node = decoder.decode()
     if decoder.pos != len(decoder.entries):
         err_msg = "not a miniscript: the script holds more than one expression"
         raise BTClibValueError(err_msg)
@@ -3349,7 +3381,7 @@ def reads_back(
     script = bytes_from_octets(script)
     try:
         node = from_script(script, context, key_hashes)
-    except (BTClibValueError, EccValueError):
+    except BTClibValueError:
         return False
     return node.script() == script
 
@@ -3393,10 +3425,11 @@ def _assert_sane(node: Miniscript, prv_keys: PrvKeys) -> None:
 def _assert_sane_script(node: Miniscript) -> None:
     """Refuse a hand-built miniscript that `parse` refuses without `prv_keys`.
 
-    A descriptor holding one would not parse back from its own text. With
-    no private key a key behind a hardened step is compared by its
-    expression, as `Miniscript.has_duplicate_keys` says, so `parse` with
-    `prv_keys` may still refuse what this accepts.
+    A descriptor holding one would not parse back from its own text. A key
+    that is no point is the descriptor's to refuse. With no private key a
+    key behind a hardened step is compared by its expression, as
+    `Miniscript.has_duplicate_keys` says, so `parse` with `prv_keys` may
+    still refuse what this accepts.
     """
     _assert_script(node)
     _assert_sane(node, {})

@@ -2,22 +2,23 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""What `parse` never builds is refused when a descriptor is built by hand.
+"""Which of `parse`'s refusals a descriptor built by hand meets too.
 
 A field of the wrong type, in every `Descriptor` fragment and in a
 `MultiA`, leaves as a `BTClibTypeError`, and so does a `Miniscript`
-node's fragment, threshold or digest of the wrong type, or its keys
-given as no tuple. `TrDescriptor`, `MiniscriptDescriptor`,
-`UnusedDescriptor`, `ShDescriptor`, `WshDescriptor` and `MultiA` also
-refuse a value `parse` refuses, as a `BTClibValueError`, and every
-fragment holding a key that `parse` reads outside ``tr()`` and
-``rawtr()``, and a P2WSH `Miniscript` node, refuses a ``musig()`` one
-and an x-only one. Issues btclib-org/bip32-descriptors#46,
-btclib-org/bip32-descriptors#85, btclib-org/bip32-descriptors#103,
-btclib-org/bip32-descriptors#119, btclib-org/bip32-descriptors#134,
-btclib-org/bip32-descriptors#141, btclib-org/bip32-descriptors#150,
-btclib-org/bip32-descriptors#158, btclib-org/bip32-descriptors#159 and
-btclib-org/bip32-descriptors#161.
+node's fragment, threshold or digest of the wrong type, its keys given
+as no tuple, or a key that is no `KeyExpression`. `TrDescriptor`,
+`MiniscriptDescriptor`, `UnusedDescriptor`, `ShDescriptor`,
+`WshDescriptor` and `MultiA` also refuse a value `parse` refuses, as a
+`BTClibValueError`, and every fragment holding a key that `parse` reads
+outside ``tr()`` and ``rawtr()``, and a P2WSH `Miniscript` node, refuses
+a ``musig()`` one and an x-only one. Issues
+btclib-org/bip32-descriptors#46, btclib-org/bip32-descriptors#85,
+btclib-org/bip32-descriptors#103, btclib-org/bip32-descriptors#119,
+btclib-org/bip32-descriptors#134, btclib-org/bip32-descriptors#141,
+btclib-org/bip32-descriptors#150, btclib-org/bip32-descriptors#158,
+btclib-org/bip32-descriptors#159, btclib-org/bip32-descriptors#161 and
+btclib-org/bip32-descriptors#170.
 
 `KeyExpression` refuses a `pub_key` that `parse` refuses, an x-only key
 with no `pub_key`, a `pub_key` beside another key or a derivation, and a
@@ -35,9 +36,121 @@ A ``musig()`` whose `hardening` is not h is refused too. Issue
 btclib-org/bip32-descriptors#181.
 
 `WshDescriptor` refuses an argument holding an uncompressed key, and
-both it and `ShDescriptor` refuse one whose script size or number of
-``multi()`` keys `parse` refuses there. Issue
-btclib-org/bip32-descriptors#175.
+`ShDescriptor` a ``wsh()`` one. Both refuse an argument holding a
+``musig()`` or an x-only key, and one whose script size or number of
+``multi()`` keys `parse` refuses there. Issues
+btclib-org/bip32-descriptors#175 and btclib-org/bip32-descriptors#233.
+
+`ShDescriptor` refuses the argument of a ``wsh()`` argument as
+`WshDescriptor` refuses it, a value of the wrong type included, and by
+its function before its keys, as `parse` does. Issue
+btclib-org/bip32-descriptors#242.
+
+`WpkhDescriptor` and a P2WSH `Miniscript` node refuse an uncompressed
+key, `MultiDescriptor` no keys, more than 20 keys and a k outside 1 to
+n, and `RawPkhDescriptor` an empty hash and one of other than 20 bytes,
+each with `parse`'s message. Issue btclib-org/bip32-descriptors#200.
+
+`TrDescriptor` and `RawTrDescriptor` refuse an uncompressed key with
+`parse`'s message. A `MultiA` and a tapscript `Miniscript` node refuse
+one too, without the key's position in the ``tr()`` that `parse`
+names. Issue btclib-org/bip32-descriptors#221.
+
+`TrDescriptor` and `MiniscriptDescriptor` refuse a node holding a number
+of keys its fragment does not take, with the node's own message, before
+its text is written: a multisig of the other context for its context,
+any other node for its number of keys. Where the descriptor also holds
+an uncompressed key and the node's text can be written, the node is left
+to the descriptor's text and sanity checks; where it passes them,
+``tr()`` and ``wsh()`` refuse that key by its position, and a bare
+`MiniscriptDescriptor` builds it. Issue btclib-org/bip32-descriptors#235.
+
+A `MultiDescriptor` of more than three keys that ``sh()`` or ``wsh()``
+takes builds, and as a top-level descriptor writes a text `parse`
+refuses: its docstring says why. Issue btclib-org/bip32-descriptors#226.
+
+A `MultiDescriptor` that no position takes is refused when built, with
+the message `parse` gives inside ``sh()``: more than three keys, one of
+them uncompressed, whose redeem script is over the push limit of
+``sh()``. Issue btclib-org/bip32-descriptors#251.
+
+`TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
+holding a key that is no `KeyExpression`, before they count its keys.
+Issue btclib-org/bip32-descriptors#246. `TrDescriptor` refuses an
+unpickled `MultiA` leaf whose keys are not a tuple of `KeyExpression`,
+before it reads a key. Issue btclib-org/bip32-descriptors#249.
+
+`TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node whose
+fragment is no `str`, after its context and before its keys. Issue
+btclib-org/bip32-descriptors#250.
+
+`Miniscript`, `TrDescriptor` and `MiniscriptDescriptor` refuse a
+fragment that is a `str` subclass as they refuse one that is no `str`,
+whether it hashes or not. Issue btclib-org/bip32-descriptors#260.
+
+A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
+text `parse` refuses: its docstring says why. Issue
+btclib-org/bip32-descriptors#253.
+
+`ShDescriptor` and `WshDescriptor` refuse an unpickled argument holding
+a key that is no `KeyExpression` before its other keys, their number and
+its script size, and after its function unless it is a ``multi()``.
+Issue btclib-org/bip32-descriptors#257.
+
+`WshDescriptor`, and `ShDescriptor` for a ``wsh()`` argument, refuse an
+unpickled `MiniscriptDescriptor` before writing its text: for its nodes
+and for a node holding a number of keys its fragment does not take, as
+its own build refuses them, and for its keys between the two, as
+`parse` refuses them. Issues btclib-org/bip32-descriptors#259 and
+btclib-org/bip32-descriptors#261.
+
+`WshDescriptor`, and `ShDescriptor` for a ``multi()`` argument and for
+one inside a ``wsh()`` argument, refuse an unpickled ``multi()`` holding
+a field of the wrong type, as `MultiDescriptor` refuses it and before
+its function, and one whose threshold is out of range, where its text
+can be written, in `parse`'s order and with its message. Issues
+btclib-org/bip32-descriptors#248, btclib-org/bip32-descriptors#264 and
+btclib-org/bip32-descriptors#272.
+
+`WshDescriptor`, and `ShDescriptor` for a ``wsh()`` argument, refuse an
+unpickled `MiniscriptDescriptor` whose text `parse` reads as a
+descriptor function, or that is not sane, with `MiniscriptDescriptor`'s
+message, once its nodes and keys pass. They do not ask again the sanity
+of one `parse` or `infer_descriptor` has read. Issue
+btclib-org/bip32-descriptors#267.
+
+`WshDescriptor` and `ShDescriptor` refuse an unpickled ``sh()`` or
+``wsh()`` argument in a position `parse` refuses it without writing the
+text of what it holds, as their docstrings say. Issue
+btclib-org/bip32-descriptors#269.
+
+`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
+a ``wsh()`` argument, refuse an unpickled ``raw()`` whose script, or
+``rawpkh()`` whose key hash, is no bytes, as its own build refuses it.
+Issue btclib-org/bip32-descriptors#271.
+
+`WshDescriptor`, and `ShDescriptor` for its argument and for the argument
+of a ``wsh()`` argument, refuse an unpickled argument whose network is no
+`str` as `Descriptor` refuses it, before anything else about the
+argument: its position, and the fields of the wrong type of the
+paragraphs above, are refused after it. Issue
+btclib-org/bip32-descriptors#276.
+
+`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
+a ``wsh()`` argument, refuse an unpickled ``rawpkh()`` whose hash is
+empty or of other than 20 bytes, as its own build refuses it, in the
+order `_assert_inner` gives. Issue btclib-org/bip32-descriptors#281.
+
+A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
+point, which `miniscript.from_script` reads, with `parse`'s message, the
+last two lacking the key's position. Issue
+btclib-org/bip32-descriptors#292.
+
+`TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node whose
+fragment is a `str` the library does not define, as `Miniscript` refuses
+it, before its keys, echoing no value it holds. So do `WshDescriptor`,
+and `ShDescriptor` for a ``wsh()`` argument, where the node is in an
+unpickled `MiniscriptDescriptor`. Issue btclib-org/bip32-descriptors#285.
 """
 
 from __future__ import annotations
@@ -52,11 +165,20 @@ import pytest
 from btclib import b58
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
+from btclib.script.limits import MAX_SCRIPT_SIZE
 from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32 import derive, rootxprv_from_seed, xpub_from_xprv
-from bip32_descriptors.descriptors import at_index, miniscript, normalized, parse
+from bip32_descriptors.descriptors import (
+    Provider,
+    add_checksum,
+    at_index,
+    infer_descriptor,
+    miniscript,
+    normalized,
+    parse,
+)
 from bip32_descriptors.descriptors import descriptors as descriptors_module
 from bip32_descriptors.descriptors.descriptors import (
     AddrDescriptor,
@@ -78,6 +200,7 @@ from bip32_descriptors.descriptors.descriptors import (
     WshDescriptor,
 )
 from bip32_descriptors.descriptors.key_expression import KeyExpression
+from tests.descriptors import MINISCRIPT_OUTSIDE
 from tests.secret_free import assert_secret_free
 
 _X = PrvKeyData(1).pub.sec.hex()[2:]
@@ -272,6 +395,79 @@ def test_a_node_of_another_context_and_an_unknown_fragment_is_not_echoed() -> No
     assert_secret_free(e.value, [_RANDOM_HEX])
 
 
+class _Subclass(str):
+    """A `str` in all but its type."""
+
+    __slots__ = ()
+
+
+class _Unhashable(str):
+    """A `str` that no dict or set can look up."""
+
+    __slots__ = ()
+    __hash__ = None  # type: ignore[assignment]
+
+
+class _HashFails(str):
+    """A `str` whose type defines a hash that fails."""
+
+    __slots__ = ()
+
+    @override
+    def __hash__(self) -> int:
+        raise TypeError
+
+
+# a fragment of each type an unpickled node can hold, and the spelling of
+# it a refusal could print
+_FRAGMENTS_OF_ANOTHER_TYPE = [
+    ([_RANDOM_HEX], _RANDOM_HEX),
+    ((_RANDOM_HEX,), _RANDOM_HEX),
+    (770907403214864877517, "770907403214864877517"),
+    (None, _RANDOM_HEX),
+    (_Subclass(_RANDOM_HEX), _RANDOM_HEX),
+    (_Unhashable(_RANDOM_HEX), _RANDOM_HEX),
+    (_HashFails(_RANDOM_HEX), _RANDOM_HEX),
+]
+
+
+@pytest.mark.parametrize("fault", ["none", "context", "keys"])
+@pytest.mark.parametrize(
+    "fragment,spelling",
+    _FRAGMENTS_OF_ANOTHER_TYPE,
+    ids=["list", "tuple", "int", "None", "subclass", "unhashable", "hash fails"],
+)
+def test_a_node_whose_fragment_is_no_str_is_refused(
+    fragment: object, spelling: str, fault: str
+) -> None:
+    """An unpickled node holds any fragment, so its type alone is named.
+
+    In a ``tr()`` leaf and in a ``wsh()``, after the node's context and
+    before its keys. Issues btclib-org/bip32-descriptors#250 and
+    btclib-org/bip32-descriptors#260.
+    """
+    wraps: list[tuple[str, str, str, Callable[[miniscript.Miniscript], object]]] = [
+        (miniscript.TAPSCRIPT, _X, miniscript.P2WSH, lambda n: TrDescriptor(_KEY, n)),
+        (miniscript.P2WSH, _C, miniscript.TAPSCRIPT, MiniscriptDescriptor),
+    ]
+    for context, key, other, wrap in wraps:
+        error: type[Exception] = BTClibTypeError
+        err_msg = f"^invalid fragment type: {type(fragment).__name__}$"
+        expression = f"and_v(v:pk({key}),older(1))"
+        root = _unpickled(miniscript.parse(expression, context))
+        object.__setattr__(root.subs[1], "fragment", fragment)
+        if fault == "context":
+            _with_context(root.subs[1], other)
+            error = BTClibValueError
+            node = "tapscript" if context == miniscript.TAPSCRIPT else "P2WSH"
+            err_msg = f"^not a {node} node: a node in {other}$"
+        elif fault == "keys":
+            object.__setattr__(root.subs[1], "keys", ("abc",))
+        with pytest.raises(error, match=err_msg) as e:
+            wrap(root)
+        assert_secret_free(e.value, [spelling])
+
+
 def test_a_wsh_miniscript_holding_what_is_no_node_is_refused() -> None:
     """As a ``tr()`` leaf holding one is, naming the type alone."""
     node = _unpickled(miniscript.parse(f"pk({_C})", miniscript.P2WSH))
@@ -281,6 +477,57 @@ def test_a_wsh_miniscript_holding_what_is_no_node_is_refused() -> None:
     ) as e:
         MiniscriptDescriptor(node)
     assert_secret_free(e.value, [_RANDOM_HEX])
+
+
+@pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "None"])
+@pytest.mark.parametrize(
+    "context",
+    [miniscript.P2WSH, miniscript.TAPSCRIPT],
+    ids=["p2wsh", "tapscript"],
+)
+def test_a_miniscript_holding_a_key_of_another_type_is_refused(
+    key: object, context: str
+) -> None:
+    """Each key is a KeyExpression, in any context.
+
+    Issue btclib-org/bip32-descriptors#170.
+    """
+    err_msg = f"^invalid key type: {type(key).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        miniscript.Miniscript(
+            "pk_k",
+            context,
+            keys=(key,),  # type: ignore[arg-type]
+        )
+    (valid_key,) = parse(f"pk({_C})").key_expressions
+    fragment = "multi" if context == miniscript.P2WSH else "multi_a"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        miniscript.Miniscript(
+            fragment,
+            context,
+            keys=(valid_key, key),  # type: ignore[arg-type]
+            threshold=1,
+        )
+
+
+@pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "None"])
+def test_an_unpickled_node_holding_a_key_of_another_type_is_refused(
+    key: object,
+) -> None:
+    """In a ``tr()`` leaf and in a ``wsh()``, naming the type alone.
+
+    An unpickled node skips `Miniscript`'s own check of its keys. Issue
+    btclib-org/bip32-descriptors#246.
+    """
+    err_msg = f"^invalid key type: {type(key).__name__}$"
+    leaf = _unpickled(miniscript.parse(f"pk({_X})", miniscript.TAPSCRIPT))
+    object.__setattr__(leaf.subs[0], "keys", (key,))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
+    node = _unpickled(miniscript.parse(f"pk({_C})", miniscript.P2WSH))
+    object.__setattr__(node.subs[0], "keys", (key,))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        WshDescriptor(MiniscriptDescriptor(node))
 
 
 @pytest.mark.parametrize(
@@ -305,35 +552,85 @@ def test_a_tr_leaf_holding_a_tree_node_as_a_subexpression_is_refused(
     assert_secret_free(e.value, [str(forged)])
 
 
+# tapscript miniscripts whose text `parse` reads as a leaf of another type
+_READ_AS_LEAF = [
+    (f"pk({_X2})", KeyExpression),
+    (f"c:pk_k({_X2})", KeyExpression),
+    (f"multi_a(1,{_X},{_X2})", MultiA),
+]
+
+
+@pytest.mark.parametrize(
+    "expression,cls", _READ_AS_LEAF, ids=[e.partition("(")[0] for e, _ in _READ_AS_LEAF]
+)
+def test_a_tr_miniscript_leaf_parse_reads_as_a_function_is_refused_when_built(
+    expression: str, cls: type
+) -> None:
+    """Built directly, in a branch or by `replace`, naming the function.
+
+    Inside ``tr()`` its text parses back as that leaf, and so does the
+    expression. Issue btclib-org/bip32-descriptors#194.
+    """
+    leaf = miniscript.parse(expression, miniscript.TAPSCRIPT)
+    read = cast("TrDescriptor", parse(f"tr({_X},{leaf})"))
+    assert type(read.tree) is cls
+    assert parse(f"tr({_X},{expression})") == read
+    name = re.escape(str(leaf).partition("(")[0])
+    err_msg = rf"^parse reads {name}\(\) as a descriptor function, not a miniscript$"
+    for tree in (leaf, (_KEY2, leaf), (leaf, _KEY2)):
+        with pytest.raises(BTClibValueError, match=err_msg):
+            TrDescriptor(_KEY, tree)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(TrDescriptor(_KEY), tree=leaf)
+
+
+@pytest.mark.parametrize(
+    "expression", [f"pkh({_X2})", f"c:pk_h({_X2})", f"rawpkh({'00' * 20})"]
+)
+def test_a_tr_miniscript_leaf_parse_reads_as_a_miniscript_is_built(
+    expression: str,
+) -> None:
+    """The control: inside ``tr()`` these are miniscript fragments."""
+    leaf = miniscript.parse(expression, miniscript.TAPSCRIPT)
+    descriptor = TrDescriptor(_KEY, leaf)
+    assert parse(str(descriptor)) == descriptor
+
+
+@pytest.mark.parametrize(
+    "template",
+    [f"tr({_X},LEAF)", f"tr({_X},{{pk({_X}),LEAF}})"],
+    ids=["leaf", "branch"],
+)
+def test_parse_reads_a_tr_leaf_written_as_pk_as_a_pk_leaf(template: str) -> None:
+    """``c:pk_k()``, which its text parses back to, as no miniscript would."""
+    parsed = parse(template.replace("LEAF", f"c:pk_k({_X2})"))
+    assert parsed == parse(template.replace("LEAF", f"pk({_X2})"))
+    assert parse(str(parsed)) == parsed
+
+
+@pytest.mark.parametrize(
+    "wif,network",
+    [
+        (b58.wif_from_prv_key(2, "mainnet", compressed=True), "regtest"),
+        (b58.wif_from_prv_key(2, "testnet", compressed=True), "mainnet"),
+    ],
+    ids=["mainnet-wif-on-regtest", "testnet-wif-on-mainnet"],
+)
+def test_a_tr_leaf_read_as_pk_keeps_its_wif_network_check(
+    wif: str, network: str
+) -> None:
+    """A WIF of another network is refused, as inside ``pk()``."""
+    err_msg = rf"^key 1: not a {network} key: WIF prefix$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},pk({wif}))", network)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},c:pk_k({wif}))", network)
+
+
 class _Network(str):
-    """A network name whose methods record whether `parse` was building."""
+    """A caller's str subclass, which `parse` must not hand on."""
 
     __slots__ = ()
-    # each call, with whether `parse` was building a descriptor then
-    calls: list[tuple[str, bool]] = []  # noqa: RUF012
-
-    def _record(self, name: str) -> None:
-        _Network.calls.append((name, descriptors_module._SANE_BY_PARSE.get()))
-
-    @override
-    def strip(self, chars: str | None = None) -> str:
-        self._record("strip")
-        return _Network(str.strip(self, chars))
-
-    @override
-    def lower(self) -> str:
-        self._record("lower")
-        return _Network(str.lower(self))
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        self._record("__eq__")
-        return str.__eq__(self, other)
-
-    @override
-    def __hash__(self) -> int:
-        self._record("__hash__")
-        return str.__hash__(self)
 
 
 @pytest.mark.parametrize(
@@ -341,14 +638,25 @@ class _Network(str):
     [f"wsh(and_v(v:pk({_C}),pk({PrvKeyData(4).pub.sec.hex()})))", f"tr({_X},pk({_X}))"],
     ids=["wsh", "tr"],
 )
-def test_parse_builds_with_no_method_of_a_caller_s_network(text: str) -> None:
-    """`parse` hands the constructors the network table's own string."""
-    _Network.calls.clear()
-    network = _Network(" MAINNET ")
-    descriptor = parse(text, network)
-    # the control: its methods run, as `parse` validates the name
-    assert ("lower", False) in _Network.calls
-    assert all(not building for _, building in _Network.calls)
+def test_parse_hands_constructors_the_table_s_own_network_string(
+    text: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`parse` hands the constructors the network table's own string.
+
+    It is that object itself, never the caller's str subclass, whatever
+    btclib's normalization returns.
+    """
+    received: list[str] = []
+    parse_text = descriptors_module._parse_text
+
+    def spy(text: str, network: str, prv_keys: Any) -> Any:
+        received.append(network)
+        return parse_text(text, network, prv_keys)
+
+    monkeypatch.setattr(descriptors_module, "_parse_text", spy)
+    descriptor = parse(text, _Network(" MAINNET "))
+    assert len(received) == 1
+    assert received[0] is descriptors_module._NETWORK_NAMES["mainnet"]
     assert type(descriptor.network) is str
     assert descriptor.network == "mainnet"
 
@@ -462,6 +770,25 @@ def test_a_sane_miniscript_built_by_hand_parses_back() -> None:
     assert parse(str(wsh)) == wsh
 
 
+def test_a_top_level_miniscript_built_by_hand_does_not_parse_back() -> None:
+    """`parse` takes a `MiniscriptDescriptor` only inside ``wsh()``.
+
+    One built at the top level gives its script, and `infer_descriptor`
+    answers the ``raw()`` of that script.
+    """
+    node = miniscript.parse(f"and_v(v:pk({_C}),older(1))", miniscript.P2WSH)
+    descriptor = MiniscriptDescriptor(node)
+    script = descriptor.script_pub_key().script
+    assert script == node.script()
+    text = str(descriptor)
+    with pytest.raises(BTClibValueError, match=MINISCRIPT_OUTSIDE):
+        parse(text)
+    wsh = WshDescriptor(descriptor)
+    assert parse(str(wsh)) == wsh
+    raw = add_checksum(f"raw({script.hex()})")
+    assert infer_descriptor(script, Provider()) == raw
+
+
 @pytest.mark.parametrize(
     "template",
     ["tr({0},and_v(v:pk({1}/*),pk({1}/1)))", "wsh(and_v(v:pk({1}/*),pk({1}/1)))"],
@@ -564,10 +891,27 @@ _PK_K = miniscript.Miniscript("pk_k", miniscript.TAPSCRIPT, keys=(_KEY,))
 _SHA256 = miniscript.Miniscript("sha256", miniscript.P2WSH, data=bytes(32))
 
 
-@pytest.mark.parametrize("fragment", [[], 5, None])
+@pytest.mark.parametrize("fragment", [[], 5, None, _Subclass("older")])
 def test_a_miniscript_fragment_of_another_type_is_refused(fragment: Any) -> None:
-    """The fragment is the name BIP379 gives it, never another type."""
+    """The fragment is the name BIP379 gives it, never another type.
+
+    A `str` subclass included. Issue btclib-org/bip32-descriptors#260.
+    """
     err_msg = f"^invalid fragment type: {type(fragment).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_OLDER, fragment=fragment)
+
+
+@pytest.mark.parametrize("cls", [_Unhashable, _HashFails])
+def test_a_miniscript_fragment_no_dict_can_look_up_is_refused(cls: type[str]) -> None:
+    """For its type, before anything hashes it.
+
+    Issue btclib-org/bip32-descriptors#260.
+    """
+    fragment = cls("older")
+    with pytest.raises(TypeError):
+        hash(fragment)
+    err_msg = f"^invalid fragment type: {cls.__name__}$"
     with pytest.raises(BTClibTypeError, match=err_msg):
         replace(_OLDER, fragment=fragment)
 
@@ -1092,20 +1436,125 @@ _P2WSH = miniscript.P2WSH
 
 
 def _and_v_older(key: KeyExpression) -> MiniscriptDescriptor:
-    """Return ``and_v(v:pk(KEY),older(1))``, built by hand.
+    """Return ``and_v(v:pk(KEY),older(1))``, its node unpickled.
 
-    A P2WSH `Miniscript` node takes an uncompressed key when built, which
-    `miniscript.parse` refuses.
+    A P2WSH `Miniscript` node refuses an uncompressed key when built, and
+    unpickling skips that check, so the key is given to an unpickled copy.
     """
-    pk_k = miniscript.Miniscript("pk_k", _P2WSH, keys=(key,))
-    verify = miniscript.Miniscript(
-        "v:", _P2WSH, (miniscript.Miniscript("c:", _P2WSH, (pk_k,)),)
-    )
-    older = miniscript.Miniscript("older", _P2WSH, threshold=1)
-    return MiniscriptDescriptor(miniscript.Miniscript("and_v", _P2WSH, (verify, older)))
+    node = _unpickled(miniscript.parse(f"and_v(v:pk({_C}),older(1))", _P2WSH))
+    object.__setattr__(node.subs[0].subs[0].subs[0], "keys", (key,))
+    return MiniscriptDescriptor(node)
+
+
+def _unpickled_multi(keys: tuple[KeyExpression, ...]) -> Descriptor:
+    """Return ``multi(1,KEY,...)``, unpickled.
+
+    `MultiDescriptor` refuses no key, more than 20 keys and keys no
+    position takes when built, and unpickling skips those checks, so the
+    keys are given to an unpickled copy.
+    """
+    parsed = _PARSED[MultiDescriptor]
+    multi: MultiDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(multi, "keys", keys)
+    return multi
+
+
+def _unpickled_sortedmulti(keys: tuple[KeyExpression, ...]) -> Descriptor:
+    """Return ``sortedmulti(1,KEY,...)``, as `_unpickled_multi` does."""
+    multi = _unpickled_multi(keys)
+    object.__setattr__(multi, "sort", True)
+    return multi
+
+
+def _unpickled_multi_with(**values: Any) -> Descriptor:
+    """Return ``multi(1,KEY,KEY)``, unpickled, given `values` for its fields.
+
+    `MultiDescriptor` refuses a field of the wrong type and a threshold
+    out of range when built, and unpickling skips those checks, so the
+    values are given to an unpickled copy.
+    """
+    multi = _unpickled_multi(_PARSED[MultiDescriptor].key_expressions)
+    for name, value in values.items():
+        object.__setattr__(multi, name, value)
+    return multi
+
+
+def _unpickled_wpkh(key: KeyExpression) -> Descriptor:
+    """Return ``wpkh(KEY)``, unpickled.
+
+    `WpkhDescriptor` refuses an uncompressed key when built, and
+    unpickling skips that check, so the key is given to an unpickled copy.
+    """
+    parsed = _PARSED[WpkhDescriptor]
+    wpkh: WpkhDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(wpkh, "key", key)
+    return wpkh
+
+
+def _unpickled_pk(key: KeyExpression) -> Descriptor:
+    """Return ``pk(KEY)``, unpickled.
+
+    `PkDescriptor` refuses a key ``tr()`` and ``rawtr()`` alone take when
+    built, and unpickling skips that check, so the key is given to an
+    unpickled copy.
+    """
+    parsed = _PARSED[PkDescriptor]
+    pk: PkDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(pk, "key", key)
+    return pk
+
+
+def _unpickled_and_v_pk(first: KeyExpression, second: KeyExpression) -> Descriptor:
+    """Return ``and_v(v:pk(FIRST),pk(SECOND))``, unpickled.
+
+    A P2WSH `Miniscript` node refuses an uncompressed key and a key
+    ``tr()`` and ``rawtr()`` alone take when built, and unpickling skips
+    those checks, so the keys are given to an unpickled copy.
+    """
+    parsed = parse(f"wsh(and_v(v:pk({_C}),pk({_C2})))")
+    assert isinstance(parsed, WshDescriptor)
+    ms: MiniscriptDescriptor = pickle.loads(pickle.dumps(parsed.inner))  # noqa: S301
+    object.__setattr__(ms.node.subs[0].subs[0].subs[0], "keys", (first,))
+    object.__setattr__(ms.node.subs[1].subs[0], "keys", (second,))
+    return ms
+
+
+def _unpickled_wsh(inner: Descriptor) -> Descriptor:
+    """Return ``wsh(INNER)``, unpickled.
+
+    `WshDescriptor` refuses an argument `parse` refuses inside ``wsh()``
+    when built, unless the argument is invalid by itself, as `Descriptor`
+    says. Unpickling skips that check, so the argument is given to an
+    unpickled copy.
+    """
+    parsed = _PARSED[WshDescriptor]
+    wsh: WshDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(wsh, "inner", inner)
+    return wsh
 
 
 _UNCOMPRESSED_HERE = "uncompressed public keys are not allowed here"
+_MUSIG_HERE = "musig() is only allowed in tr() and rawtr()"
+_X_ONLY_HERE = "x-only public keys are allowed in a taproot key expression only"
+_SH_AND_WSH: tuple[type[ShDescriptor | WshDescriptor], ...] = (
+    WshDescriptor,
+    ShDescriptor,
+)
+# (wrapper, its argument holding the multi()) for each place an unpickled
+# multi() reaches a wrapper
+_HOLDING_MULTI: list[
+    tuple[type[ShDescriptor | WshDescriptor], Callable[[Descriptor], Descriptor]]
+] = [
+    (WshDescriptor, lambda multi: multi),
+    (ShDescriptor, lambda multi: multi),
+    (ShDescriptor, _unpickled_wsh),
+]
+_HOLDING_MULTI_IDS = ["wsh-multi", "sh-multi", "sh-wsh-multi"]
+_OVER_UINT32 = "invalid multi() threshold: not in 0..2**32-1"
+# `parse`'s refusal of the "-1" `str` writes for a negative threshold
+_NEGATIVE = "invalid multi() threshold: digits expected"
+_MUSIG_0 = f"key 0: {_MUSIG_HERE}"
+_NO_KEYS = "multi() takes a threshold and at least one key"
 # (wrapper, its argument, the refusal `parse` gives for their text)
 _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]] = [
     (WshDescriptor, PkDescriptor(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
@@ -1123,13 +1572,24 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
     (WshDescriptor, _and_v_older(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
     (
         WshDescriptor,
-        MultiDescriptor(1, _KEYS),
+        _unpickled_multi(_KEYS),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (ShDescriptor, _unpickled_wpkh(_U_KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
+    (
+        ShDescriptor,
+        _unpickled_multi(_KEYS),
         "multi() takes at most 20 keys, 21 given",
     ),
     (
+        WshDescriptor,
+        _unpickled_multi(()),
+        "multi() takes a threshold and at least one key",
+    ),
+    (
         ShDescriptor,
-        MultiDescriptor(1, _KEYS),
-        "multi() takes at most 20 keys, 21 given",
+        _unpickled_multi(()),
+        "multi() takes a threshold and at least one key",
     ),
     (
         ShDescriptor,
@@ -1141,11 +1601,141 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
     ),
     (
         ShDescriptor,
-        MultiDescriptor(1, (_U_KEY,) * 8, sort=True),
+        _unpickled_sortedmulti((_U_KEY,) * 8),
         (
             "sortedmulti() inside sh() is a 531-byte redeem script,"
             " over the 520-byte push limit"
         ),
+    ),
+    *(
+        (wrapper, inner, f"key 0: {refusal}")
+        for wrapper in _SH_AND_WSH
+        for key, refusal in ((_MUSIG, _MUSIG_HERE), (_KEY, _X_ONLY_HERE))
+        for inner in (_unpickled_multi((key,)), _unpickled_pk(key))
+    ),
+    (
+        WshDescriptor,
+        _unpickled_multi((_U_KEY, _MUSIG)),
+        f"key 0: {_UNCOMPRESSED_HERE}",
+    ),
+    (WshDescriptor, _unpickled_multi((_MUSIG, _U_KEY)), f"key 0: {_MUSIG_HERE}"),
+    (ShDescriptor, _unpickled_multi((_U_KEY, _MUSIG)), f"key 1: {_MUSIG_HERE}"),
+    *(
+        (ShDescriptor, _unpickled_wsh(inner), refusal)
+        for inner, refusal in (
+            (_unpickled_multi((_C_KEY, _U_KEY)), f"key 1: {_UNCOMPRESSED_HERE}"),
+            (_unpickled_multi((_U_KEY, _MUSIG)), f"key 0: {_UNCOMPRESSED_HERE}"),
+            (_unpickled_multi((_U_KEY, _KEY)), f"key 0: {_UNCOMPRESSED_HERE}"),
+            (
+                _unpickled_multi((_C_KEY, _U_KEY, _MUSIG)),
+                f"key 1: {_UNCOMPRESSED_HERE}",
+            ),
+            (_unpickled_and_v_pk(_U_KEY, _MUSIG), f"key 0: {_UNCOMPRESSED_HERE}"),
+            (_unpickled_and_v_pk(_U_KEY, _KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
+        )
+    ),
+    *(
+        (ShDescriptor, _unpickled_wsh(inner), f"key 0: {refusal}")
+        for key, refusal in ((_MUSIG, _MUSIG_HERE), (_KEY, _X_ONLY_HERE))
+        for inner in (_unpickled_multi((key,)), _unpickled_pk(key))
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_PARSED[WshDescriptor]),
+        "wsh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_PARSED[WpkhDescriptor]),
+        "wpkh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_multi(_KEYS)),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(PkDescriptor(_U_KEY)),
+        f"key 0: {_UNCOMPRESSED_HERE}",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_wsh(PkDescriptor(_U_KEY))),
+        "wsh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_wpkh(_U_KEY)),
+        "wpkh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_multi(())),
+        "multi() takes a threshold and at least one key",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_sortedmulti(())),
+        "sortedmulti() takes a threshold and at least one key",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(RawDescriptor(bytes(MAX_SCRIPT_SIZE + 1))),
+        (
+            f"raw() inside wsh() is {MAX_SCRIPT_SIZE + 1} bytes,"
+            f" over the {MAX_SCRIPT_SIZE}-byte limit"
+        ),
+    ),
+    *(
+        (wrapper, holding(_unpickled_multi_with(threshold=threshold)), refusal)
+        for threshold, refusal in (
+            (3, "invalid k in k-of-n multi: 3"),
+            (0, "invalid k in k-of-n multi: 0"),
+            (2**32, _OVER_UINT32),
+            (-1, _NEGATIVE),
+        )
+        for wrapper, holding in _HOLDING_MULTI
+    ),
+    (
+        WshDescriptor,
+        _unpickled_multi_with(threshold=-1, sort=True),
+        "invalid sortedmulti() threshold: digits expected",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_multi_with(threshold=3, sort=True),
+        "invalid k in k-of-n sortedmulti: 3",
+    ),
+    (
+        WshDescriptor,
+        _unpickled_multi_with(threshold=3, keys=(_C_KEY, _U_KEY)),
+        f"key 1: {_UNCOMPRESSED_HERE}",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_multi_with(threshold=3, keys=(_C_KEY, _U_KEY)),
+        "invalid k in k-of-n multi: 3",
+    ),
+    (WshDescriptor, _unpickled_multi_with(threshold=2, keys=(_MUSIG,)), _MUSIG_0),
+    (
+        WshDescriptor,
+        _unpickled_multi_with(threshold=22, keys=_KEYS),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_multi_with(threshold=17, keys=_KEYS[:16]),
+        "invalid k in k-of-n multi: 17",
+    ),
+    (WshDescriptor, _unpickled_multi_with(threshold=0, keys=()), _NO_KEYS),
+    *(
+        (WshDescriptor, _unpickled_multi_with(threshold=2**32, keys=keys), _OVER_UINT32)
+        for keys in ((_C_KEY, _U_KEY), (_MUSIG,), _KEYS, ())
+    ),
+    *(
+        (WshDescriptor, _unpickled_multi_with(threshold=-1, keys=keys), _NEGATIVE)
+        for keys in ((_C_KEY, _U_KEY), (_MUSIG,), _KEYS, ())
     ),
 ]
 _REFUSED_INSIDE_IDS = [
@@ -1155,22 +1745,76 @@ _REFUSED_INSIDE_IDS = [
     "wsh-sortedmulti",
     "wsh-miniscript",
     "wsh-21-keys",
+    "sh-wpkh",
     "sh-21-keys",
+    "wsh-no-keys",
+    "sh-no-keys",
     "sh-547-bytes",
     "sh-531-bytes",
+    *(
+        f"{wrapper}-{inner}-{key}"
+        for wrapper in ("wsh", "sh")
+        for key in _TAPROOT_ONLY_IDS
+        for inner in ("multi", "pk")
+    ),
+    "wsh-uncompressed-then-musig",
+    "wsh-musig-then-uncompressed",
+    "sh-uncompressed-then-musig",
+    "sh-wsh-compressed-then-uncompressed",
+    "sh-wsh-uncompressed-then-musig",
+    "sh-wsh-uncompressed-then-x-only",
+    "sh-wsh-compressed-uncompressed-musig",
+    "sh-wsh-miniscript-uncompressed-then-musig",
+    "sh-wsh-miniscript-uncompressed-then-x-only",
+    *(
+        f"sh-wsh-{inner}-{key}"
+        for key in _TAPROOT_ONLY_IDS
+        for inner in ("multi", "pk")
+    ),
+    "sh-wsh-wsh",
+    "sh-wsh-wpkh",
+    "sh-wsh-21-keys",
+    "sh-wsh-uncompressed",
+    "sh-wsh-wsh-uncompressed",
+    "sh-wsh-wpkh-uncompressed",
+    "sh-wsh-no-keys",
+    "sh-wsh-sortedmulti-no-keys",
+    "sh-wsh-raw-over-the-limit",
+    *(
+        f"{holding}-{threshold}"
+        for threshold in ("k-over-n", "k-zero", "k-over-uint32", "k-negative")
+        for holding in _HOLDING_MULTI_IDS
+    ),
+    "wsh-sortedmulti-k-negative",
+    "sh-sortedmulti-k-over-n",
+    "wsh-uncompressed-then-k-over-n",
+    "sh-uncompressed-k-over-n",
+    "wsh-musig-then-k-over-n",
+    "wsh-21-keys-then-k-over-n",
+    "sh-k-over-n-then-547-bytes",
+    "wsh-no-keys-then-k-zero",
+    "wsh-k-over-uint32-then-uncompressed",
+    "wsh-k-over-uint32-then-musig",
+    "wsh-k-over-uint32-then-21-keys",
+    "wsh-k-over-uint32-then-no-keys",
+    "wsh-k-negative-then-uncompressed",
+    "wsh-k-negative-then-musig",
+    "wsh-k-negative-then-21-keys",
+    "wsh-k-negative-then-no-keys",
 ]
 
 
 @pytest.mark.parametrize(
     "wrapper,inner,refusal", _REFUSED_INSIDE, ids=_REFUSED_INSIDE_IDS
 )
-def test_a_key_or_size_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
+def test_what_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
     wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor, refusal: str
 ) -> None:
     """Built directly or by `replace`, with the message `parse` gives.
 
-    A ``raw()`` over the size limit is tried in `raw_descriptors_test`.
-    Issue btclib-org/bip32-descriptors#175.
+    A ``raw()`` over the size limit, directly inside either, is tried in
+    `raw_descriptors_test`. Issues btclib-org/bip32-descriptors#175,
+    btclib-org/bip32-descriptors#233 and btclib-org/bip32-descriptors#242.
     """
     err_msg = f"^{re.escape(refusal)}$"
     with pytest.raises(BTClibValueError, match=err_msg):
@@ -1180,6 +1824,355 @@ def test_a_key_or_size_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
     parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
     with pytest.raises(BTClibValueError, match=err_msg):
         replace(parsed, inner=inner)
+
+
+class _NoText:
+    """A value whose `str` raises."""
+
+    @override
+    def __str__(self) -> str:
+        raise RuntimeError("no text")
+
+
+def test_a_value_with_no_text_raises_when_written_out() -> None:
+    """The control of the no-text case: `str` cannot write `_NoText` out."""
+    with pytest.raises(RuntimeError, match="^no text$"):
+        str(_NoText())
+
+
+@pytest.mark.parametrize(
+    "value",
+    [5, None, f"pk({_C})", _NoText()],
+    ids=["int", "none", "str", "no-text"],
+)
+def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
+    value: Any,
+) -> None:
+    """Refused with `WshDescriptor`'s type error, directly or by `replace`.
+
+    Issue btclib-org/bip32-descriptors#242.
+    """
+    err_msg = f"^invalid inner descriptor type: {type(value).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        WshDescriptor(value)
+    inner = _unpickled_wsh(value)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        ShDescriptor(inner)
+    parsed = cast("ShDescriptor", _PARSED[ShDescriptor])
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
+class _PlainSh(ShDescriptor):
+    """A subclass writing its text with `ShDescriptor`'s own `str`."""
+
+
+class _PlainWsh(WshDescriptor):
+    """A subclass writing its text with `WshDescriptor`'s own `str`."""
+
+
+class _ShAndWsh(ShDescriptor, WshDescriptor):
+    """Both, writing its text with `ShDescriptor`'s own `str`."""
+
+
+def _unpickled_holding(
+    cls: type[ShDescriptor | WshDescriptor], inner: Descriptor
+) -> Descriptor:
+    """Return a `cls` holding `inner`, unpickled, as `_unpickled_wsh` does."""
+    built = cls(PkDescriptor(_C_KEY))
+    outer: Descriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
+    object.__setattr__(outer, "inner", inner)
+    return outer
+
+
+def _keyless_pk_k() -> Descriptor:
+    """Return ``and_v(v:pk(KEY),pk())``, unpickled, its second key removed."""
+    ms = _unpickled_and_v_pk(_C_KEY, _C_KEY)
+    assert isinstance(ms, MiniscriptDescriptor)
+    object.__setattr__(ms.node.subs[1].subs[0], "keys", ())
+    return ms
+
+
+def test_a_pk_k_of_no_key_raises_when_written_out() -> None:
+    """The control of the keyless case: `str` cannot write it out."""
+    with pytest.raises(IndexError, match="^tuple index out of range$"):
+        str(_keyless_pk_k())
+
+
+@pytest.mark.parametrize(
+    "wrapper,inner,refusal",
+    [
+        (
+            WshDescriptor,
+            _unpickled_holding(ShDescriptor, _keyless_pk_k()),
+            "sh() is not allowed inside wsh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_wsh(_keyless_pk_k()),
+            "wsh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_wsh(_unpickled_wsh(_keyless_pk_k())),
+            "wsh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_wsh(_unpickled_holding(ShDescriptor, _keyless_pk_k())),
+            "sh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_holding(ShDescriptor, _keyless_pk_k()),
+            "sh() is not allowed inside sh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_holding(_PlainSh, _keyless_pk_k()),
+            "sh() is not allowed inside wsh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_holding(_PlainWsh, _keyless_pk_k()),
+            "wsh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_holding(_PlainSh, _keyless_pk_k()),
+            "sh() is not allowed inside sh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_holding(_ShAndWsh, _keyless_pk_k()),
+            "sh() is not allowed inside wsh()",
+        ),
+    ],
+    ids=[
+        "wsh-sh",
+        "wsh-wsh",
+        "sh-wsh-wsh",
+        "sh-wsh-sh",
+        "sh-sh",
+        "wsh-subclass-sh",
+        "wsh-subclass-wsh",
+        "sh-subclass-sh",
+        "wsh-sh-and-wsh",
+    ],
+)
+def test_an_unpickled_sh_or_wsh_is_refused_by_position_without_its_text(
+    wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor, refusal: str
+) -> None:
+    """Refused by position, though what it holds writes no text.
+
+    Directly or by `replace`. Issue btclib-org/bip32-descriptors#269.
+    """
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(inner)
+    parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
+def test_an_sh_that_is_a_wsh_too_is_refused_for_its_argument_inside_sh() -> None:
+    """As `ShDescriptor` refuses the argument of a ``wsh()`` argument, first."""
+    inner = _unpickled_holding(_ShAndWsh, _keyless_pk_k())
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in pk_k: 0$"):
+        ShDescriptor(inner)
+
+
+class _BorrowSh(PkDescriptor):
+    """A ``pk()`` borrowing `ShDescriptor`'s `str`, holding no argument."""
+
+    __str__ = ShDescriptor.__str__
+
+
+class _BorrowWsh(PkDescriptor):
+    """A ``pk()`` borrowing `WshDescriptor`'s `str`, holding no argument."""
+
+    __str__ = WshDescriptor.__str__
+
+
+@pytest.mark.parametrize("wrapper", _WRAPPERS, ids=lambda cls: cls.__name__)
+@pytest.mark.parametrize("cls", [_BorrowSh, _BorrowWsh], ids=lambda cls: cls.__name__)
+def test_a_class_borrowing_the_str_of_sh_or_wsh_is_named_by_its_text(
+    cls: type[PkDescriptor], wrapper: type[ShDescriptor | WshDescriptor]
+) -> None:
+    """Not by the `str` it borrows: writing its text raises, as it would."""
+    err_msg = f"^'{cls.__name__}' object has no attribute 'inner'$"
+    with pytest.raises(AttributeError, match=err_msg):
+        wrapper(cls(_C_KEY))
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [WshDescriptor, ShDescriptor, lambda multi: ShDescriptor(_unpickled_wsh(multi))],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+@pytest.mark.parametrize(
+    "unpickled", [_unpickled_multi, _unpickled_sortedmulti], ids=["multi", "sorted"]
+)
+@pytest.mark.parametrize(
+    "keys",
+    [None, 5, [_C_KEY], "ab", b"ab"],
+    ids=["None", "int", "list", "str", "bytes"],
+)
+def test_an_unpickled_multi_holding_keys_of_another_type_is_refused(
+    keys: object,
+    unpickled: Callable[[tuple[KeyExpression, ...]], Descriptor],
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """As `MultiDescriptor` refuses them, before the argument is written out.
+
+    Issue btclib-org/bip32-descriptors#264.
+    """
+    err_msg = f"^invalid keys type: {type(keys).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        MultiDescriptor(1, cast("tuple[KeyExpression, ...]", keys))
+    multi = unpickled(cast("tuple[KeyExpression, ...]", keys))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        wrap(multi)
+
+
+class _RenamedMulti(MultiDescriptor):
+    """A subclass writing a function name `parse` has no parser for."""
+
+    @override
+    def __str__(self) -> str:
+        return "foo()"
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [WshDescriptor, ShDescriptor, lambda multi: ShDescriptor(_unpickled_wsh(multi))],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+def test_the_keys_of_a_multi_are_refused_before_its_function(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """Even where its text holds no keys, unlike a ``multi()``'s.
+
+    Issue btclib-org/bip32-descriptors#264.
+    """
+    multi = _RenamedMulti(1, (_C_KEY,))
+    err_msg = r"^_RenamedMulti writes no function parse reads inside w?sh\(\)$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(multi)
+    object.__setattr__(multi, "keys", None)
+    with pytest.raises(BTClibTypeError, match="^invalid keys type: NoneType$"):
+        wrap(multi)
+
+
+def _with_network(inner: Descriptor, network: object) -> Descriptor:
+    """Return `inner`, unpickled, holding `network`.
+
+    `Descriptor` refuses a network that is no `str` when built, and
+    unpickling skips that check, so the network is given to an unpickled
+    copy.
+    """
+    unpickled: Descriptor = pickle.loads(pickle.dumps(inner))  # noqa: S301
+    object.__setattr__(unpickled, "network", network)
+    return unpickled
+
+
+_AND_V_PK = cast("WshDescriptor", parse(f"wsh(and_v(v:pk({_C}),pk({_C2})))")).inner
+
+
+def _sh_wsh(inner: Descriptor) -> Descriptor:
+    return ShDescriptor(_unpickled_wsh(inner))
+
+
+# (wrapper, its argument): the last rows hold an argument in a position
+# `parse` refuses
+_NETWORK_HOLDERS: list[tuple[Callable[[Descriptor], Descriptor], Descriptor]] = [
+    (WshDescriptor, _PARSED[MultiDescriptor]),
+    (ShDescriptor, _PARSED[MultiDescriptor]),
+    (_sh_wsh, _PARSED[MultiDescriptor]),
+    (ShDescriptor, _PARSED[WpkhDescriptor]),
+    (WshDescriptor, _PARSED[RawDescriptor]),
+    (ShDescriptor, _PARSED[RawDescriptor]),
+    (_sh_wsh, _PARSED[RawDescriptor]),
+    (WshDescriptor, _PARSED[RawPkhDescriptor]),
+    (ShDescriptor, _PARSED[RawPkhDescriptor]),
+    (_sh_wsh, _PARSED[RawPkhDescriptor]),
+    (WshDescriptor, _AND_V_PK),
+    (_sh_wsh, _AND_V_PK),
+    (WshDescriptor, _PARSED[WpkhDescriptor]),
+    (_sh_wsh, _PARSED[WpkhDescriptor]),
+    (ShDescriptor, _AND_V_PK),
+    (WshDescriptor, _PARSED[ShDescriptor]),
+    (ShDescriptor, _PARSED[ShDescriptor]),
+]
+# a field of the wrong type that `_assert_inner` checks after the network
+_WRONG_FIELD: dict[type[Descriptor], tuple[str, object]] = {
+    MultiDescriptor: ("threshold", "1"),
+    RawDescriptor: ("script", None),
+    RawPkhDescriptor: ("key_hash", None),
+}
+
+
+@pytest.mark.parametrize(
+    "wrap,inner",
+    _NETWORK_HOLDERS,
+    ids=[
+        "wsh-multi",
+        "sh-multi",
+        "sh-wsh-multi",
+        "sh-wpkh",
+        "wsh-raw",
+        "sh-raw",
+        "sh-wsh-raw",
+        "wsh-rawpkh",
+        "sh-rawpkh",
+        "sh-wsh-rawpkh",
+        "wsh-ms",
+        "sh-wsh-ms",
+        "wsh-wpkh",
+        "sh-wsh-wpkh",
+        "sh-ms",
+        "wsh-sh",
+        "sh-sh",
+    ],
+)
+@pytest.mark.parametrize("network", [5, None], ids=["int", "None"])
+def test_an_unpickled_argument_whose_network_is_no_str_is_refused(
+    network: object, wrap: Callable[[Descriptor], Descriptor], inner: Descriptor
+) -> None:
+    """As `Descriptor` refuses it, before anything else about the argument.
+
+    Its position and a field of the wrong type are refused after it, as
+    the argument's own build refuses that field. Issue
+    btclib-org/bip32-descriptors#276.
+    """
+    err_msg = f"^invalid network type: {type(network).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(inner, network=cast("str", network))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        wrap(_with_network(inner, network))
+    if type(inner) in _WRONG_FIELD:
+        field, value = _WRONG_FIELD[type(inner)]
+        wrong: dict[str, Any] = {field: value}
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            replace(inner, network=cast("str", network), **wrong)
+        unpickled = _with_network(inner, network)
+        object.__setattr__(unpickled, field, value)
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            wrap(unpickled)
+
+
+def test_the_network_of_a_wsh_argument_is_refused_before_its_argument() -> None:
+    """``sh()`` refuses the ``wsh()``'s own network first.
+
+    Issue btclib-org/bip32-descriptors#276.
+    """
+    multi = _with_network(_PARSED[MultiDescriptor], 5)
+    wsh = _with_network(_unpickled_wsh(multi), None)
+    with pytest.raises(BTClibTypeError, match="^invalid network type: NoneType$"):
+        ShDescriptor(wsh)
+    object.__setattr__(wsh, "network", "mainnet")
+    with pytest.raises(BTClibTypeError, match="^invalid network type: int$"):
+        ShDescriptor(wsh)
 
 
 @pytest.mark.parametrize(
@@ -1199,21 +2192,268 @@ def test_a_key_or_size_parse_takes_inside_sh_or_wsh_is_built(
     assert parse(str(wrapper(inner))) == wrapper(inner)
 
 
-@pytest.mark.parametrize(
-    "script,context",
-    [
-        (b"\x21" + _OFF_CURVE + b"\xac", miniscript.P2WSH),
-        (b"\x20" + _OFF_CURVE[1:] + b"\xac", miniscript.TAPSCRIPT),
-    ],
-    ids=["p2wsh", "tapscript"],
-)
-def test_a_script_holding_no_point_reads_back_as_no_miniscript(
-    script: bytes, context: str
+# (wrapper, its argument holding a key) for each argument an unpickled
+# copy of hands a key unchecked
+_HOLDING_KEY: list[
+    tuple[type[ShDescriptor | WshDescriptor], Callable[[Any], Descriptor]]
+] = [
+    (WshDescriptor, lambda key: _unpickled_and_v_pk(key, _C_KEY)),
+    (ShDescriptor, lambda key: _unpickled_wsh(_unpickled_and_v_pk(key, _C_KEY))),
+    (ShDescriptor, _unpickled_wpkh),
+    (WshDescriptor, lambda key: _unpickled_multi((key,))),
+    (ShDescriptor, lambda key: _unpickled_multi((key,))),
+    (ShDescriptor, lambda key: _unpickled_wsh(_unpickled_multi((key,)))),
+    (WshDescriptor, _unpickled_pk),
+    (ShDescriptor, lambda key: _unpickled_wsh(_unpickled_sortedmulti((key,)))),
+    # beside a fault `parse` names, which the key's type comes before
+    (WshDescriptor, lambda key: _unpickled_multi((_U_KEY, key))),
+    (ShDescriptor, lambda key: _unpickled_wsh(_unpickled_and_v_pk(_MUSIG, key))),
+    (ShDescriptor, lambda key: _unpickled_multi((_KEY, key))),
+    (WshDescriptor, lambda key: _unpickled_multi((*_KEYS[:20], key))),
+    (ShDescriptor, lambda key: _unpickled_multi((*_KEYS[:15], key))),
+]
+_HOLDING_KEY_IDS = [
+    "wsh-miniscript",
+    "sh-wsh-miniscript",
+    "sh-wpkh",
+    "wsh-multi",
+    "sh-multi",
+    "sh-wsh-multi",
+    "wsh-pk",
+    "sh-wsh-sortedmulti",
+    "wsh-uncompressed-then-key",
+    "sh-wsh-miniscript-musig-then-key",
+    "sh-x-only-then-key",
+    "wsh-21-keys",
+    "sh-547-bytes",
+]
+
+
+@pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "none"])
+@pytest.mark.parametrize("wrapper,holding", _HOLDING_KEY, ids=_HOLDING_KEY_IDS)
+def test_a_key_of_another_type_inside_sh_or_wsh_is_refused_when_built(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    holding: Callable[[Any], Descriptor],
+    key: Any,
 ) -> None:
-    """`from_script` refuses the key as `KeyExpression` does."""
+    """An unpickled argument skips its own check of the keys' type.
+
+    Issue btclib-org/bip32-descriptors#257.
+    """
+    err_msg = f"^invalid key type: {type(key).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        wrapper(holding(key))
+
+
+_WPKH_INSIDE_WSH = r"^wpkh\(\) is not allowed inside wsh\(\)$"
+
+
+@pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "none"])
+@pytest.mark.parametrize(
+    "wrapper,holding,refusal",
+    [
+        (WshDescriptor, _unpickled_wpkh, _WPKH_INSIDE_WSH),
+        (
+            ShDescriptor,
+            lambda key: _unpickled_and_v_pk(key, _C_KEY),
+            MINISCRIPT_OUTSIDE,
+        ),
+        (
+            ShDescriptor,
+            lambda key: _unpickled_wsh(_unpickled_wpkh(key)),
+            _WPKH_INSIDE_WSH,
+        ),
+    ],
+    ids=["wsh-wpkh", "sh-miniscript", "sh-wsh-wpkh"],
+)
+def test_an_argument_parse_refuses_by_function_is_refused_before_its_key_type(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    holding: Callable[[Any], Descriptor],
+    refusal: str,
+    key: Any,
+) -> None:
+    """The function is named before the key's type.
+
+    Issue btclib-org/bip32-descriptors#257.
+    """
+    with pytest.raises(BTClibValueError, match=refusal):
+        wrapper(holding(key))
+
+
+_KEYS_LIST = list(_PARSED[MultiDescriptor].key_expressions)
+# (the fields given, the refusal `MultiDescriptor` gives for them)
+_MULTI_WRONG: list[tuple[dict[str, Any], str]] = [
+    *(
+        ({"threshold": value}, f"threshold type: {type(value).__name__}")
+        for value in (None, "1", 1.0, True, _NoText())
+    ),
+    *(
+        ({"sort": value}, f"sort type: {type(value).__name__}")
+        for value in ("x", None, 1)
+    ),
+    ({"threshold": None, "sort": "x"}, "threshold type: NoneType"),
+    ({"threshold": None, "keys": _KEYS_LIST}, "threshold type: NoneType"),
+    ({"keys": _KEYS_LIST, "sort": "x"}, "keys type: list"),
+    ({"keys": (_C_KEY, "abc"), "sort": None}, "key type: str"),
+    ({"keys": (_C_KEY, _NoText())}, "key type: _NoText"),
+]
+_MULTI_WRONG_IDS = [
+    "threshold-none",
+    "threshold-str",
+    "threshold-float",
+    "threshold-bool",
+    "threshold-no-text",
+    "sort-str",
+    "sort-none",
+    "sort-int",
+    "threshold-then-sort",
+    "threshold-then-keys",
+    "keys-then-sort",
+    "key-then-sort",
+    "key-no-text",
+]
+
+
+@pytest.mark.parametrize("values,refusal", _MULTI_WRONG, ids=_MULTI_WRONG_IDS)
+@pytest.mark.parametrize("wrapper,holding", _HOLDING_MULTI, ids=_HOLDING_MULTI_IDS)
+def test_a_multi_field_of_another_type_inside_sh_or_wsh_is_refused_when_built(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    holding: Callable[[Descriptor], Descriptor],
+    values: dict[str, Any],
+    refusal: str,
+) -> None:
+    """With `MultiDescriptor`'s message, for the field it names first.
+
+    An unpickled ``multi()`` skips its own check. A threshold or a key
+    of the wrong type can write a text `parse` refuses, or raise when
+    written, and a sort of the wrong type is read for its truth. Issue
+    btclib-org/bip32-descriptors#272.
+    """
+    err_msg = f"^invalid {refusal}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(_PARSED[MultiDescriptor], **values)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        wrapper(holding(_unpickled_multi_with(**values)))
+
+
+_NO_FUNCTION = r"_RenamedMulti writes no function parse reads inside w?sh\(\)"
+
+
+@pytest.mark.parametrize(
+    "values,error,refusal",
+    [
+        ({"threshold": None}, BTClibTypeError, "invalid threshold type: NoneType"),
+        ({"keys": (_C_KEY, "abc")}, BTClibTypeError, "invalid key type: str"),
+        ({"sort": "x"}, BTClibTypeError, "invalid sort type: str"),
+        ({"threshold": 3}, BTClibValueError, _NO_FUNCTION),
+        ({"threshold": 2**32}, BTClibValueError, _NO_FUNCTION),
+        ({"threshold": -1}, BTClibValueError, _NO_FUNCTION),
+    ],
+    ids=[
+        "threshold-type",
+        "key-type",
+        "sort-type",
+        "k-over-n",
+        "k-over-uint32",
+        "k-negative",
+    ],
+)
+@pytest.mark.parametrize("wrapper,holding", _HOLDING_MULTI, ids=_HOLDING_MULTI_IDS)
+def test_a_multi_is_refused_by_type_before_its_function_and_by_value_after(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    holding: Callable[[Descriptor], Descriptor],
+    values: dict[str, Any],
+    error: type[Exception],
+    refusal: str,
+) -> None:
+    """A field of the wrong type first, as `str` writes each field.
+
+    The threshold's range after the function, which `parse` reads first.
+    Issues btclib-org/bip32-descriptors#248 and
+    btclib-org/bip32-descriptors#272.
+    """
+    multi = _RenamedMulti(1, _KEYS[:2])
+    for name, value in values.items():
+        object.__setattr__(multi, name, value)
+    with pytest.raises(error, match=f"^{refusal}$"):
+        wrapper(holding(multi))
+
+
+# the key that is no point, as `miniscript.from_script` reads it, which a
+# `Miniscript` holds and a descriptor refuses
+_NO_POINT_HEX = _OFF_CURVE.hex()
+_READ_NO_POINT = miniscript.from_script(f"21{_NO_POINT_HEX}ac").key_expressions[0]
+_READ_X_ONLY = miniscript.from_script(
+    f"20{_NO_POINT_HEX[2:]}ac", miniscript.TAPSCRIPT
+).key_expressions[0]
+_P2WSH_NODE = miniscript.from_script(f"21{_C}ac7c21{_NO_POINT_HEX}ac9b")
+_TAPSCRIPT_NODE = miniscript.from_script(
+    f"20{_X}ac7c20{_NO_POINT_HEX[2:]}ac9b", miniscript.TAPSCRIPT
+)
+
+
+@pytest.mark.parametrize(
+    "build,text,position",
+    [
+        (lambda: PkDescriptor(_READ_NO_POINT), f"pk({_NO_POINT_HEX})", 0),
+        (lambda: PkhDescriptor(_READ_NO_POINT), f"pkh({_NO_POINT_HEX})", 0),
+        (lambda: WpkhDescriptor(_READ_NO_POINT), f"wpkh({_NO_POINT_HEX})", 0),
+        (lambda: ComboDescriptor(_READ_NO_POINT), f"combo({_NO_POINT_HEX})", 0),
+        (lambda: UnusedDescriptor(_READ_NO_POINT), f"unused({_NO_POINT_HEX})", 0),
+        (
+            lambda: MultiDescriptor(1, (_KEYS[0], _READ_NO_POINT)),
+            f"multi(1,{_KEYS[0]},{_NO_POINT_HEX})",
+            1,
+        ),
+        (lambda: MiniscriptDescriptor(_P2WSH_NODE), f"wsh({_P2WSH_NODE})", 1),
+        (lambda: TrDescriptor(_READ_X_ONLY), f"tr({_NO_POINT_HEX[2:]})", 0),
+        (lambda: RawTrDescriptor(_READ_X_ONLY), f"rawtr({_NO_POINT_HEX[2:]})", 0),
+        (
+            lambda: TrDescriptor(_KEY2, _READ_X_ONLY),
+            f"tr({_X2},pk({_NO_POINT_HEX[2:]}))",
+            1,
+        ),
+        (
+            lambda: TrDescriptor(_KEY2, _TAPSCRIPT_NODE),
+            f"tr({_X2},{_TAPSCRIPT_NODE})",
+            2,
+        ),
+    ],
+    ids=[
+        "pk",
+        "pkh",
+        "wpkh",
+        "combo",
+        "unused",
+        "multi",
+        "wsh miniscript",
+        "tr",
+        "rawtr",
+        "tr pk leaf",
+        "tr miniscript leaf",
+    ],
+)
+def test_a_key_from_script_that_is_no_point_is_refused_in_a_descriptor(
+    build: Callable[[], object], text: str, position: int
+) -> None:
+    """With the message `parse` refuses the descriptor's text with.
+
+    `miniscript.from_script` reads such a key, as Bitcoin Core's signer
+    does. Issue btclib-org/bip32-descriptors#292.
+    """
+    message = f"^key {position}: not a public key$"
+    with pytest.raises(EccValueError, match=message):
+        parse(text)
+    with pytest.raises(EccValueError, match=message):
+        build()
+
+
+def test_a_key_from_script_that_is_no_point_is_refused_in_a_multi_a() -> None:
+    """With `parse`'s message, less the position a leaf does not know."""
+    with pytest.raises(EccValueError, match="^key 2: not a public key$"):
+        parse(f"tr({_X2},multi_a(1,{_X},{_NO_POINT_HEX[2:]}))")
     with pytest.raises(EccValueError, match="^not a public key$"):
-        miniscript.from_script(script, context)
-    assert not miniscript.reads_back(script, context)
+        MultiA(1, (_KEY, _READ_X_ONLY))
 
 
 @pytest.mark.parametrize(
@@ -1293,6 +2533,11 @@ _MUSIG_PAIR = (_FIXED_A, _FIXED_B)
             f"tr(musig({_UNCOMPRESSED.hex()},{_K2}))",
         ),
         (
+            {"participants": (_READ_NO_POINT, _FIXED_B)},
+            "musig(): not a public key",
+            f"tr(musig({_NO_POINT_HEX},{_K2}))",
+        ),
+        (
             {"participants": _MUSIG_PAIR, "der_path": (1,)},
             "musig() derivation requires every participant to be extended",
             f"tr(musig({_K},{_K2})/1)",
@@ -1326,6 +2571,7 @@ _MUSIG_PAIR = (_FIXED_A, _FIXED_B)
         "nested",
         "x-only participant",
         "uncompressed participant",
+        "participant that is no point",
         "path, fixed participant",
         "wildcard, fixed participant",
         "path, ranged participant",
@@ -1553,3 +2799,1171 @@ def test_a_miniscript_read_as_a_function_keeps_its_wif_network_check(
         parse(f"wsh(pk({wif}))", network)
     with pytest.raises(BTClibValueError, match=err_msg):
         parse(template.format(wif), network)
+
+
+@pytest.mark.parametrize("template", ["wpkh({})", "sh(wpkh({}))"])
+def test_an_uncompressed_wpkh_key_is_refused_when_built(template: str) -> None:
+    """Built directly or by `replace`, with the message `parse` gives."""
+    err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(template.format(_U_KEY))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        WpkhDescriptor(_U_KEY)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(cast("WpkhDescriptor", _PARSED[WpkhDescriptor]), key=_U_KEY)
+
+
+# (wrapper, the template of its text)
+_MULTI_WRAPPERS: list[tuple[Callable[[Descriptor], Descriptor], str]] = [
+    (lambda inner: inner, "{}"),
+    (ShDescriptor, "sh({})"),
+    (WshDescriptor, "wsh({})"),
+]
+
+
+@pytest.mark.parametrize("wrapper,template", _MULTI_WRAPPERS, ids=["bare", "sh", "wsh"])
+@pytest.mark.parametrize(
+    "threshold,keys,sort,refusal",
+    [
+        (0, _KEYS[:1], False, "invalid k in k-of-n multi: 0"),
+        (2, _KEYS[:1], False, "invalid k in k-of-n multi: 2"),
+        (0, _KEYS[:1], True, "invalid k in k-of-n sortedmulti: 0"),
+        (2**32, _KEYS[:1], False, "invalid multi() threshold: not in 0..2**32-1"),
+        (1, _KEYS, False, "multi() takes at most 20 keys, 21 given"),
+        (1, _KEYS, True, "sortedmulti() takes at most 20 keys, 21 given"),
+        (0, _KEYS, False, "multi() takes at most 20 keys, 21 given"),
+        (0, _KEYS[:16], False, "invalid k in k-of-n multi: 0"),
+        (17, _KEYS[:16], False, "invalid k in k-of-n multi: 17"),
+        (1, (), False, "multi() takes a threshold and at least one key"),
+        (0, (), True, "sortedmulti() takes a threshold and at least one key"),
+    ],
+    ids=[
+        "k-0",
+        "k-over-n",
+        "sorted-k-0",
+        "k-over-uint32",
+        "21-keys",
+        "sorted-21-keys",
+        "k-0-of-21-keys",
+        "k-0-of-16-keys",
+        "k-17-of-16-keys",
+        "no-keys",
+        "sorted-k-0-of-no-keys",
+    ],
+)
+def test_a_multi_k_or_n_parse_refuses_is_refused_when_built(
+    threshold: int,
+    keys: tuple[KeyExpression, ...],
+    sort: bool,
+    refusal: str,
+    wrapper: Callable[[Descriptor], Descriptor],
+    template: str,
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    In `parse`'s order: the threshold Bitcoin Core reads, the keys, their
+    number, the threshold against it, then the size of the redeem script
+    inside ``sh()``.
+    """
+    name = "sortedmulti" if sort else "multi"
+    arguments = ",".join([str(threshold), *map(str, keys)])
+    text = template.format(f"{name}({arguments})")
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(text)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(MultiDescriptor(threshold, keys, sort=sort))
+    parsed = cast("MultiDescriptor", _PARSED[MultiDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(replace(parsed, threshold=threshold, keys=keys, sort=sort))
+
+
+@pytest.mark.parametrize("sort", [False, True])
+def test_a_negative_multi_threshold_is_refused_before_the_keys(sort: bool) -> None:
+    """As one over 2**32-1 is: Bitcoin Core reads neither.
+
+    `parse` cannot write one, a minus sign being no digit.
+    """
+    name = "sortedmulti" if sort else "multi"
+    err_msg = rf"^invalid {name}\(\) threshold: not in 0\.\.2\*\*32-1$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        MultiDescriptor(-1, _KEYS, sort=sort)
+    parsed = cast("MultiDescriptor", _PARSED[MultiDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, threshold=-1, keys=_KEYS, sort=sort)
+
+
+@pytest.mark.parametrize("sort", [False, True])
+def test_a_bare_multi_of_four_keys_builds_and_writes_what_parse_refuses(
+    sort: bool,
+) -> None:
+    """The bound of three keys on a bare ``multi()`` is `parse`'s alone.
+
+    The same value is valid inside ``sh()`` and ``wsh()``, and
+    `infer_descriptor` answers the ``raw()`` of its bare script.
+    """
+    name = "sortedmulti" if sort else "multi"
+    multi = MultiDescriptor(1, _KEYS[:4], sort=sort)
+    script_pub_key = multi.script_pub_key()
+    assert script_pub_key.type == "p2ms"
+    text = str(multi)
+    err_msg = rf"^a bare {name}\(\) takes at most 3 keys, 4 given$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(text)
+    for wrapper in (ShDescriptor, WshDescriptor):
+        wrapped = wrapper(multi)
+        assert parse(str(wrapped)).script_pub_key() == wrapped.script_pub_key()
+    raw = add_checksum(f"raw({script_pub_key.script.hex()})")
+    assert infer_descriptor(script_pub_key.script, Provider()) == raw
+
+
+_U_KEYS = tuple(
+    KeyExpression(pub_key=PrvKeyData(i, compressed=False).pub.sec) for i in range(1, 21)
+)
+
+
+@pytest.mark.parametrize("sort", [False, True])
+@pytest.mark.parametrize(
+    "uncompressed,compressed",
+    [(8, 0), (20, 0), (1, 14)],
+    ids=["531-bytes", "1323-bytes", "545-bytes"],
+)
+def test_a_multi_no_position_takes_is_refused_when_built(
+    uncompressed: int, compressed: int, sort: bool
+) -> None:
+    """More than three keys, one uncompressed, too large for ``sh()``.
+
+    `parse` refuses the text bare, inside ``sh()`` and inside ``wsh()``,
+    and the build refuses the value with the message `parse` gives inside
+    ``sh()``. Issue btclib-org/bip32-descriptors#251.
+    """
+    name = "sortedmulti" if sort else "multi"
+    keys = _U_KEYS[:uncompressed] + _KEYS[:compressed]
+    text = f"{name}(1,{','.join(map(str, keys))})"
+    size = 3 + 66 * uncompressed + 34 * compressed
+    refusal = (
+        f"{name}() inside sh() is a {size}-byte redeem script,"
+        " over the 520-byte push limit"
+    )
+    for template, err_msg in (
+        ("{}", f"a bare {name}() takes at most 3 keys, {len(keys)} given"),
+        ("sh({})", refusal),
+        ("wsh({})", f"key 0: {_UNCOMPRESSED_HERE}"),
+    ):
+        with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
+            parse(template.format(text))
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        MultiDescriptor(1, keys, sort=sort)
+    parsed = cast("MultiDescriptor", _PARSED[MultiDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, keys=keys, sort=sort)
+
+
+@pytest.mark.parametrize(
+    "uncompressed,compressed",
+    [(4, 0), (7, 0), (1, 13), (0, 20)],
+    ids=["4-keys", "465-bytes", "511-bytes", "20-compressed-keys"],
+)
+def test_a_multi_some_position_takes_is_built(
+    uncompressed: int, compressed: int
+) -> None:
+    """The control: ``sh()`` takes the first three, ``wsh()`` the last."""
+    multi = MultiDescriptor(1, _U_KEYS[:uncompressed] + _KEYS[:compressed])
+    wrapper = ShDescriptor if uncompressed else WshDescriptor
+    assert parse(str(wrapper(multi))) == wrapper(multi)
+
+
+@pytest.mark.parametrize(
+    "text,parse_refusal,build,build_refusal",
+    [
+        (
+            f"wsh(multi(3,{_C_KEY},{_U_KEY}))",
+            f"key 1: {_UNCOMPRESSED_HERE}",
+            lambda: WshDescriptor(MultiDescriptor(3, (_C_KEY, _U_KEY))),
+            "invalid k in k-of-n multi: 3",
+        ),
+        (
+            f"wsh(wpkh({_U_KEY}))",
+            "wpkh() is not allowed inside wsh()",
+            lambda: WshDescriptor(WpkhDescriptor(_U_KEY)),
+            f"key 0: {_UNCOMPRESSED_HERE}",
+        ),
+        (
+            f"sh(sh(multi(0,{_C_KEY})))",
+            "sh() is not allowed inside sh()",
+            lambda: ShDescriptor(ShDescriptor(MultiDescriptor(0, (_C_KEY,)))),
+            "invalid k in k-of-n multi: 0",
+        ),
+    ],
+    ids=["wsh-multi-key", "wsh-wpkh-function", "sh-sh-function"],
+)
+def test_an_argument_invalid_by_itself_names_its_own_fault_first(
+    text: str, parse_refusal: str, build: Callable[[], object], build_refusal: str
+) -> None:
+    """Where `parse` names the wrapper's fault, which it reads first.
+
+    The argument refuses its own fault when built, before the wrapper
+    sees it.
+    """
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(parse_refusal)}$"):
+        parse(text)
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(build_refusal)}$"):
+        build()
+
+
+@pytest.mark.parametrize(
+    "size,refusal",
+    [
+        (0, "Rawpkh hash is not hex"),
+        (19, "160 bits digest expected"),
+        (21, "160 bits digest expected"),
+    ],
+    ids=["empty", "19-bytes", "21-bytes"],
+)
+@pytest.mark.parametrize(
+    "template", ["rawpkh({})", "sh(rawpkh({}))", "wsh(rawpkh({}))"]
+)
+def test_a_rawpkh_hash_of_other_than_20_bytes_is_refused_when_built(
+    size: int, refusal: str, template: str
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    An empty hash is what `parse` reads as no hex. An unpickled one skips
+    that check, and refuses to give its script.
+    """
+    key_hash = b"\xab" * size
+    err_msg = f"^{refusal}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(template.format(key_hash.hex()))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        RawPkhDescriptor(key_hash)
+    parsed = cast("RawPkhDescriptor", _PARSED[RawPkhDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, key_hash=key_hash)
+    unpickled: RawPkhDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(unpickled, "key_hash", key_hash)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        unpickled.script_pub_key()
+
+
+class _TrNamed(RawPkhDescriptor):
+    """A subclass writing ``tr()``, which ``sh()`` and ``wsh()`` refuse."""
+
+    @override
+    def __str__(self) -> str:
+        return f"tr({self.key_hash.hex()})"
+
+
+def _unpickled_rawpkh(key_hash: bytes, cls: type[RawPkhDescriptor]) -> Descriptor:
+    """Return ``rawpkh(KEY_HASH)`` of `cls`, unpickled, skipping its check."""
+    built = cls(bytes(20))
+    unpickled: RawPkhDescriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
+    object.__setattr__(unpickled, "key_hash", key_hash)
+    return unpickled
+
+
+_RAWPKH_WRAPPERS = pytest.mark.parametrize(
+    "wrap", [WshDescriptor, ShDescriptor, _sh_wsh], ids=["wsh", "sh", "sh-wsh"]
+)
+
+
+@_RAWPKH_WRAPPERS
+@pytest.mark.parametrize(
+    "size,refusal",
+    [
+        (0, "Rawpkh hash is not hex"),
+        (19, "160 bits digest expected"),
+        (21, "160 bits digest expected"),
+        (32, "160 bits digest expected"),
+    ],
+    ids=["empty", "19-bytes", "21-bytes", "32-bytes"],
+)
+def test_an_unpickled_rawpkh_hash_of_other_than_20_bytes_is_refused_inside(
+    size: int, refusal: str, wrap: Callable[[Descriptor], Descriptor]
+) -> None:
+    """By the wrapper when built, with its own build's message.
+
+    An unpickled ``rawpkh()`` skips its own check of the hash. The order
+    beside its network and its position is the one `_assert_inner`
+    gives. Issue btclib-org/bip32-descriptors#281.
+    """
+    err_msg = f"^{refusal}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        RawPkhDescriptor(bytes(size))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_rawpkh(bytes(size), RawPkhDescriptor))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_rawpkh(bytes(size), _TrNamed))
+    with pytest.raises(BTClibTypeError, match="^invalid network type: int$"):
+        wrap(_with_network(_unpickled_rawpkh(bytes(size), RawPkhDescriptor), 5))
+
+
+@_RAWPKH_WRAPPERS
+def test_an_unpickled_rawpkh_of_20_bytes_is_refused_for_its_position(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """The control: a 20-byte hash passes, to its position or to a build."""
+    inner = _unpickled_rawpkh(bytes(20), _TrNamed)
+    with pytest.raises(BTClibValueError, match=r"^tr\(\) is not allowed inside "):
+        wrap(inner)
+    built = wrap(_unpickled_rawpkh(bytes(20), RawPkhDescriptor))
+    assert parse(str(built)) == built
+
+
+_TAPSCRIPT = miniscript.TAPSCRIPT
+
+
+@pytest.mark.parametrize(
+    "context,fragment,keys,threshold",
+    [
+        (_P2WSH, "pk_k", (_U_KEY,), 0),
+        (_P2WSH, "multi", (_C_KEY, _U_KEY), 1),
+        (_TAPSCRIPT, "pk_k", (_U_KEY,), 0),
+        (_TAPSCRIPT, "multi_a", (_KEY2, _U_KEY), 1),
+    ],
+    ids=["p2wsh-pk_k", "p2wsh-multi", "tapscript-pk_k", "tapscript-multi_a"],
+)
+def test_an_uncompressed_key_in_a_miniscript_node_is_refused_when_built(
+    context: str, fragment: str, keys: tuple[KeyExpression, ...], threshold: int
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives."""
+    text = ",".join(map(str, keys))
+    if threshold:
+        text = f"{threshold},{text}"
+    err_msg = f"^{_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        miniscript.parse(f"{fragment}({text})", context)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        miniscript.Miniscript(fragment, context, keys=keys, threshold=threshold)
+    built = miniscript.Miniscript(
+        fragment, context, keys=_KEYS[: len(keys)], threshold=threshold
+    )
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(built, keys=keys)
+
+
+@pytest.mark.parametrize("last", [False, True], ids=["first", "last"])
+@pytest.mark.parametrize(
+    "context,fragment,at_limit",
+    [(_P2WSH, "multi", _KEYS[:20]), (_TAPSCRIPT, "multi_a", (_KEY2,) * 999)],
+    ids=["p2wsh-multi", "tapscript-multi_a"],
+)
+def test_an_uncompressed_key_is_refused_before_the_number_of_keys(
+    context: str, fragment: str, at_limit: tuple[KeyExpression, ...], last: bool
+) -> None:
+    """In a node of one key over its limit, as `miniscript.parse` reads it."""
+    keys = list(at_limit)
+    keys.insert(len(keys) if last else 0, _U_KEY)
+    err_msg = f"^{_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        miniscript.parse(f"{fragment}(1,{','.join(map(str, keys))})", context)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        miniscript.Miniscript(fragment, context, keys=tuple(keys), threshold=1)
+
+
+def _unpickled_multi_a(keys: tuple[KeyExpression, ...]) -> MultiA:
+    """Return ``multi_a(1,KEY,...)``, unpickled.
+
+    `MultiA` refuses an uncompressed key when built, and unpickling skips
+    that check, so the keys are given to an unpickled copy.
+    """
+    multi_a: MultiA = pickle.loads(pickle.dumps(MultiA(1, (_KEY2,))))  # noqa: S301
+    object.__setattr__(multi_a, "keys", keys)
+    return multi_a
+
+
+def _tapscript_and_v_older(key: KeyExpression) -> miniscript.Miniscript:
+    """Return the tapscript ``and_v(v:pk(KEY),older(1))``, unpickled.
+
+    A tapscript `Miniscript` node refuses an uncompressed key when built,
+    and unpickling skips that check, so the key is given to an unpickled
+    copy.
+    """
+    expression = f"and_v(v:pk({_X2}),older(1))"
+    node = _unpickled(miniscript.parse(expression, _TAPSCRIPT))
+    object.__setattr__(node.subs[0].subs[0].subs[0], "keys", (key,))
+    return node
+
+
+@pytest.mark.parametrize(
+    "internal_key,tree,text,position",
+    [
+        (_U_KEY, None, f"tr({_U_KEY})", 0),
+        (_KEY, _U_KEY, f"tr({_X},pk({_U_KEY}))", 1),
+        (_KEY, (_KEY2, _U_KEY), f"tr({_X},{{pk({_X2}),pk({_U_KEY})}})", 2),
+        (
+            _KEY,
+            _unpickled_multi_a((_KEY2, _U_KEY)),
+            f"tr({_X},multi_a(1,{_X2},{_U_KEY}))",
+            2,
+        ),
+        (
+            _KEY,
+            _tapscript_and_v_older(_U_KEY),
+            f"tr({_X},and_v(v:pk({_U_KEY}),older(1)))",
+            1,
+        ),
+        (_MUSIG, _U_KEY, f"tr({_MUSIG},pk({_U_KEY}))", 3),
+        (_KEY, (_MUSIG, _U_KEY), f"tr({_X},{{pk({_MUSIG}),pk({_U_KEY})}})", 4),
+        (
+            _KEY,
+            (_MUSIG, _unpickled_multi_a((_KEY2, _U_KEY))),
+            f"tr({_X},{{pk({_MUSIG}),multi_a(1,{_X2},{_U_KEY})}})",
+            5,
+        ),
+    ],
+    ids=[
+        "internal",
+        "pk-leaf",
+        "second-leaf",
+        "multi_a-leaf",
+        "miniscript-leaf",
+        "after-musig-internal",
+        "after-musig-leaf",
+        "multi_a-after-musig-leaf",
+    ],
+)
+def test_an_uncompressed_tr_key_is_refused_when_built(
+    internal_key: KeyExpression, tree: Any, text: str, position: int
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    The position counts a ``musig()`` as each of its participants and
+    itself, as `parse` does. A leaf that refuses the key itself when
+    built is given it unpickled.
+    """
+    err_msg = f"^key {position}: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(text)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        TrDescriptor(internal_key, tree)
+    parsed = cast("TrDescriptor", _PARSED[TrDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, internal_key=internal_key, tree=tree)
+
+
+def test_an_uncompressed_internal_key_is_refused_before_the_tree() -> None:
+    """As `parse` reads them, before a tree deeper than `parse` reads."""
+    levels = 129
+    text = f"{{pk({_X2})," * levels + f"pk({_X2})" + "}" * levels
+    tree: Any = _KEY2
+    for _ in range(levels):
+        tree = (_KEY2, tree)
+    err_msg = r"^tr\(\) supports at most 128 nesting levels$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},{text})")
+    with pytest.raises(BTClibValueError, match="^script tree deeper than 128$"):
+        TrDescriptor(_KEY, tree)
+    err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_U_KEY},{text})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        TrDescriptor(_U_KEY, tree)
+
+
+@pytest.mark.parametrize(
+    "threshold,keys",
+    [(1, (_KEY2, _U_KEY)), (3, (_KEY2, _U_KEY)), (1, (*(_KEY2,) * 999, _U_KEY))],
+    ids=["k-1", "k-over-n", "n-over-999"],
+)
+@pytest.mark.parametrize("sort", [False, True], ids=["multi_a", "sortedmulti_a"])
+def test_an_uncompressed_multi_a_key_is_refused_when_built(
+    threshold: int, keys: tuple[KeyExpression, ...], sort: bool
+) -> None:
+    """Built directly or by `replace`, before k and n, as `parse` reads them.
+
+    The message is `parse`'s without the key's position in the ``tr()``,
+    which the leaf does not know.
+    """
+    name = "sortedmulti_a" if sort else "multi_a"
+    arguments = ",".join([str(threshold), *map(str, keys)])
+    err_msg = f"^key {len(keys)}: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},{name}({arguments}))")
+    err_msg = f"^{_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        MultiA(threshold, keys, sort=sort)
+    built = MultiA(1, (_KEY2,), sort=sort)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(built, threshold=threshold, keys=keys)
+
+
+def test_an_uncompressed_rawtr_key_is_refused_when_built() -> None:
+    """Built directly or by `replace`, with the message `parse` gives."""
+    err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"rawtr({_U_KEY})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        RawTrDescriptor(_U_KEY)
+    parsed = cast("RawTrDescriptor", _PARSED[RawTrDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, key=_U_KEY)
+
+
+# keys that are none of `_KEY`, `_KEY2`, `_U_KEY` and `_KEYS`, which the
+# tests below hold beside them
+_X_KEYS = tuple(
+    KeyExpression(pub_key=b"\x02" + PrvKeyData(i).pub.sec[1:], x_only=True)
+    for i in range(44, 1045)
+)
+_C_KEYS = tuple(KeyExpression(pub_key=PrvKeyData(i).pub.sec) for i in range(22, 44))
+_X_ONLY_HERE = "x-only public keys are allowed in a taproot key expression only"
+# each fragment holding keys, the number of keys over its limit, and the
+# expression it is read from in each context, with the path to its node
+_HOLDING: dict[str, tuple[int, str, str, tuple[int, ...]]] = {
+    "pk_k": (2, "and_v(v:pk({}),pk({}))", "and_v(v:pk({}),pk({}))", (1, 0)),
+    "pk_h": (2, "and_v(v:pk({}),pkh({}))", "and_v(v:pk({}),pkh({}))", (1, 0)),
+    "multi": (21, "and_v(v:pk({}),multi_a(1,{}))", "and_v(v:pk({}),multi(1,{}))", (1,)),
+    "multi_a": (
+        1000,
+        "and_v(v:pk({}),multi_a(1,{}))",
+        "and_v(v:pk({}),multi(1,{}))",
+        (1,),
+    ),
+}
+
+
+def _holding(
+    fragment: str, context: str, keys: tuple[KeyExpression, ...]
+) -> miniscript.Miniscript:
+    """Return an unpickled node whose node of `fragment` holds `keys`.
+
+    Unpickling skips `Miniscript`'s own checks, so a multisig of the other
+    context is read as the context's own and given the fragment.
+    """
+    _, tapscript, p2wsh, path = _HOLDING[fragment]
+    expression = tapscript if context == _TAPSCRIPT else p2wsh
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    root = _unpickled(miniscript.parse(expression.format(own[0], own[1]), context))
+    node = root
+    for index in path:
+        node = node.subs[index]
+    object.__setattr__(node, "fragment", fragment)
+    object.__setattr__(node, "keys", keys)
+    return root
+
+
+def _node_at(
+    root: miniscript.Miniscript, path: tuple[int, ...]
+) -> miniscript.Miniscript:
+    """Return the node `path` reaches from `root`."""
+    for index in path:
+        root = root.subs[index]
+    return root
+
+
+_WRAPPED: dict[str, tuple[str, Callable[[miniscript.Miniscript], Descriptor]]] = {
+    "tr": (_TAPSCRIPT, lambda node: TrDescriptor(_KEY, node)),
+    "bare": (_P2WSH, MiniscriptDescriptor),
+    "wsh": (_P2WSH, lambda node: WshDescriptor(MiniscriptDescriptor(node))),
+    "sh-wsh": (
+        _P2WSH,
+        lambda node: ShDescriptor(WshDescriptor(MiniscriptDescriptor(node))),
+    ),
+}
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+@pytest.mark.parametrize("too_many", [False, True], ids=["no-key", "too-many"])
+@pytest.mark.parametrize("fragment", _HOLDING)
+def test_a_node_holding_a_number_of_keys_its_fragment_does_not_take_is_refused(
+    fragment: str, too_many: bool, wrapped: str
+) -> None:
+    """With the message the node's own build gives, before its text is written.
+
+    A multisig of the other context is refused for its context, as its
+    build refuses it. Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    keys = own[:1] * (_HOLDING[fragment][0] if too_many else 0)
+    if fragment in {"multi", "multi_a"} and (fragment == "multi") == (
+        context == _TAPSCRIPT
+    ):
+        err_msg = (
+            "multi() is not allowed in a tapscript"
+            if fragment == "multi"
+            else "multi_a() is only allowed in a tapscript"
+        )
+    else:
+        err_msg = f"invalid number of keys in {fragment}: {len(keys)}"
+    root = _holding(fragment, context, keys)
+    node = _node_at(root, _HOLDING[fragment][3])
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
+        replace(node, keys=keys)
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
+        wrap(root)
+
+
+# (fragment, context, the keys of its node, the refusal `parse` gives)
+_KEY_BEFORE_NUMBER = [
+    ("multi", _P2WSH, (_X_KEYS[0], *_C_KEYS[1:21]), f"key 1: {_X_ONLY_HERE}"),
+    ("multi", _P2WSH, (_U_KEY, *_C_KEYS[1:21]), f"key 1: {_UNCOMPRESSED_HERE}"),
+    ("pk_k", _P2WSH, (_X_KEYS[0], _C_KEYS[2]), f"key 1: {_X_ONLY_HERE}"),
+    ("pk_k", _P2WSH, (_U_KEY, _C_KEYS[2]), f"key 1: {_UNCOMPRESSED_HERE}"),
+    ("pk_h", _P2WSH, (_U_KEY, _C_KEYS[2]), f"key 1: {_UNCOMPRESSED_HERE}"),
+    ("pk_k", _TAPSCRIPT, (_U_KEY, _X_KEYS[2]), f"key 2: {_UNCOMPRESSED_HERE}"),
+    ("pk_h", _TAPSCRIPT, (_U_KEY, _X_KEYS[2]), f"key 2: {_UNCOMPRESSED_HERE}"),
+    ("multi_a", _TAPSCRIPT, (_U_KEY, *_X_KEYS[1:1000]), f"key 2: {_UNCOMPRESSED_HERE}"),
+]
+_TEMPLATES = {"tr": f"tr({_X},{{}})", "wsh": "wsh({})", "sh-wsh": "sh(wsh({}))"}
+
+
+@pytest.mark.parametrize(
+    "wrapped,fragment,keys,refusal",
+    [
+        (wrapped, fragment, keys, refusal)
+        for fragment, context, keys, refusal in _KEY_BEFORE_NUMBER
+        for wrapped in (("tr",) if context == _TAPSCRIPT else ("wsh", "sh-wsh"))
+    ],
+)
+def test_a_key_is_refused_before_the_number_of_keys_of_its_node(
+    wrapped: str, fragment: str, keys: tuple[KeyExpression, ...], refusal: str
+) -> None:
+    """With the message `parse` gives, naming the key by its position.
+
+    `parse` reads the keys of a node before it counts them, and so does
+    the node's own build. Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    root = _holding(fragment, context, keys)
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(_TEMPLATES[wrapped].format(root))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(root)
+
+
+# (fragment, the keys of its node, the refusal `parse` gives in each
+# wrapper) where another node holds `_U_KEY`
+_KEY_ELSEWHERE = [
+    ("pk_k", 2, {"tr": "key 1", "wsh": "key 0", "sh-wsh": "key 0"}),
+    ("multi", 21, {"wsh": "key 0", "sh-wsh": "key 0"}),
+    ("multi_a", 1000, {"tr": "key 1"}),
+]
+
+
+@pytest.mark.parametrize(
+    "wrapped,fragment,number,position",
+    [
+        (wrapped, fragment, number, position)
+        for fragment, number, positions in _KEY_ELSEWHERE
+        for wrapped, position in positions.items()
+    ],
+)
+def test_a_key_another_node_holds_is_refused_before_the_number_of_keys(
+    wrapped: str, fragment: str, number: int, position: str
+) -> None:
+    """With the message `parse` gives, as main gives it.
+
+    The text of the node of the wrong count can be written, so the key
+    check of ``tr()`` or ``wsh()`` names the key, and a bare
+    `MiniscriptDescriptor` builds it. Issue
+    btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    root = _holding(fragment, context, own[1 : number + 1])
+    object.__setattr__(_node_at(root, (0, 0, 0)), "keys", (_U_KEY,))
+    err_msg = f"^{position}: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(_TEMPLATES[wrapped].format(root))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(root)
+    if context == _P2WSH:
+        assert str(MiniscriptDescriptor(root)) == str(root)
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_pk_k_holding_no_key_is_refused_beside_an_uncompressed_key(
+    wrapped: str,
+) -> None:
+    """For its number of keys: it has no text to write.
+
+    Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    root = _holding("pk_k", context, ())
+    object.__setattr__(_node_at(root, (0, 0, 0)), "keys", (_U_KEY,))
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in pk_k: 0$"):
+        wrap(root)
+
+
+_FIRST = (0, 0, 0)
+_SECOND = (1, 0)
+# the fields given to the pk_k nodes of an unpickled
+# and_v(v:pk(KEY),pk(KEY)), at `_FIRST` and `_SECOND`, and the refusal
+# `MiniscriptDescriptor` gives
+_UNPICKLED_FAULTS: dict[
+    str, tuple[list[tuple[tuple[int, ...], str, object]], type[Exception], str]
+] = {
+    "no-key": (
+        [(_FIRST, "keys", ())],
+        BTClibValueError,
+        "invalid number of keys in pk_k: 0",
+    ),
+    "two-keys": (
+        [(_FIRST, "keys", _C_KEYS[:2])],
+        BTClibValueError,
+        "invalid number of keys in pk_k: 2",
+    ),
+    "list-fragment": (
+        [(_SECOND, "fragment", ["pk_k"])],
+        BTClibTypeError,
+        "invalid fragment type: list",
+    ),
+    "none-fragment": (
+        [(_SECOND, "fragment", None)],
+        BTClibTypeError,
+        "invalid fragment type: NoneType",
+    ),
+    "tapscript-context": (
+        [(_SECOND, "context", _TAPSCRIPT)],
+        BTClibValueError,
+        "not a P2WSH node: pk_k in tapscript",
+    ),
+    "no-key-beside-a-list-fragment": (
+        [(_FIRST, "keys", ()), (_SECOND, "fragment", ["pk_k"])],
+        BTClibTypeError,
+        "invalid fragment type: list",
+    ),
+    "no-key-beside-an-x-only-key": (
+        [(_FIRST, "keys", ()), (_SECOND, "keys", _X_KEYS[:1])],
+        BTClibValueError,
+        f"key 0: {_X_ONLY_HERE}",
+    ),
+    "two-keys-the-first-x-only": (
+        [(_FIRST, "keys", (_X_KEYS[0], _C_KEYS[0]))],
+        BTClibValueError,
+        f"key 0: {_X_ONLY_HERE}",
+    ),
+}
+
+
+@pytest.mark.parametrize("wrapped", ["wsh", "sh-wsh"])
+@pytest.mark.parametrize("fault", _UNPICKLED_FAULTS)
+def test_an_unpickled_miniscript_argument_is_refused_as_its_build_refuses_it(
+    fault: str, wrapped: str
+) -> None:
+    """With `MiniscriptDescriptor`'s refusal, before its text is written.
+
+    An unpickled `MiniscriptDescriptor` skips its own check of its nodes
+    and its keys, and the text of a node it refuses need not be written
+    without raising. Issues btclib-org/bip32-descriptors#259 and
+    btclib-org/bip32-descriptors#261.
+    """
+    parsed = parse(f"wsh(and_v(v:pk({_C}),pk({_C2})))")
+    assert isinstance(parsed, WshDescriptor)
+    ms: MiniscriptDescriptor = pickle.loads(pickle.dumps(parsed.inner))  # noqa: S301
+    fields_given, error, refusal = _UNPICKLED_FAULTS[fault]
+    for path, name, value in fields_given:
+        object.__setattr__(_node_at(ms.node, path), name, value)
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(error, match=err_msg):
+        MiniscriptDescriptor(ms.node)
+    inner = ms if wrapped == "wsh" else _unpickled_wsh(ms)
+    with pytest.raises(error, match=err_msg):
+        (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
+
+
+# the fields given as in `_UNPICKLED_FAULTS`, the refusal `parse` gives
+# for a key, and whether the node's text can be written for it to read
+_KEY_BEFORE_ITS_NUMBER: dict[
+    str, tuple[list[tuple[tuple[int, ...], str, object]], str, bool]
+] = {
+    "uncompressed-beside-a-pk_k-of-no-key": (
+        [(_FIRST, "keys", (_U_KEY,)), (_SECOND, "keys", ())],
+        f"key 0: {_UNCOMPRESSED_HERE}",
+        False,
+    ),
+    "uncompressed-then-x-only": (
+        [(_FIRST, "keys", (_U_KEY,)), (_SECOND, "keys", _X_KEYS[:1])],
+        f"key 0: {_UNCOMPRESSED_HERE}",
+        True,
+    ),
+}
+
+
+@pytest.mark.parametrize("wrapped", ["wsh", "sh-wsh"])
+@pytest.mark.parametrize("fault", _KEY_BEFORE_ITS_NUMBER)
+def test_an_unpickled_miniscript_argument_is_refused_for_a_key_first(
+    fault: str, wrapped: str
+) -> None:
+    """With `parse`'s message, in `parse`'s order.
+
+    Key by key, and before the number of keys of a node. A bare
+    `MiniscriptDescriptor` refuses an x-only key before the others and
+    takes an uncompressed one, so it refuses the x-only key, or the
+    ``pk_k`` of no key, instead. Issue btclib-org/bip32-descriptors#261.
+    """
+    parsed = parse(f"wsh(and_v(v:pk({_C}),pk({_C2})))")
+    assert isinstance(parsed, WshDescriptor)
+    ms: MiniscriptDescriptor = pickle.loads(pickle.dumps(parsed.inner))  # noqa: S301
+    fields_given, refusal, written = _KEY_BEFORE_ITS_NUMBER[fault]
+    for path, name, value in fields_given:
+        object.__setattr__(_node_at(ms.node, path), name, value)
+    err_msg = f"^{re.escape(refusal)}$"
+    if written:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            parse(_TEMPLATES[wrapped].format(ms.node))
+    inner = ms if wrapped == "wsh" else _unpickled_wsh(ms)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_multisig_of_the_other_context_is_refused_before_its_keys(
+    wrapped: str,
+) -> None:
+    """For its context, as its build refuses it, even holding a refused key.
+
+    Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    if context == _TAPSCRIPT:
+        fragment, keys = "multi", (_U_KEY, *_X_KEYS[1:21])
+        err_msg = "^multi\\(\\) is not allowed in a tapscript$"
+    else:
+        fragment, keys = "multi_a", (_U_KEY, *_C_KEYS[1:2] * 999)
+        err_msg = "^multi_a\\(\\) is only allowed in a tapscript$"
+    root = _holding(fragment, context, keys)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(_node_at(root, (1,)), keys=keys)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(root)
+
+
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+@pytest.mark.parametrize("fault", ["context", "type"])
+def test_a_node_s_type_or_context_is_refused_before_another_node_s_keys(
+    wrapped: str, fault: str
+) -> None:
+    """Wherever in the leaf either node is.
+
+    The keys are counted once every node has passed its type and its
+    context. Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    root = _holding("pk_k", context, ())
+    other = _P2WSH if context == _TAPSCRIPT else _TAPSCRIPT
+    if fault == "context":
+        _with_context(_node_at(root, (0, 0, 0)), other)
+        error: type[Exception] = BTClibValueError
+        node = "tapscript" if context == _TAPSCRIPT else "P2WSH"
+        err_msg = f"^not a {node} node: pk_k in {other}$"
+    else:
+        object.__setattr__(_node_at(root, (0, 0)), "subs", ("not a node",))
+        error = BTClibTypeError
+        err_msg = "^invalid miniscript node type: str$"
+    with pytest.raises(error, match=err_msg):
+        wrap(root)
+
+
+def test_a_node_of_a_fragment_holding_no_key_is_refused_holding_one() -> None:
+    """For its fragment first, where the library does not define it.
+
+    Issues btclib-org/bip32-descriptors#235 and
+    btclib-org/bip32-descriptors#285.
+    """
+    root = _unpickled(miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT))
+    object.__setattr__(root.subs[1], "keys", (_KEY2,))
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in older: 1$"):
+        TrDescriptor(_KEY, root)
+    object.__setattr__(root.subs[1], "fragment", _RANDOM_HEX)
+    with pytest.raises(BTClibValueError, match="^unknown miniscript fragment$") as e:
+        TrDescriptor(_KEY, root)
+    assert_secret_free(e.value, [_RANDOM_HEX])
+
+
+# the keys of a node whose fragment the library does not define: none, as
+# the node of issue btclib-org/bip32-descriptors#285 holds, and one that is
+# no `KeyExpression`, refused after the fragment
+_UNKNOWN_FRAGMENT_KEYS: dict[str, tuple[object, ...]] = {
+    "no-key": (),
+    "str-key": ("not a key",),
+}
+
+
+@pytest.mark.parametrize("keys", _UNKNOWN_FRAGMENT_KEYS)
+@pytest.mark.parametrize("fragment", ["zzz", _RANDOM_HEX])
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+def test_a_node_of_an_unknown_fragment_is_refused_before_its_keys(
+    wrapped: str, fragment: str, keys: str
+) -> None:
+    """As `Miniscript` refuses it, echoing no value it holds.
+
+    An unpickled node skips that check, and its text is one `parse`
+    refuses. Issue btclib-org/bip32-descriptors#285.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    key = _X if context == _TAPSCRIPT else _C
+    root = _unpickled(miniscript.parse(f"and_v(v:pk({key}),older(1))", context))
+    values: dict[str, Any] = {
+        "fragment": fragment,
+        "keys": _UNKNOWN_FRAGMENT_KEYS[keys],
+    }
+    with pytest.raises(BTClibValueError, match="^unknown miniscript fragment$"):
+        replace(root.subs[1], **values)
+    for name, value in values.items():
+        object.__setattr__(root.subs[1], name, value)
+    with pytest.raises(BTClibValueError, match="^unknown miniscript fragment$") as e:
+        wrap(root)
+    assert_secret_free(e.value, [fragment])
+
+
+@pytest.mark.parametrize("keys", _UNKNOWN_FRAGMENT_KEYS)
+@pytest.mark.parametrize("fragment", ["zzz", _RANDOM_HEX])
+def test_an_unpickled_miniscript_of_an_unknown_fragment_is_refused_inside_wsh(
+    fragment: str, keys: str
+) -> None:
+    """In ``wsh()`` and ``sh(wsh())``, directly or by `replace`.
+
+    The `MiniscriptDescriptor` is unpickled too, so it skips the check
+    the test above reaches. Issue btclib-org/bip32-descriptors#285.
+    """
+    inner = _unpickled_miniscript(f"and_v(v:pk({_C}),older(1))")
+    object.__setattr__(inner.node.subs[1], "fragment", fragment)
+    object.__setattr__(inner.node.subs[1], "keys", _UNKNOWN_FRAGMENT_KEYS[keys])
+    wsh = cast("WshDescriptor", _PARSED[WshDescriptor])
+    sh = cast("ShDescriptor", _PARSED[ShDescriptor])
+    builds: list[Callable[[], object]] = [
+        lambda: WshDescriptor(inner),
+        lambda: replace(wsh, inner=inner),
+        lambda: ShDescriptor(_unpickled_wsh(inner)),
+        lambda: replace(sh, inner=_unpickled_wsh(inner)),
+    ]
+    for build in builds:
+        with pytest.raises(
+            BTClibValueError, match="^unknown miniscript fragment$"
+        ) as e:
+            build()
+        assert_secret_free(e.value, [fragment])
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_node_s_keys_given_as_a_list_are_refused(wrapped: str) -> None:
+    """As `Miniscript` refuses them. Issue btclib-org/bip32-descriptors#235."""
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    root = _holding("pk_k", context, (own[2],))
+    object.__setattr__(_node_at(root, (1, 0)), "keys", [own[2]])
+    with pytest.raises(BTClibTypeError, match="^invalid keys type: list$"):
+        wrap(root)
+
+
+@pytest.mark.parametrize("first", [False, True], ids=["second", "first"])
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_key_of_another_type_is_refused_before_the_number_of_keys(
+    wrapped: str, first: bool
+) -> None:
+    """In a ``pk_k`` holding two keys, naming the type alone.
+
+    Issue btclib-org/bip32-descriptors#246.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    keys: tuple[object, ...] = ("abc", own[2]) if first else (own[2], "abc")
+    root = _holding("pk_k", context, cast("tuple[KeyExpression, ...]", keys))
+    with pytest.raises(BTClibTypeError, match="^invalid key type: str$"):
+        wrap(root)
+
+
+@pytest.mark.parametrize("beside", [False, True], ids=["alone", "beside"])
+@pytest.mark.parametrize(
+    "keys,err_msg",
+    [
+        ([_KEY2], "^invalid keys type: list$"),
+        (None, "^invalid keys type: NoneType$"),
+        ((_KEY2, "abc"), "^invalid key type: str$"),
+    ],
+    ids=["list", "None", "str"],
+)
+def test_an_unpickled_multi_a_leaf_holding_keys_of_another_type_is_refused(
+    keys: object, err_msg: str, beside: bool
+) -> None:
+    """Alone and beside a miniscript leaf, before anything reads a key.
+
+    An unpickled `MultiA` skips its own check of its keys. Issue
+    btclib-org/bip32-descriptors#249.
+    """
+    leaf = _unpickled_multi_a(cast("tuple[KeyExpression, ...]", keys))
+    other = miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        TrDescriptor(_KEY, (leaf, other) if beside else leaf)
+
+
+def _unpickled_miniscript(expression: str) -> MiniscriptDescriptor:
+    """Return a `MiniscriptDescriptor` of the P2WSH EXPRESSION, unpickled.
+
+    `MiniscriptDescriptor` refuses a node `parse` does not read back as
+    itself when built, and unpickling skips that check, so the node is
+    given to an unpickled copy.
+    """
+    inner = cast("WshDescriptor", _MINISCRIPT).inner
+    ms: MiniscriptDescriptor = pickle.loads(pickle.dumps(inner))  # noqa: S301
+    object.__setattr__(ms, "node", _unpickled(miniscript.parse(expression)))
+    return ms
+
+
+# miniscripts `parse` does not read back as themselves: not sane, or read
+# as a descriptor function
+_NOT_READ_BACK = {
+    "repeated-key": f"and_v(v:pk({_C}),pk({_C}))",
+    "timelock-mix": f"and_v(v:pk({_C}),and_v(v:older(1),older(4194305)))",
+    "resource-limits": "and_v(v:older(1)," * 101 + f"pk({_C})" + ")" * 101,
+    "read-as-pk": f"pk({_C})",
+    "read-as-pkh": f"pkh({_C})",
+    "read-as-multi": f"multi(1,{_C},{_C2})",
+}
+
+
+@pytest.mark.parametrize(
+    "expression", _NOT_READ_BACK.values(), ids=list(_NOT_READ_BACK)
+)
+def test_an_unpickled_miniscript_parse_does_not_read_back_is_refused_inside_wsh(
+    expression: str,
+) -> None:
+    """In ``wsh()`` and ``sh(wsh())``, with `MiniscriptDescriptor`'s message.
+
+    Directly or by `replace`. Issue btclib-org/bip32-descriptors#267.
+    """
+    with pytest.raises(BTClibValueError) as bare:
+        MiniscriptDescriptor(miniscript.parse(expression))
+    err_msg = f"^{re.escape(str(bare.value))}$"
+    inner = _unpickled_miniscript(expression)
+    wsh = cast("WshDescriptor", _PARSED[WshDescriptor])
+    sh = cast("ShDescriptor", _PARSED[ShDescriptor])
+    builds: list[Callable[[], object]] = [
+        lambda: WshDescriptor(inner),
+        lambda: replace(wsh, inner=inner),
+        lambda: ShDescriptor(_unpickled_wsh(inner)),
+        lambda: replace(sh, inner=_unpickled_wsh(inner)),
+    ]
+    for build in builds:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            build()
+
+
+def _first_key_node(root: miniscript.Miniscript) -> miniscript.Miniscript:
+    """Return the first node of `root`'s text that holds a key."""
+    stack = [root]
+    while not stack[-1].keys:
+        node = stack.pop()
+        stack += reversed(node.subs)
+    return stack[-1]
+
+
+# a field given to the first node holding a key, and the refusal of
+# `_assert_wsh_argument` before it writes the text, with that node's
+# fragment for {}
+_BEFORE_THE_TEXT: dict[str, tuple[str, object, type[Exception], str]] = {
+    "no-key": ("keys", (), BTClibValueError, "invalid number of keys in {}: 0"),
+    "list-fragment": (
+        "fragment",
+        ["pk_k"],
+        BTClibTypeError,
+        "invalid fragment type: list",
+    ),
+    "tapscript-context": (
+        "context",
+        _TAPSCRIPT,
+        BTClibValueError,
+        "not a P2WSH node: {} in tapscript",
+    ),
+    "str-key": ("keys", ("not a key",), BTClibTypeError, "invalid key type: str"),
+    "x-only-key": ("keys", _X_KEYS[:1], BTClibValueError, f"key 0: {_X_ONLY_HERE}"),
+    "uncompressed-key": (
+        "keys",
+        (_U_KEY,),
+        BTClibValueError,
+        f"key 0: {_UNCOMPRESSED_HERE}",
+    ),
+}
+
+
+@pytest.mark.parametrize("wrapped", ["wsh", "sh-wsh"])
+@pytest.mark.parametrize("fault", _BEFORE_THE_TEXT)
+@pytest.mark.parametrize(
+    "expression", _NOT_READ_BACK.values(), ids=list(_NOT_READ_BACK)
+)
+def test_an_unpickled_miniscript_is_refused_for_its_nodes_and_keys_first(
+    expression: str, fault: str, wrapped: str
+) -> None:
+    """Before its text is read, as one `parse` reads back is refused.
+
+    Issue btclib-org/bip32-descriptors#267.
+    """
+    name, value, error, refusal = _BEFORE_THE_TEXT[fault]
+    inner = _unpickled_miniscript(expression)
+    node = _first_key_node(inner.node)
+    err_msg = f"^{re.escape(refusal.format(node.fragment))}$"
+    object.__setattr__(node, name, value)
+    with pytest.raises(error, match=err_msg):
+        if wrapped == "wsh":
+            WshDescriptor(inner)
+        else:
+            ShDescriptor(_unpickled_wsh(inner))
+
+
+def test_a_parsed_or_inferred_wsh_miniscript_is_checked_for_sanity_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither ``wsh()`` nor ``sh()`` asks again what was asked as it was read.
+
+    By `parse`, which asks with its own check, or by `infer_descriptor`,
+    which asks once, building the `MiniscriptDescriptor`. The control
+    beside them: one built by hand is asked once by `MiniscriptDescriptor`
+    and once more by each wrapper. Issue btclib-org/bip32-descriptors#267.
+    """
+    expression = f"and_v(v:pk({_C}),pk({_C2}))"
+    wsh = parse(f"wsh({expression})")
+    sh = parse(f"sh(wsh({expression}))")
+    asked: list[miniscript.Miniscript] = []
+    monkeypatch.setattr(descriptors_module, "_assert_sane_script", asked.append)
+    parse(f"wsh({expression})")
+    parse(f"sh(wsh({expression}))")
+    assert not asked
+    for parsed in (wsh, sh):
+        infer_descriptor(parsed.script_pub_key().script, parsed.provider())
+        assert len(asked) == 1
+        asked.clear()
+    ShDescriptor(WshDescriptor(MiniscriptDescriptor(miniscript.parse(expression))))
+    assert len(asked) == 3
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, 5, "51", bytearray(b"\x51")],
+    ids=["none", "int", "str", "bytearray"],
+)
+@pytest.mark.parametrize("wrapped", ["wsh", "sh", "sh-wsh"])
+@pytest.mark.parametrize(
+    "parsed_type,field,what",
+    [
+        (RawDescriptor, "script", "script"),
+        (RawPkhDescriptor, "key_hash", "key hash"),
+    ],
+    ids=["raw", "rawpkh"],
+)
+def test_an_unpickled_raw_argument_holding_no_bytes_is_refused(
+    parsed_type: type[RawDescriptor | RawPkhDescriptor],
+    field: str,
+    what: str,
+    wrapped: str,
+    value: Any,
+) -> None:
+    """With its own build's message, before its text is written.
+
+    An unpickled ``raw()`` or ``rawpkh()`` skips its own check of its
+    bytes' type. Issue btclib-org/bip32-descriptors#271.
+    """
+    err_msg = f"^invalid {what} type: {type(value).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        parsed_type(value)
+    inner = pickle.loads(pickle.dumps(_PARSED[parsed_type]))  # noqa: S301
+    object.__setattr__(inner, field, value)
+    if wrapped == "sh-wsh":
+        inner = _unpickled_wsh(inner)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)

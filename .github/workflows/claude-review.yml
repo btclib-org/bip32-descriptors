@@ -73,7 +73,7 @@ jobs:
     # by a comment gets no cache access, which is what actionlint's
     # cache-call-unrestricted asks for
     cache-mode: none
-    uses: btclib-org/.github/.github/workflows/reusable-claude-review.yml@f1e5044d9c9d0ce9d1c5cdc74f483b3d08a2bd8f # v2026.11.9
+    uses: btclib-org/.github/.github/workflows/reusable-claude-review.yml@5be973d6a2969cfc572be91df4637d71d7c56a11 # v2026.11.11
     with:
       # this tree's own paragraph, landing where the callee inserts it
       extra-prompt: |
@@ -85,13 +85,13 @@ jobs:
         reads as, or makes an output differ from the vendored vectors
         under tests/**/_data/ is a finding until its test says otherwise.
         So is an import of anything other than the standard library,
-        btclib, ecc and typing_extensions: REVIEWING.md's "This
-        repository in particular" has the rest. A rule that is stated
-        without the reason that chose it, a claim no command re-derives, a
-        count of anything, a second wording of a fact stated elsewhere, and
-        a rule whose own repository does not keep it are the defects the
-        organization's standard names, and they are what to look for
-        beside anything specific to this package.
+        btclib, ecc, base58_bech32 and typing_extensions: REVIEWING.md's
+        "This repository in particular" has the rest. A rule that is
+        stated without the reason that chose it, a claim no command
+        re-derives, a count of anything, a second wording of a fact stated
+        elsewhere, and a rule whose own repository does not keep it are
+        the defects the organization's standard names, and they are what
+        to look for beside anything specific to this package.
       # no extra-allowed-tools: the callee's own base set is what a review
       # of this package reaches for
     # named rather than `inherit`: the callee declares one secret, and
