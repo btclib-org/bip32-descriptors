@@ -2136,9 +2136,9 @@ class MiniscriptDescriptor(Descriptor):
     A node holding a type or bounds its build does not compute, as an
     unpickled one can, is refused before the sanity check reads them, and
     so is one of more subexpressions than its fragment takes, or of a
-    threshold its fragment does not take. A multisig node left as the
-    paragraph above says is not asked, nor are the nodes above it, as
-    `_assert_derived` says.
+    threshold or lock time its fragment does not take, of another type
+    included. A multisig node left as the paragraph above says is not
+    asked, nor are the nodes above it, as `_assert_derived` says.
 
     `parse` takes one only inside ``wsh()``. The refusal of a top-level one
     is `parse`'s alone: the build cannot know whether the value will be

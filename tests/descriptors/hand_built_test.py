@@ -158,6 +158,10 @@ those its build computes from its subexpressions, before its sanity is
 asked. A node left to those checks for its number of keys, as above, is
 asked, and so are the nodes above it, unless it is a multisig. Issue
 btclib-org/bip32-descriptors#286.
+
+Before its type and bounds, a node is refused for a threshold or a lock
+time out of range or of another type, with the message of its own
+build. Issue btclib-org/bip32-descriptors#284.
 """
 
 from __future__ import annotations
@@ -4124,41 +4128,58 @@ def test_an_unpickled_node_of_more_subexpressions_than_it_takes_is_refused(
         _outermost(wrapped, root)
 
 
+_THRESH_TEXT = "thresh(2,pk({}),s:pk({}))"
+_OLDER_TEXT = "and_v(v:pk({}),and_v(v:pk({}),older(1)))"
+_AFTER_TEXT = "and_v(v:pk({}),and_v(v:pk({}),after(1)))"
 # (an expression of two keys, the path to the node given `threshold`, and
-# the refusal its build gives)
-_THRESHOLD_FAULTS = {
+# the refusal `Miniscript._assert_number` gives)
+_THRESHOLD_FAULTS: dict[str, tuple[str, tuple[int, ...], object, Exception]] = {
     "thresh-3-of-2": (
-        "thresh(2,pk({}),s:pk({}))",
+        _THRESH_TEXT,
         (),
         3,
-        "invalid thresh() threshold: 3 of 2",
+        BTClibValueError("invalid thresh() threshold: 3 of 2"),
     ),
-    "older-0": (
-        "and_v(v:pk({}),and_v(v:pk({}),older(1)))",
-        (1, 1),
+    "thresh-0": (
+        _THRESH_TEXT,
+        (),
         0,
-        "invalid older() value: 0",
+        BTClibValueError("invalid thresh() threshold: 0 of 2"),
     ),
+    "thresh-str": (
+        _THRESH_TEXT,
+        (),
+        "2",
+        BTClibTypeError("invalid threshold type: str"),
+    ),
+    "older-0": (_OLDER_TEXT, (1, 1), 0, BTClibValueError("invalid older() value: 0")),
+    "older-2**31": (
+        _OLDER_TEXT,
+        (1, 1),
+        2**31,
+        BTClibValueError("invalid older() value: 2147483648"),
+    ),
+    "after-0": (_AFTER_TEXT, (1, 1), 0, BTClibValueError("invalid after() value: 0")),
 }
 
 
 @pytest.mark.parametrize("fault", _THRESHOLD_FAULTS)
-@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+@pytest.mark.parametrize("wrapped", _WRAPPED)
 def test_an_unpickled_node_of_a_threshold_its_fragment_does_not_take_is_refused(
     wrapped: str, fault: str
 ) -> None:
     """With its build's message, before its type and bounds are asked.
 
-    Issue btclib-org/bip32-descriptors#286; issue
-    btclib-org/bip32-descriptors#284 describes these nodes.
+    Issues btclib-org/bip32-descriptors#284 and
+    btclib-org/bip32-descriptors#286.
     """
-    context, wrap = _WRAPPED[wrapped]
+    context, _ = _WRAPPED[wrapped]
     expression, path, threshold, refusal = _THRESHOLD_FAULTS[fault]
     first, second = (_X, _X2) if context == _TAPSCRIPT else (_C, _C2)
     root = _unpickled(miniscript.parse(expression.format(first, second), context))
     object.__setattr__(_node_at(root, path), "threshold", threshold)
-    with pytest.raises(BTClibValueError, match=f"^{re.escape(refusal)}$"):
-        wrap(root)
+    with pytest.raises(type(refusal), match=f"^{re.escape(str(refusal))}$"):
+        _outermost(wrapped, root)
 
 
 @pytest.mark.parametrize("name", _DERIVED_FIELDS)
