@@ -256,6 +256,9 @@ package = ["src/bip32_descriptors"]
 # builds are CI-only, read by fuzz.yml and by nothing a package installed
 # from the sdist runs
 git-only = [
+    # the bestpractices.dev answers, which nothing installed from the
+    # sdist reads
+    ".bestpractices.json",
     ".claude/",
     ".clusterfuzzlite/",
     ".gitattributes",
@@ -324,6 +327,10 @@ ignore-regex = '`[^`]*`'
 # glob syntax differs: "*/_data/*.json" matches at any depth for codespell
 # and one directory deep for typos
 extend-exclude = [
+    # the bestpractices.dev answers, byte for byte as the --seed mode
+    # of btclib-org/.github's .github/scripts/bestpractices.py writes
+    # them, where --write-changes would rewrite a word
+    ".bestpractices.json",
     "**/_data/*.json",
     "**/_data/*.csv",
     "**/_data/*.txt",
