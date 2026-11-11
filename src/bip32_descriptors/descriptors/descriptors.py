@@ -516,10 +516,7 @@ class MultiA:
             _assert_compressed(key)
             _assert_point(key)
         name = "sortedmulti_a" if self.sort else "multi_a"
-        # the count first, as Bitcoin Core checks it: a leaf of more keys
-        # than BIP387 allows is the count's fault whatever the threshold
-        if len(self.keys) > _MAX_MULTI_A_KEYS:
-            raise BTClibValueError(f"invalid n in k-of-n {name}: {len(self.keys)}")
+        _assert_multi_a_count(name, self.keys)
         if not 1 <= self.threshold <= len(self.keys):
             raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
 
@@ -3216,10 +3213,7 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
         ),
     )
     _assert_multisig_end(name, text, args)
-    # the count first, as Bitcoin Core checks it: a leaf of more keys
-    # than BIP387 allows is the count's fault whatever the threshold
-    if len(keys) > _MAX_MULTI_A_KEYS:
-        raise BTClibValueError(f"invalid n in k-of-n {name}: {len(keys)}")
+    _assert_multi_a_count(name, keys)
     if not 1 <= threshold <= len(keys):
         raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
     _assert_multipath_keys(lengths)
@@ -3557,6 +3551,16 @@ def _assert_multi_count(name: str, keys: tuple[KeyExpression, ...]) -> None:
     if len(keys) > MAX_PUBKEYS_PER_MULTISIG:
         err_msg = f"{name}() takes at most {MAX_PUBKEYS_PER_MULTISIG} keys"
         raise BTClibValueError(f"{err_msg}, {len(keys)} given")
+
+
+def _assert_multi_a_count(name: str, keys: tuple[KeyExpression, ...]) -> None:
+    """Refuse a ``multi_a()`` of more keys than BIP387 allows.
+
+    Bitcoin Core counts the keys before it checks the threshold, so a leaf
+    of too many keys is refused for its count whatever its threshold is.
+    """
+    if len(keys) > _MAX_MULTI_A_KEYS:
+        raise BTClibValueError(f"invalid n in k-of-n {name}: {len(keys)}")
 
 
 def _assert_multi_size(
