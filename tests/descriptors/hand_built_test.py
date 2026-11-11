@@ -326,6 +326,25 @@ def test_a_miniscript_holding_a_key_of_another_type_is_refused(
         )
 
 
+@pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "None"])
+def test_an_unpickled_node_holding_a_key_of_another_type_is_refused(
+    key: object,
+) -> None:
+    """In a ``tr()`` leaf and in a ``wsh()``, naming the type alone.
+
+    An unpickled node skips `Miniscript`'s own check of its keys.
+    """
+    err_msg = f"^invalid key type: {type(key).__name__}$"
+    leaf = _unpickled(miniscript.parse(f"pk({_X})", miniscript.TAPSCRIPT))
+    object.__setattr__(leaf.subs[0], "keys", (key,))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
+    node = _unpickled(miniscript.parse(f"pk({_C})", miniscript.P2WSH))
+    object.__setattr__(node.subs[0], "keys", (key,))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        WshDescriptor(MiniscriptDescriptor(node))
+
+
 @pytest.mark.parametrize(
     "forged,kind",
     [

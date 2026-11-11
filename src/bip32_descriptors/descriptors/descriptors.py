@@ -787,6 +787,17 @@ def _tapscript_node(node: object) -> Miniscript:
     return node
 
 
+def _assert_key_types(node: Miniscript) -> None:
+    """Refuse a node whose keys are not a tuple of KEY expressions.
+
+    `Miniscript` refuses them when it is built, but an unpickled node
+    skips that check, and a walk of its keys would read any value.
+    """
+    assert_type(node.keys, tuple, "keys")
+    for key in node.keys:
+        assert_type(key, KeyExpression, "key")
+
+
 def _assert_tree(tree: DescriptorTree) -> None:
     """Refuse a node of the wrong type, and a tree deeper than MAX_TREE_DEPTH.
 
@@ -815,6 +826,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
         # unpickled leaf holds there
         if in_leaf or isinstance(node, Miniscript):
             node = _tapscript_node(node)
+            _assert_key_types(node)
             if not in_leaf:
                 leaves.append(node)
             stack += [(sub, depth, True) for sub in node.subs]
@@ -1875,6 +1887,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
             context = miniscript.TAPSCRIPT if known else "another context"
             err_msg = f"not a P2WSH node: {_named_fragment(sub)} in {context}"
             raise BTClibValueError(err_msg)
+        _assert_key_types(sub)
         stack += sub.subs
 
 
