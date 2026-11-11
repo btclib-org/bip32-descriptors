@@ -1217,6 +1217,19 @@ def _unpickled_multi(keys: tuple[KeyExpression, ...]) -> Descriptor:
     return multi
 
 
+def _unpickled_wsh(inner: Descriptor) -> Descriptor:
+    """Return ``wsh(SCRIPT)``, unpickled.
+
+    `WshDescriptor` refuses an argument `parse` refuses inside ``wsh()``
+    when built, and unpickling skips that check, so the argument is given
+    to an unpickled copy.
+    """
+    parsed = _PARSED[WshDescriptor]
+    wsh: WshDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(wsh, "inner", inner)
+    return wsh
+
+
 _UNCOMPRESSED_HERE = "uncompressed public keys are not allowed here"
 # (wrapper, its argument, the refusal `parse` gives for their text)
 _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]] = [
@@ -1259,6 +1272,31 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
             " over the 520-byte push limit"
         ),
     ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_PARSED[WshDescriptor]),
+        "wsh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_PARSED[WpkhDescriptor]),
+        "wpkh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_multi(_KEYS)),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(PkDescriptor(_U_KEY)),
+        f"key 0: {_UNCOMPRESSED_HERE}",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_wsh(PkDescriptor(_U_KEY))),
+        "wsh() is not allowed inside wsh()",
+    ),
 ]
 _REFUSED_INSIDE_IDS = [
     "wsh-pk",
@@ -1270,6 +1308,11 @@ _REFUSED_INSIDE_IDS = [
     "sh-21-keys",
     "sh-547-bytes",
     "sh-531-bytes",
+    "sh-wsh-wsh",
+    "sh-wsh-wpkh",
+    "sh-wsh-21-keys",
+    "sh-wsh-uncompressed",
+    "sh-wsh-wsh-uncompressed",
 ]
 
 

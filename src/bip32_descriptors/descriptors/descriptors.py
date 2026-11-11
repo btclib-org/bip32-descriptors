@@ -1720,7 +1720,9 @@ class ShDescriptor(Descriptor):
     An argument `parse` refuses inside ``sh()`` by its function, by the
     size of its script or by the number of keys of a ``multi()`` is
     refused when built, with `parse`'s message, unless the argument is
-    invalid by itself, as `Descriptor` says.
+    invalid by itself, as `Descriptor` says. The argument of a ``wsh()``
+    argument is checked in turn, as ``wsh()`` checks it: an unpickled
+    ``wsh()`` skipped its own build.
     """
 
     inner: Descriptor
@@ -1731,6 +1733,9 @@ class ShDescriptor(Descriptor):
         assert_type(self.inner, Descriptor, "inner descriptor")
         _assert_inner(self.inner, _P2SH)
         _assert_embedded(self.inner, _P2SH)
+        if isinstance(self.inner, WshDescriptor):
+            _assert_inner(self.inner.inner, _P2WSH)
+            _assert_embedded(self.inner.inner, _P2WSH)
 
     @override
     def __str__(self) -> str:
