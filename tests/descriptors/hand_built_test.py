@@ -75,6 +75,10 @@ Issue btclib-org/bip32-descriptors#246. `TrDescriptor` refuses an
 unpickled `MultiA` leaf whose keys are not a tuple of `KeyExpression`,
 before it reads a key. Issue btclib-org/bip32-descriptors#249.
 
+`Miniscript`, `TrDescriptor` and `MiniscriptDescriptor` refuse a
+fragment that is a `str` subclass, which may hash as no `str` does, for
+its type. Issue btclib-org/bip32-descriptors#260.
+
 A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
 text `parse` refuses: its docstring says why. Issue
 btclib-org/bip32-descriptors#253.
@@ -751,6 +755,38 @@ def test_a_miniscript_fragment_of_another_type_is_refused(fragment: Any) -> None
     err_msg = f"^invalid fragment type: {type(fragment).__name__}$"
     with pytest.raises(BTClibTypeError, match=err_msg):
         replace(_OLDER, fragment=fragment)
+
+
+class _Unhashable(str):
+    """A `str` that no dict or set can look up."""
+
+    __slots__ = ()
+    __hash__ = None  # type: ignore[assignment]
+
+
+class _Subclass(str):
+    """A `str` in all but its type."""
+
+    __slots__ = ()
+
+
+@pytest.mark.parametrize("cls", [_Unhashable, _Subclass])
+def test_a_miniscript_fragment_of_a_str_subclass_is_refused(cls: type[str]) -> None:
+    """By `Miniscript`, and in an unpickled ``tr()`` leaf and ``wsh()``.
+
+    Issue btclib-org/bip32-descriptors#260.
+    """
+    err_msg = f"^invalid fragment type: {cls.__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        miniscript.Miniscript(cls("older"), miniscript.TAPSCRIPT, threshold=1)
+    leaf = _unpickled(miniscript.parse(f"pk({_X})", miniscript.TAPSCRIPT))
+    object.__setattr__(leaf.subs[0], "fragment", cls("pk_k"))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
+    node = _unpickled(miniscript.parse(f"pk({_C})", miniscript.P2WSH))
+    object.__setattr__(node.subs[0], "fragment", cls("pk_k"))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        MiniscriptDescriptor(node)
 
 
 @pytest.mark.parametrize("threshold", ["1", 1.0, True, None])
@@ -2599,7 +2635,7 @@ def test_a_node_of_a_fragment_holding_no_key_is_refused_holding_one() -> None:
     object.__setattr__(root.subs[1], "keys", (_KEY2,))
     with pytest.raises(BTClibValueError, match="^invalid number of keys in older: 1$"):
         TrDescriptor(_KEY, root)
-    object.__setattr__(root.subs[1], "fragment", ["older"])
+    object.__setattr__(root.subs[1], "fragment", _RANDOM_HEX)
     with pytest.raises(BTClibValueError, match="^invalid number of keys in a node: 1$"):
         TrDescriptor(_KEY, root)
 
