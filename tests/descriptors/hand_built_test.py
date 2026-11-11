@@ -64,9 +64,9 @@ A `MultiDescriptor` of more than three keys builds, and as a top-level
 descriptor writes a text `parse` refuses: its docstring says why. Issue
 btclib-org/bip32-descriptors#226.
 
-A `MiniscriptDescriptor` built at the top level is not refused, though
-`parse` takes one only inside ``wsh()``: `WshDescriptor` holds the same
-value. Issue btclib-org/bip32-descriptors#253.
+A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
+text `parse` refuses: its docstring says why. Issue
+btclib-org/bip32-descriptors#253.
 """
 
 from __future__ import annotations
@@ -593,14 +593,22 @@ def test_a_sane_miniscript_built_by_hand_parses_back() -> None:
 
 
 def test_a_top_level_miniscript_built_by_hand_does_not_parse_back() -> None:
-    """It builds, `parse` refuses its text as Core does, ``wsh()`` takes it."""
+    """`parse` takes a `MiniscriptDescriptor` only inside ``wsh()``.
+
+    One built at the top level gives its script, and `infer_descriptor`
+    answers the ``raw()`` of that script.
+    """
     node = miniscript.parse(f"and_v(v:pk({_C}),older(1))", miniscript.P2WSH)
     descriptor = MiniscriptDescriptor(node)
-    assert descriptor.script_pub_key().script == node.script()
+    script = descriptor.script_pub_key().script
+    assert script == node.script()
+    text = str(descriptor)
     with pytest.raises(BTClibValueError, match=MINISCRIPT_OUTSIDE):
-        parse(str(descriptor))
+        parse(text)
     wsh = WshDescriptor(descriptor)
     assert parse(str(wsh)) == wsh
+    raw = add_checksum(f"raw({script.hex()})")
+    assert infer_descriptor(script, Provider()) == raw
 
 
 @pytest.mark.parametrize(
