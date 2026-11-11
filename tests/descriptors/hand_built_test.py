@@ -52,9 +52,11 @@ one too, without the key's position in the ``tr()`` that `parse`
 names. Issue btclib-org/bip32-descriptors#221.
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse a node holding a number
-of keys its fragment does not take, with the node's own message,
-before its text is written, unless the node holds an uncompressed key:
-``tr()`` and ``wsh()`` refuse that key by its position, and a bare
+of keys its fragment does not take, with the node's own message, before
+its text is written: a multisig of the other context for its context,
+any other node for its number of keys. Where the descriptor also holds
+an uncompressed key and the node's text can be written, ``tr()`` and
+``wsh()`` refuse that key instead, by its position, and a bare
 `MiniscriptDescriptor` builds it. Issue btclib-org/bip32-descriptors#235.
 """
 
@@ -2119,12 +2121,13 @@ def test_an_uncompressed_rawtr_key_is_refused_when_built() -> None:
         replace(parsed, key=_U_KEY)
 
 
-# keys none of which is a key the tests above hold
+# keys that are none of `_KEY`, `_KEY2`, `_U_KEY` and `_KEYS`, which the
+# tests below hold beside them
 _X_KEYS = tuple(
     KeyExpression(pub_key=b"\x02" + PrvKeyData(i).pub.sec[1:], x_only=True)
-    for i in range(10, 1010)
+    for i in range(44, 1045)
 )
-_C_KEYS = tuple(KeyExpression(pub_key=PrvKeyData(i).pub.sec) for i in range(10, 31))
+_C_KEYS = tuple(KeyExpression(pub_key=PrvKeyData(i).pub.sec) for i in range(22, 44))
 _X_ONLY_HERE = "x-only public keys are allowed in a taproot key expression only"
 # each fragment holding keys, the number of keys over its limit, and the
 # expression it is read from in each context, with the path to its node
@@ -2248,6 +2251,83 @@ def test_a_key_is_refused_before_the_number_of_keys_of_its_node(
     err_msg = f"^{re.escape(refusal)}$"
     with pytest.raises(BTClibValueError, match=err_msg):
         parse(_TEMPLATES[wrapped].format(root))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(root)
+
+
+# (fragment, the keys of its node, the refusal `parse` gives in each
+# wrapper) where another node holds `_U_KEY`
+_KEY_ELSEWHERE = [
+    ("pk_k", 2, {"tr": "key 1", "wsh": "key 0", "sh-wsh": "key 0"}),
+    ("multi", 21, {"wsh": "key 0", "sh-wsh": "key 0"}),
+    ("multi_a", 1000, {"tr": "key 1"}),
+]
+
+
+@pytest.mark.parametrize(
+    "wrapped,fragment,number,position",
+    [
+        (wrapped, fragment, number, position)
+        for fragment, number, positions in _KEY_ELSEWHERE
+        for wrapped, position in positions.items()
+    ],
+)
+def test_a_key_another_node_holds_is_refused_before_the_number_of_keys(
+    wrapped: str, fragment: str, number: int, position: str
+) -> None:
+    """With the message `parse` gives, as main gives it.
+
+    The text of the node of the wrong count can be written, so the key
+    check of ``tr()`` or ``wsh()`` names the key, and a bare
+    `MiniscriptDescriptor` builds it. Issue
+    btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    root = _holding(fragment, context, own[1 : number + 1])
+    object.__setattr__(_node_at(root, (0, 0, 0)), "keys", (_U_KEY,))
+    err_msg = f"^{position}: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(_TEMPLATES[wrapped].format(root))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(root)
+    if context == _P2WSH:
+        assert str(MiniscriptDescriptor(root)) == str(root)
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_pk_k_holding_no_key_is_refused_beside_an_uncompressed_key(
+    wrapped: str,
+) -> None:
+    """For its number of keys: it has no text to write.
+
+    Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    root = _holding("pk_k", context, ())
+    object.__setattr__(_node_at(root, (0, 0, 0)), "keys", (_U_KEY,))
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in pk_k: 0$"):
+        wrap(root)
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_multisig_of_the_other_context_is_refused_before_its_keys(
+    wrapped: str,
+) -> None:
+    """For its context, as its build refuses it, even holding a refused key.
+
+    Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    if context == _TAPSCRIPT:
+        fragment, keys = "multi", (_U_KEY, *_X_KEYS[1:21])
+        err_msg = "^multi\\(\\) is not allowed in a tapscript$"
+    else:
+        fragment, keys = "multi_a", (_U_KEY, *_C_KEYS[1:2] * 999)
+        err_msg = "^multi_a\\(\\) is only allowed in a tapscript$"
+    root = _holding(fragment, context, keys)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(_node_at(root, (1,)), keys=keys)
     with pytest.raises(BTClibValueError, match=err_msg):
         wrap(root)
 

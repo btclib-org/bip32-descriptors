@@ -756,37 +756,47 @@ def _named_fragment(node: Miniscript) -> str:
     return fragment if known else "a node"
 
 
-def _assert_key_numbers(roots: Iterable[Miniscript]) -> None:
+def _assert_key_numbers(
+    roots: Iterable[Miniscript], keys: Iterable[KeyExpression]
+) -> None:
     """Refuse a node holding a number of keys its fragment does not take.
 
     Each root and every node below it, which a walk has already checked
-    for their type and context. An unpickled node skips `Miniscript`'s
-    own check, and the text of a ``pk_k`` or ``pk_h`` reads only its
-    first key. A fragment the library does not define is named "a node",
-    and taken to hold no key.
+    for their type and context; `keys` are every key the descriptor
+    holds. An unpickled node skips `Miniscript`'s own check, and the text
+    of a ``pk_k`` or ``pk_h`` reads only its first key. A fragment the
+    library does not define is named "a node", and taken to hold no key.
 
-    Such a node is refused as its build refuses it: for a multisig
-    outside its context, and otherwise for the number of keys. One
-    holding an uncompressed key is left to the key check of ``tr()`` or
-    ``wsh()``, which names the key by its position among the keys the
-    nodes hold.
+    Such a node is refused for a multisig outside its context, as its
+    build refuses it. Otherwise, where `keys` hold an uncompressed one,
+    in that node or any other, it is left to the key check of ``tr()`` or
+    ``wsh()``, which names the first such key by its position among the
+    keys the nodes hold; a bare `MiniscriptDescriptor` builds it. A
+    ``pk_k`` or ``pk_h`` holding no key, which has no text to write, is
+    not left so. A node not left so is refused for its number of keys.
     """
+    uncompressed = not all(key.is_compressed for key in keys)
     stack = list(roots)
     while stack:
         sub = stack.pop()
         stack += sub.subs
-        fragment = _named_fragment(sub)
-        try:
-            _assert_key_number(fragment, len(sub.keys))
-        except BTClibValueError:
-            tapscript = sub.context == miniscript.TAPSCRIPT
-            if (
-                fragment in {"multi", "multi_a"}
-                and (fragment == "multi_a") != tapscript
-            ):
-                raise BTClibValueError(_multisig_context_fault(fragment)) from None
-            if all(key.is_compressed for key in sub.keys):
-                raise
+        _assert_node_key_number(sub, uncompressed=uncompressed)
+
+
+def _assert_node_key_number(node: Miniscript, *, uncompressed: bool) -> None:
+    """Refuse one node as `_assert_key_numbers` says.
+
+    `uncompressed` says whether the descriptor holds an uncompressed key.
+    """
+    fragment = _named_fragment(node)
+    try:
+        _assert_key_number(fragment, len(node.keys))
+    except BTClibValueError:
+        tapscript = node.context == miniscript.TAPSCRIPT
+        if fragment in {"multi", "multi_a"} and (fragment == "multi_a") != tapscript:
+            raise BTClibValueError(_multisig_context_fault(fragment)) from None
+        if not uncompressed or (fragment in {"pk_k", "pk_h"} and not node.keys):
+            raise
 
 
 # True while `parse` builds a descriptor from a miniscript it has just
@@ -866,7 +876,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
         if depth == MAX_TREE_DEPTH:
             raise BTClibValueError(f"script tree deeper than {MAX_TREE_DEPTH}")
         stack += [(node[1], depth + 1, False), (node[0], depth + 1, False)]
-    _assert_key_numbers(leaves)
+    _assert_key_numbers(leaves, _tree_keys(tree))
     for leaf in leaves:
         name = _leaf_function(str(leaf))
         if name is not None:
@@ -1943,8 +1953,11 @@ class MiniscriptDescriptor(Descriptor):
     would parse back as that function.
 
     A node holding a number of keys its fragment does not take, as an
-    unpickled one can, is refused before its text is written, unless it
-    holds an uncompressed key, which ``wsh()`` refuses.
+    unpickled one can, is refused before its text is written: for its
+    context, where it is a multisig of the other one, and otherwise for
+    its number of keys, unless the miniscript holds an uncompressed key
+    and the node's text can be written. That key is left to ``wsh()``,
+    which refuses it by its position.
     """
 
     node: Miniscript
@@ -1957,7 +1970,7 @@ class MiniscriptDescriptor(Descriptor):
         # `Miniscript` refuses these keys in a P2WSH node when it is built,
         # and an unpickled node skips that check
         _assert_keys_outside_taproot(self.node.key_expressions)
-        _assert_key_numbers([self.node])
+        _assert_key_numbers([self.node], self.node.key_expressions)
         name = _function_read(str(self.node))
         if name is not None:
             err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
