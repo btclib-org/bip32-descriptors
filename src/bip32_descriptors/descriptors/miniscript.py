@@ -1171,10 +1171,12 @@ def _assert_derived(root: Miniscript) -> None:
     number as its build refuses them, without which nothing can be
     computed.
 
-    A tree holding a node of a number of keys its fragment does not take
-    is not asked: no `Miniscript` holds one, so there is no build to
-    compare it with. The caller has checked the type of every node, its
-    context, and the types of its fragment and its keys.
+    A multisig node of a number of keys its fragment does not take is not
+    asked: what its build computes depends on its number of keys, and no
+    build takes that number. The nodes above it are asked against what it
+    holds. Any other node is asked whatever its keys, which what its build
+    computes does not read. The caller has checked the type of every node,
+    its context, and the types of its fragment and its keys.
     """
     nodes: list[Miniscript] = []
     stack = [root]
@@ -1182,12 +1184,12 @@ def _assert_derived(root: Miniscript) -> None:
         node = stack.pop()
         nodes.append(node)
         stack += node.subs
-    for node in nodes:
-        try:
-            _assert_key_number(node.fragment, len(node.keys))
-        except BTClibValueError:
-            return
     for node in reversed(nodes):
+        if node.fragment in {"multi", "multi_a"}:
+            try:
+                _assert_key_number(node.fragment, len(node.keys))
+            except BTClibValueError:
+                continue
         node._assert_arity()
         node._assert_number()
         if _derived(node) != tuple(getattr(node, name) for name in _DERIVED):

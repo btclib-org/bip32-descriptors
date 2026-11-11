@@ -775,13 +775,14 @@ def _assert_key_numbers(
     Such a node is refused for a multisig outside its context, as its
     build refuses it. Otherwise, where `keys` hold an uncompressed one,
     in that node or any other, it is left to the checks that follow: the
-    text and the sanity of what holds it, then the key check of ``tr()``
-    or ``wsh()``, which names the first such key by its position there,
-    counted as `_assert_keys` counts it: every key of each node counts,
-    not only those its text writes. A bare `MiniscriptDescriptor` that
-    passes its other checks builds it. A ``pk_k`` or ``pk_h`` holding no
-    key, which has no text to write, is not left so. A node not left so
-    is refused for its number of keys.
+    text of what holds it, the type and bounds of its nodes as
+    `_assert_derived` says, and its sanity, then the key check of
+    ``tr()`` or ``wsh()``, which names the first such key by its position
+    there, counted as `_assert_keys` counts it: every key of each node
+    counts, not only those its text writes. A bare `MiniscriptDescriptor`
+    that passes its other checks builds it. A ``pk_k`` or ``pk_h`` holding
+    no key, which has no text to write, is not left so. A node not left
+    so is refused for its number of keys.
     """
     uncompressed = not all(key.is_compressed for key in keys)
     stack = list(roots)
@@ -2117,8 +2118,8 @@ class MiniscriptDescriptor(Descriptor):
     unpickled one can, is refused before the sanity check reads them, and
     so is one of a fragment the library does not define, or of a number
     of subexpressions or a threshold its fragment does not take. A
-    miniscript holding a node left as the paragraph above says is not
-    asked.
+    multisig node left as the paragraph above says is not asked, as
+    `_assert_derived` says, and the nodes above it are.
 
     `parse` takes one only inside ``wsh()``. The refusal of a top-level one
     is `parse`'s alone: the build cannot know whether the value will be

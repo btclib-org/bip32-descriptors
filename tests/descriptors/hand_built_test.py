@@ -149,7 +149,9 @@ btclib-org/bip32-descriptors#292.
 `TrDescriptor`, `MiniscriptDescriptor`, `WshDescriptor` and
 `ShDescriptor` refuse an unpickled node whose type and bounds are not
 those its build computes from its subexpressions, before its sanity is
-asked. Issue btclib-org/bip32-descriptors#286.
+asked. A node left to those checks for its number of keys, as above, is
+asked unless it is a multisig, and so are the nodes above it. Issue
+btclib-org/bip32-descriptors#286.
 """
 
 from __future__ import annotations
@@ -3923,12 +3925,20 @@ def _forged_and_v(context: str, *, forged: bool) -> miniscript.Miniscript:
 def _wrapped_forged_and_v(wrapped: str, *, forged: bool) -> Descriptor:
     """Return the descriptor `_WRAPPED` names, of `_forged_and_v`'s node.
 
+    As `_outermost` builds it.
+    """
+    context, _ = _WRAPPED[wrapped]
+    return _outermost(wrapped, _forged_and_v(context, forged=forged))
+
+
+def _outermost(wrapped: str, root: miniscript.Miniscript) -> Descriptor:
+    """Return the descriptor `_WRAPPED` names, of the node.
+
     A ``wsh()`` holds an unpickled `MiniscriptDescriptor`, and an
     ``sh()`` an unpickled ``wsh()`` of one, so that only the outermost
     build asks the node.
     """
-    context, wrap = _WRAPPED[wrapped]
-    root = _forged_and_v(context, forged=forged)
+    _, wrap = _WRAPPED[wrapped]
     if wrapped in {"tr", "bare"}:
         return wrap(root)
     parsed = cast("WshDescriptor", _MINISCRIPT).inner
@@ -3961,3 +3971,36 @@ def test_an_unpickled_node_its_subexpressions_do_not_type_is_refused(
     err_msg = "^and_v holds a type or bounds its build does not compute$"
     with pytest.raises(BTClibValueError, match=err_msg):
         _wrapped_forged_and_v(wrapped, forged=True)
+
+
+# the fields `Miniscript` computes when built
+_DERIVED_FIELDS = [each.name for each in fields(miniscript.Miniscript) if not each.init]
+
+
+@pytest.mark.parametrize("stale", ["and_v", "older"])
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_node_beside_an_uncompressed_key_is_asked_its_type_and_bounds(
+    wrapped: str, stale: str
+) -> None:
+    """Where the ``older(2)`` of `_forged_and_v` holds an uncompressed key.
+
+    Its text does not write the key, and `_assert_key_numbers` leaves it
+    to the checks that follow. Where `stale` is ``older``, it holds the
+    type and bounds of the ``v:pk()`` it replaces, which the ``and_v``
+    was built from. ``wsh()`` refuses the key first, by its position.
+    Issue btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    root = _forged_and_v(context, forged=True)
+    older = root.subs[0]
+    object.__setattr__(older, "keys", (_U_KEY,))
+    if stale == "older":
+        v_pk = _forged_and_v(context, forged=False).subs[0]
+        for name in _DERIVED_FIELDS:
+            object.__setattr__(older, name, getattr(v_pk, name))
+    if wrapped in {"wsh", "sh-wsh"}:
+        err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
+    else:
+        err_msg = f"^{stale} holds a type or bounds its build does not compute$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _outermost(wrapped, root)
