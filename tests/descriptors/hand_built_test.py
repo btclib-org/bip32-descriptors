@@ -41,6 +41,11 @@ btclib-org/bip32-descriptors#181.
 ``multi()`` keys `parse` refuses there. Issues
 btclib-org/bip32-descriptors#175 and btclib-org/bip32-descriptors#233.
 
+`ShDescriptor` refuses the argument of a ``wsh()`` argument as
+`WshDescriptor` refuses it, a value of the wrong type included, and by
+its function before its keys, as `parse` does. Issue
+btclib-org/bip32-descriptors#242.
+
 `WpkhDescriptor` and a P2WSH `Miniscript` node refuse an uncompressed
 key, `MultiDescriptor` no keys, more than 20 keys and a k outside 1 to
 n, and `RawPkhDescriptor` an empty hash and one of other than 20 bytes,
@@ -64,6 +69,12 @@ A `MultiDescriptor` of more than three keys builds, and as a top-level
 descriptor writes a text `parse` refuses: its docstring says why. Issue
 btclib-org/bip32-descriptors#226.
 
+`TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
+holding a key that is no `KeyExpression`, before they count its keys.
+Issue btclib-org/bip32-descriptors#246. `TrDescriptor` refuses an
+unpickled `MultiA` leaf whose keys are not a tuple of `KeyExpression`,
+before it reads a key. Issue btclib-org/bip32-descriptors#249.
+
 A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
 text `parse` refuses: its docstring says why. Issue
 btclib-org/bip32-descriptors#253.
@@ -81,6 +92,7 @@ import pytest
 from btclib import b58
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
+from btclib.script.limits import MAX_SCRIPT_SIZE
 from ecc.exceptions import EccValueError
 from typing_extensions import override
 
@@ -350,6 +362,26 @@ def test_a_miniscript_holding_a_key_of_another_type_is_refused(
             keys=(valid_key, key),  # type: ignore[arg-type]
             threshold=1,
         )
+
+
+@pytest.mark.parametrize("key", ["abc", 5, None], ids=["str", "int", "None"])
+def test_an_unpickled_node_holding_a_key_of_another_type_is_refused(
+    key: object,
+) -> None:
+    """In a ``tr()`` leaf and in a ``wsh()``, naming the type alone.
+
+    An unpickled node skips `Miniscript`'s own check of its keys. Issue
+    btclib-org/bip32-descriptors#246.
+    """
+    err_msg = f"^invalid key type: {type(key).__name__}$"
+    leaf = _unpickled(miniscript.parse(f"pk({_X})", miniscript.TAPSCRIPT))
+    object.__setattr__(leaf.subs[0], "keys", (key,))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
+    node = _unpickled(miniscript.parse(f"pk({_C})", miniscript.P2WSH))
+    object.__setattr__(node.subs[0], "keys", (key,))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        WshDescriptor(MiniscriptDescriptor(node))
 
 
 @pytest.mark.parametrize(
@@ -1264,6 +1296,13 @@ def _unpickled_multi(keys: tuple[KeyExpression, ...]) -> Descriptor:
     return multi
 
 
+def _unpickled_sortedmulti(keys: tuple[KeyExpression, ...]) -> Descriptor:
+    """Return ``sortedmulti(1,KEY,...)``, as `_unpickled_multi` does."""
+    multi = _unpickled_multi(keys)
+    object.__setattr__(multi, "sort", True)
+    return multi
+
+
 def _unpickled_wpkh(key: KeyExpression) -> Descriptor:
     """Return ``wpkh(KEY)``, unpickled.
 
@@ -1307,9 +1346,10 @@ def _unpickled_and_v_pk(first: KeyExpression, second: KeyExpression) -> Descript
 def _unpickled_wsh(inner: Descriptor) -> Descriptor:
     """Return ``wsh(INNER)``, unpickled.
 
-    `WshDescriptor` refuses the keys of an argument `parse` refuses
-    inside ``wsh()`` when built, and unpickling skips that check, so the
-    argument is given to an unpickled copy.
+    `WshDescriptor` refuses an argument `parse` refuses inside ``wsh()``
+    when built, unless the argument is invalid by itself, as `Descriptor`
+    says. Unpickling skips that check, so the argument is given to an
+    unpickled copy.
     """
     parsed = _PARSED[WshDescriptor]
     wsh: WshDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
@@ -1403,6 +1443,59 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
             (_unpickled_and_v_pk(_U_KEY, _KEY), f"key 0: {_UNCOMPRESSED_HERE}"),
         )
     ),
+    *(
+        (ShDescriptor, _unpickled_wsh(inner), f"key 0: {refusal}")
+        for key, refusal in ((_MUSIG, _MUSIG_HERE), (_KEY, _X_ONLY_HERE))
+        for inner in (_unpickled_multi((key,)), _unpickled_pk(key))
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_PARSED[WshDescriptor]),
+        "wsh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_PARSED[WpkhDescriptor]),
+        "wpkh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_multi(_KEYS)),
+        "multi() takes at most 20 keys, 21 given",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(PkDescriptor(_U_KEY)),
+        f"key 0: {_UNCOMPRESSED_HERE}",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_wsh(PkDescriptor(_U_KEY))),
+        "wsh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_wpkh(_U_KEY)),
+        "wpkh() is not allowed inside wsh()",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_multi(())),
+        "multi() takes a threshold and at least one key",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(_unpickled_sortedmulti(())),
+        "sortedmulti() takes a threshold and at least one key",
+    ),
+    (
+        ShDescriptor,
+        _unpickled_wsh(RawDescriptor(bytes(MAX_SCRIPT_SIZE + 1))),
+        (
+            f"raw() inside wsh() is {MAX_SCRIPT_SIZE + 1} bytes,"
+            f" over the {MAX_SCRIPT_SIZE}-byte limit"
+        ),
+    ),
 ]
 _REFUSED_INSIDE_IDS = [
     "wsh-pk",
@@ -1432,20 +1525,34 @@ _REFUSED_INSIDE_IDS = [
     "sh-wsh-compressed-uncompressed-musig",
     "sh-wsh-miniscript-uncompressed-then-musig",
     "sh-wsh-miniscript-uncompressed-then-x-only",
+    *(
+        f"sh-wsh-{inner}-{key}"
+        for key in _TAPROOT_ONLY_IDS
+        for inner in ("multi", "pk")
+    ),
+    "sh-wsh-wsh",
+    "sh-wsh-wpkh",
+    "sh-wsh-21-keys",
+    "sh-wsh-uncompressed",
+    "sh-wsh-wsh-uncompressed",
+    "sh-wsh-wpkh-uncompressed",
+    "sh-wsh-no-keys",
+    "sh-wsh-sortedmulti-no-keys",
+    "sh-wsh-raw-over-the-limit",
 ]
 
 
 @pytest.mark.parametrize(
     "wrapper,inner,refusal", _REFUSED_INSIDE, ids=_REFUSED_INSIDE_IDS
 )
-def test_a_key_or_size_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
+def test_what_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
     wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor, refusal: str
 ) -> None:
     """Built directly or by `replace`, with the message `parse` gives.
 
-    A ``raw()`` over the size limit is tried in `raw_descriptors_test`.
-    Issues btclib-org/bip32-descriptors#175 and
-    btclib-org/bip32-descriptors#233.
+    A ``raw()`` over the size limit, directly inside either, is tried in
+    `raw_descriptors_test`. Issues btclib-org/bip32-descriptors#175,
+    btclib-org/bip32-descriptors#233 and btclib-org/bip32-descriptors#242.
     """
     err_msg = f"^{re.escape(refusal)}$"
     with pytest.raises(BTClibValueError, match=err_msg):
@@ -1454,6 +1561,43 @@ def test_a_key_or_size_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
         wrapper(inner)
     parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
     with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
+class _NoText:
+    """A value whose `str` raises."""
+
+    @override
+    def __str__(self) -> str:
+        raise RuntimeError("no text")
+
+
+def test_a_value_with_no_text_raises_when_written_out() -> None:
+    """The control of the no-text case: `str` cannot write `_NoText` out."""
+    with pytest.raises(RuntimeError, match="^no text$"):
+        str(_NoText())
+
+
+@pytest.mark.parametrize(
+    "value",
+    [5, None, f"pk({_C})", _NoText()],
+    ids=["int", "none", "str", "no-text"],
+)
+def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
+    value: Any,
+) -> None:
+    """Refused with `WshDescriptor`'s type error, directly or by `replace`.
+
+    Issue btclib-org/bip32-descriptors#242.
+    """
+    err_msg = f"^invalid inner descriptor type: {type(value).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        WshDescriptor(value)
+    inner = _unpickled_wsh(value)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        ShDescriptor(inner)
+    parsed = cast("ShDescriptor", _PARSED[ShDescriptor])
+    with pytest.raises(BTClibTypeError, match=err_msg):
         replace(parsed, inner=inner)
 
 
@@ -2507,3 +2651,44 @@ def test_a_node_s_keys_given_as_a_list_are_refused(wrapped: str) -> None:
     object.__setattr__(_node_at(root, (1, 0)), "keys", [own[2]])
     with pytest.raises(BTClibTypeError, match="^invalid keys type: list$"):
         wrap(root)
+
+
+@pytest.mark.parametrize("first", [False, True], ids=["second", "first"])
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_key_of_another_type_is_refused_before_the_number_of_keys(
+    wrapped: str, first: bool
+) -> None:
+    """In a ``pk_k`` holding two keys, naming the type alone.
+
+    Issue btclib-org/bip32-descriptors#246.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    keys: tuple[object, ...] = ("abc", own[2]) if first else (own[2], "abc")
+    root = _holding("pk_k", context, cast("tuple[KeyExpression, ...]", keys))
+    with pytest.raises(BTClibTypeError, match="^invalid key type: str$"):
+        wrap(root)
+
+
+@pytest.mark.parametrize("beside", [False, True], ids=["alone", "beside"])
+@pytest.mark.parametrize(
+    "keys,err_msg",
+    [
+        ([_KEY2], "^invalid keys type: list$"),
+        (None, "^invalid keys type: NoneType$"),
+        ((_KEY2, "abc"), "^invalid key type: str$"),
+    ],
+    ids=["list", "None", "str"],
+)
+def test_an_unpickled_multi_a_leaf_holding_keys_of_another_type_is_refused(
+    keys: object, err_msg: str, beside: bool
+) -> None:
+    """Alone and beside a miniscript leaf, before anything reads a key.
+
+    An unpickled `MultiA` skips its own check of its keys. Issue
+    btclib-org/bip32-descriptors#249.
+    """
+    leaf = _unpickled_multi_a(cast("tuple[KeyExpression, ...]", keys))
+    other = miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        TrDescriptor(_KEY, (leaf, other) if beside else leaf)
