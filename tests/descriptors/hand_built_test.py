@@ -119,6 +119,11 @@ a ``wsh()`` argument, refuse an unpickled ``sh()`` or ``wsh()`` by its
 position without writing the text of what it holds, a subclass writing
 its text with their own `str` included. Issue
 btclib-org/bip32-descriptors#269.
+
+`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
+a ``wsh()`` argument, refuse an unpickled ``raw()`` whose script, or
+``rawpkh()`` whose key hash, is no bytes first, as its own build refuses
+it. Issue btclib-org/bip32-descriptors#271.
 """
 
 from __future__ import annotations
@@ -3536,3 +3541,40 @@ def test_a_parsed_or_inferred_wsh_miniscript_is_checked_for_sanity_once(
         asked.clear()
     ShDescriptor(WshDescriptor(MiniscriptDescriptor(miniscript.parse(expression))))
     assert len(asked) == 3
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, 5, "51", bytearray(b"\x51")],
+    ids=["none", "int", "str", "bytearray"],
+)
+@pytest.mark.parametrize("wrapped", ["wsh", "sh", "sh-wsh"])
+@pytest.mark.parametrize(
+    "parsed_type,field,what",
+    [
+        (RawDescriptor, "script", "script"),
+        (RawPkhDescriptor, "key_hash", "key hash"),
+    ],
+    ids=["raw", "rawpkh"],
+)
+def test_an_unpickled_raw_argument_holding_no_bytes_is_refused(
+    parsed_type: type[RawDescriptor | RawPkhDescriptor],
+    field: str,
+    what: str,
+    wrapped: str,
+    value: Any,
+) -> None:
+    """With its own build's message, before its text is written.
+
+    An unpickled ``raw()`` or ``rawpkh()`` skips its own check of its
+    bytes' type. Issue btclib-org/bip32-descriptors#271.
+    """
+    err_msg = f"^invalid {what} type: {type(value).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        parsed_type(value)
+    inner = pickle.loads(pickle.dumps(_PARSED[parsed_type]))  # noqa: S301
+    object.__setattr__(inner, field, value)
+    if wrapped == "sh-wsh":
+        inner = _unpickled_wsh(inner)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
