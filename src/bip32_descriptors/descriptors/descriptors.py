@@ -804,15 +804,16 @@ def _assert_node_key_number(node: Miniscript, *, uncompressed: bool) -> None:
             raise
 
 
-# True while `parse` builds a descriptor from a miniscript it has just
-# refused where not sane, with its `prv_keys`, so that the constructor does
-# not ask again without them
+# True while a descriptor is built from a miniscript already refused where
+# not sane: by `parse`, with its `prv_keys`, so that the constructor does
+# not ask again without them, and by `infer_descriptor`, so that ``wsh()``
+# and ``sh()`` do not ask again what the argument they wrap has just asked
 _SANE_BY_PARSE: ContextVar[bool] = ContextVar("_SANE_BY_PARSE", default=False)
 
 
 @contextmanager
 def _sane_by_parse() -> Iterator[None]:
-    """Build, inside the block, from the miniscript `parse` has checked."""
+    """Build, inside the block, from a miniscript whose sanity was asked."""
     token = _SANE_BY_PARSE.set(True)
     try:
         yield
@@ -1813,7 +1814,10 @@ class ShDescriptor(Descriptor):
     refuses it, a value of the wrong type included, and its function
     before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
     that check of its own. A miniscript there is refused as
-    `WshDescriptor` refuses one, before its text is written.
+    `WshDescriptor` refuses one, before ``sh()`` writes its text.
+
+    An unpickled ``multi()`` argument is refused for a field of the
+    wrong type and for its threshold as `WshDescriptor` says.
     """
 
     inner: Descriptor
@@ -1899,9 +1903,17 @@ class WshDescriptor(Descriptor):
     above, then for a node holding a number of keys its fragment does
     not take, with `MiniscriptDescriptor`'s message, as `parse` reads the
     keys of a node before it counts them. An unpickled one skips its own
-    check, and its text need not be written without raising. Its
-    sanity, and whether `parse` reads its text as a descriptor function,
-    are left to its own build.
+    check, and its text need not be written without raising.
+
+    Once those pass, a miniscript argument whose text `parse` reads as a
+    descriptor function, such as ``pk()``, and then one that is not sane,
+    is refused with `MiniscriptDescriptor`'s message: an unpickled one
+    skips that check of its own too.
+
+    An unpickled ``multi()`` argument skips its own check. A field of
+    the wrong type is refused first, as `_assert_multi_types` says, and
+    a threshold out of range whose text can be written in `parse`'s
+    order, as `_assert_embedded` says.
     """
 
     inner: Descriptor
@@ -1964,7 +1976,8 @@ class WshDescriptor(Descriptor):
 def _assert_wsh_argument(inner: Descriptor) -> None:
     """Refuse an argument of ``wsh()`` as `WshDescriptor` says.
 
-    Nothing here writes the text of a miniscript argument.
+    Nothing here writes the text of a miniscript argument before its nodes
+    and their number of keys pass.
     """
     _assert_inner(inner, _P2WSH)
     if isinstance(inner, MiniscriptDescriptor):
@@ -1973,6 +1986,7 @@ def _assert_wsh_argument(inner: Descriptor) -> None:
     _assert_embedded(inner, _P2WSH)
     if isinstance(inner, MiniscriptDescriptor):
         _assert_key_numbers([inner.node], inner.node.key_expressions)
+        _assert_miniscript_read(inner.node)
 
 
 def _assert_p2wsh(node: Miniscript) -> None:
@@ -2005,6 +2019,22 @@ def _assert_p2wsh(node: Miniscript) -> None:
         _assert_fragment_type(sub.fragment)
         _assert_key_types(sub)
         stack += sub.subs
+
+
+def _assert_miniscript_read(node: Miniscript) -> None:
+    """Refuse a P2WSH miniscript `parse` does not read back as itself.
+
+    One whose text `parse` reads as a descriptor function, such as
+    ``pk()``, and one `parse` refuses where not sane, unless its sanity
+    was asked already, as `_SANE_BY_PARSE` says. The last two checks of
+    `MiniscriptDescriptor`; `WshDescriptor` says when ``wsh()`` runs them.
+    """
+    name = _function_read(str(node))
+    if name is not None:
+        err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
+        raise BTClibValueError(err_msg)
+    if not _SANE_BY_PARSE.get():
+        _assert_sane_script(node)
 
 
 @dataclass(frozen=True)
@@ -2059,12 +2089,7 @@ class MiniscriptDescriptor(Descriptor):
         # and an unpickled node skips that check
         _assert_keys_outside_taproot(self.node.key_expressions)
         _assert_key_numbers([self.node], self.node.key_expressions)
-        name = _function_read(str(self.node))
-        if name is not None:
-            err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
-            raise BTClibValueError(err_msg)
-        if not _SANE_BY_PARSE.get():
-            _assert_sane_script(self.node)
+        _assert_miniscript_read(self.node)
 
     @override
     def __str__(self) -> str:
@@ -2131,13 +2156,7 @@ class MultiDescriptor(Descriptor):
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
-        if not is_integer(self.threshold):
-            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
-            raise BTClibTypeError(err_msg)
-        assert_type(self.keys, tuple, "keys")
-        for key in self.keys:
-            assert_type(key, KeyExpression, "key")
-        assert_type(self.sort, bool, "sort")
+        _assert_multi_types(self)
         name = "sortedmulti" if self.sort else "multi"
         _assert_uint32_threshold(name, self.threshold)
         if not self.keys:
@@ -2211,6 +2230,23 @@ class MultiDescriptor(Descriptor):
             err_msg = f"{len(found)} signatures of {self.threshold}, missing {missing}"
             raise BTClibValueError(err_msg)
         return [b"", *found[: self.threshold]]
+
+
+def _assert_multi_types(multi: MultiDescriptor) -> None:
+    """Refuse a field of a ``multi()`` of the wrong type.
+
+    The threshold, the keys, each key and the sort, in that order. An
+    unpickled ``multi()`` skips this check of its own, so `_assert_inner`
+    calls it too, before its function: `str` writes each field, and a
+    value of the wrong type need not write itself without raising.
+    """
+    if not is_integer(multi.threshold):
+        err_msg = f"invalid threshold type: {type(multi.threshold).__name__}"
+        raise BTClibTypeError(err_msg)
+    assert_type(multi.keys, tuple, "keys")
+    for key in multi.keys:
+        assert_type(key, KeyExpression, "key")
+    assert_type(multi.sort, bool, "sort")
 
 
 @dataclass(frozen=True)
@@ -2950,10 +2986,15 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
 
+    A ``multi()`` holding a field of the wrong type is refused first, as
+    `_assert_multi_types` says.
+
     A ``raw()`` script and a ``rawpkh()`` key hash that are no bytes are
     refused before the text is written, with their own build's message:
     an unpickled argument skips that check of its own.
     """
+    if isinstance(inner, MultiDescriptor):
+        _assert_multi_types(inner)
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
@@ -2972,11 +3013,16 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 def _assert_embedded(inner: Descriptor, context: str) -> None:
     """Refuse an argument `parse` refuses in `context` past its function.
 
-    A key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, a
-    ``multi()`` with no key, the number of keys of a ``multi()``, and
-    the size of its script, in `parse`'s order and with its messages:
-    key by key, each refused for its taproot spelling before its
-    compression. An unpickled argument skips its own check of the keys.
+    The threshold of a ``multi()`` that is negative or past 2**32-1, a
+    key ``tr()`` and ``rawtr()`` alone take, an uncompressed key, a
+    ``multi()`` with no key, the number of keys of a ``multi()``, its k
+    outside 1 to n, and the size of its script, in `parse`'s order and
+    with its messages: key by key, each refused for its taproot spelling
+    before its compression, and a negative threshold as `parse` refuses
+    the ``-`` that `str` writes. An unpickled argument skips its own
+    check of the keys and of the threshold. A threshold of more digits
+    than Python writes as text is not reached: `_assert_inner` raises
+    Python's `ValueError` writing it.
     ``sh()`` and ``wsh()`` hold no key of their own, so a key's position
     in `inner`, counted as `_assert_keys` counts it, is the one `parse`
     names.
@@ -2998,15 +3044,29 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
 
     for key in inner.key_expressions:
         assert_type(key, KeyExpression, "key")
-    _assert_keys(inner.key_expressions, check)
     if isinstance(inner, MultiDescriptor):
-        name = str(inner).partition("(")[0]
-        if not inner.keys:
-            raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
-        _assert_multi_count(name, inner.keys)
-        _assert_multi_size(name, inner.keys, context)
-    elif isinstance(inner, RawDescriptor):
+        _assert_multi_embedded(inner, context, check)
+        return
+    _assert_keys(inner.key_expressions, check)
+    if isinstance(inner, RawDescriptor):
         _assert_raw_size(inner.script, context)
+
+
+def _assert_multi_embedded(
+    multi: MultiDescriptor, context: str, check: Callable[[KeyExpression], None]
+) -> None:
+    """Refuse a ``multi()`` as `_assert_embedded` says, `check` its keys."""
+    name = str(multi).partition("(")[0]
+    if multi.threshold < 0:
+        raise BTClibValueError(f"invalid {name}() threshold: digits expected")
+    _assert_uint32_threshold(name, multi.threshold)
+    _assert_keys(multi.key_expressions, check)
+    if not multi.keys:
+        raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
+    _assert_multi_count(name, multi.keys)
+    if not 1 <= multi.threshold <= len(multi.keys):
+        raise BTClibValueError(f"invalid k in k-of-n {name}: {multi.threshold}")
+    _assert_multi_size(name, multi.keys, context)
 
 
 def _function_read(text: str) -> str | None:
@@ -3318,7 +3378,10 @@ def _parse_sh(
     args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
     inner = _parse_inner(args[0], _P2SH, network, prv_keys)
-    return ShDescriptor(inner, network=network)
+    # a miniscript inside the wsh() argument was refused where not sane as
+    # it was read
+    with _sane_by_parse():
+        return ShDescriptor(inner, network=network)
 
 
 def _parse_wsh(
@@ -3328,7 +3391,9 @@ def _parse_wsh(
         inner = _parse_inner(args[0], _P2WSH, network, prv_keys)
     except miniscript._CoreFallbackError as error:
         raise BTClibValueError("A function is needed within P2WSH") from error
-    return WshDescriptor(inner, network=network)
+    # a miniscript argument was refused where not sane as it was read
+    with _sane_by_parse():
+        return WshDescriptor(inner, network=network)
 
 
 def _parse_multi(
@@ -4781,14 +4846,20 @@ def _inferred(  # noqa: C901, PLR0911, PLR0912  # sourcery skip: low-code-qualit
             # refused for a multisig redeem script over the push limit,
             # which Core infers and `parse` refuses: the output is then
             # an addr(), as for any text that does not parse back
-            with suppress(BTClibValueError):
+            #
+            # a miniscript in the argument was refused where not sane as
+            # it was built
+            with suppress(BTClibValueError), _sane_by_parse():
                 return ShDescriptor(inner, network=network)
     if kind == "witness_v0_scripthash" and context in (_TOP, _P2SH):
         witness_script = known.scripts.get(ripemd160(data[0]))
         if witness_script is not None:
             inner = _inferred(witness_script, _P2WSH, known, network)
             if inner is not None:
-                return WshDescriptor(inner, network=network)
+                # a miniscript argument was refused where not sane as it was
+                # built
+                with _sane_by_parse():
+                    return WshDescriptor(inner, network=network)
     if kind == "witness_v1_taproot" and context == _TOP:
         tr = _inferred_tr(data[0], known, network)
         if tr is not None:
