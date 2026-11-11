@@ -1717,10 +1717,11 @@ class WpkhDescriptor(Descriptor):
 class ShDescriptor(Descriptor):
     """``sh(SCRIPT)``: the argument, p2sh-embedded, BIP381.
 
-    An argument `parse` refuses inside ``sh()`` by its function, by the
-    size of its script or by the number of keys of a ``multi()`` is
-    refused when built, with `parse`'s message, unless the argument is
-    invalid by itself, as `Descriptor` says.
+    An argument `parse` refuses inside ``sh()`` by its function, by a
+    key ``tr()`` and ``rawtr()`` alone take, by an uncompressed key of a
+    ``wsh()`` argument, by the size of its script or by the number of
+    keys of a ``multi()`` is refused when built, with `parse`'s message,
+    unless the argument is invalid by itself, as `Descriptor` says.
     """
 
     inner: Descriptor
@@ -1789,10 +1790,11 @@ class ShDescriptor(Descriptor):
 class WshDescriptor(Descriptor):
     """``wsh(SCRIPT)``: the argument, P2WSH-embedded, BIP382.
 
-    An argument `parse` refuses inside ``wsh()`` by its function, by an
-    uncompressed key, by the size of its script or by the number of keys
-    of a ``multi()`` is refused when built, with `parse`'s message, unless
-    the argument is invalid by itself, as `Descriptor` says.
+    An argument `parse` refuses inside ``wsh()`` by its function, by a
+    key ``tr()`` and ``rawtr()`` alone take, by an uncompressed key, by
+    the size of its script or by the number of keys of a ``multi()`` is
+    refused when built, with `parse`'s message, unless the argument is
+    invalid by itself, as `Descriptor` says.
     """
 
     inner: Descriptor
@@ -2817,8 +2819,12 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     skips its own check of the keys. ``sh()`` and ``wsh()`` hold no key
     of their own, so a key's position in `inner`, counted as
     `_assert_keys` counts it, is the one `parse` names.
+
+    Inside ``sh()``, the keys of a ``wsh()`` argument are refused
+    uncompressed too, because `parse` reads them in the ``wsh()``
+    context: an unpickled ``wsh()`` skips its own check of them.
     """
-    no_uncompressed = _no_uncompressed(context)
+    no_uncompressed = _no_uncompressed(context) or isinstance(inner, WshDescriptor)
 
     def check(key: KeyExpression) -> None:
         _assert_outside_taproot(key)
