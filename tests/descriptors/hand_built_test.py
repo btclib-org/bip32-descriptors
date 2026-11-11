@@ -2,7 +2,7 @@
 # Distributed under the MIT software license, see the accompanying
 # LICENSE file or https://opensource.org/license/mit for the full text.
 
-"""What `parse` never builds is refused when a descriptor is built by hand.
+"""Which of `parse`'s refusals a descriptor built by hand meets too.
 
 A field of the wrong type, in every `Descriptor` fragment and in a
 `MultiA`, leaves as a `BTClibTypeError`, and so does a `Miniscript`
@@ -51,6 +51,19 @@ each with `parse`'s message. Issue btclib-org/bip32-descriptors#200.
 one too, without the key's position in the ``tr()`` that `parse`
 names. Issue btclib-org/bip32-descriptors#221.
 
+`TrDescriptor` and `MiniscriptDescriptor` refuse a node holding a number
+of keys its fragment does not take, with the node's own message, before
+its text is written: a multisig of the other context for its context,
+any other node for its number of keys. Where the descriptor also holds
+an uncompressed key and the node's text can be written, the node is left
+to the descriptor's text and sanity checks; where it passes them,
+``tr()`` and ``wsh()`` refuse that key by its position, and a bare
+`MiniscriptDescriptor` builds it. Issue btclib-org/bip32-descriptors#235.
+
+A `MultiDescriptor` of more than three keys builds, and as a top-level
+descriptor writes a text `parse` refuses: its docstring says why. Issue
+btclib-org/bip32-descriptors#226.
+
 A `MiniscriptDescriptor` built at the top level is not refused, though
 `parse` takes one only inside ``wsh()``: `WshDescriptor` holds the same
 value. Issue btclib-org/bip32-descriptors#253.
@@ -72,7 +85,15 @@ from ecc.exceptions import EccValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32 import derive, rootxprv_from_seed, xpub_from_xprv
-from bip32_descriptors.descriptors import at_index, miniscript, normalized, parse
+from bip32_descriptors.descriptors import (
+    Provider,
+    add_checksum,
+    at_index,
+    infer_descriptor,
+    miniscript,
+    normalized,
+    parse,
+)
 from bip32_descriptors.descriptors import descriptors as descriptors_module
 from bip32_descriptors.descriptors.descriptors import (
     AddrDescriptor,
@@ -1893,6 +1914,30 @@ def test_a_negative_multi_threshold_is_refused_before_the_keys(sort: bool) -> No
         replace(parsed, threshold=-1, keys=_KEYS, sort=sort)
 
 
+@pytest.mark.parametrize("sort", [False, True])
+def test_a_bare_multi_of_four_keys_builds_and_writes_what_parse_refuses(
+    sort: bool,
+) -> None:
+    """The bound of three keys on a bare ``multi()`` is `parse`'s alone.
+
+    The same value is valid inside ``sh()`` and ``wsh()``, and
+    `infer_descriptor` answers the ``raw()`` of its bare script.
+    """
+    name = "sortedmulti" if sort else "multi"
+    multi = MultiDescriptor(1, _KEYS[:4], sort=sort)
+    script_pub_key = multi.script_pub_key()
+    assert script_pub_key.type == "p2ms"
+    text = str(multi)
+    err_msg = rf"^a bare {name}\(\) takes at most 3 keys, 4 given$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(text)
+    for wrapper in (ShDescriptor, WshDescriptor):
+        wrapped = wrapper(multi)
+        assert parse(str(wrapped)).script_pub_key() == wrapped.script_pub_key()
+    raw = add_checksum(f"raw({script_pub_key.script.hex()})")
+    assert infer_descriptor(script_pub_key.script, Provider()) == raw
+
+
 @pytest.mark.parametrize(
     "text,parse_refusal,build,build_refusal",
     [
@@ -2154,3 +2199,265 @@ def test_an_uncompressed_rawtr_key_is_refused_when_built() -> None:
     parsed = cast("RawTrDescriptor", _PARSED[RawTrDescriptor])
     with pytest.raises(BTClibValueError, match=err_msg):
         replace(parsed, key=_U_KEY)
+
+
+# keys that are none of `_KEY`, `_KEY2`, `_U_KEY` and `_KEYS`, which the
+# tests below hold beside them
+_X_KEYS = tuple(
+    KeyExpression(pub_key=b"\x02" + PrvKeyData(i).pub.sec[1:], x_only=True)
+    for i in range(44, 1045)
+)
+_C_KEYS = tuple(KeyExpression(pub_key=PrvKeyData(i).pub.sec) for i in range(22, 44))
+_X_ONLY_HERE = "x-only public keys are allowed in a taproot key expression only"
+# each fragment holding keys, the number of keys over its limit, and the
+# expression it is read from in each context, with the path to its node
+_HOLDING: dict[str, tuple[int, str, str, tuple[int, ...]]] = {
+    "pk_k": (2, "and_v(v:pk({}),pk({}))", "and_v(v:pk({}),pk({}))", (1, 0)),
+    "pk_h": (2, "and_v(v:pk({}),pkh({}))", "and_v(v:pk({}),pkh({}))", (1, 0)),
+    "multi": (21, "and_v(v:pk({}),multi_a(1,{}))", "and_v(v:pk({}),multi(1,{}))", (1,)),
+    "multi_a": (
+        1000,
+        "and_v(v:pk({}),multi_a(1,{}))",
+        "and_v(v:pk({}),multi(1,{}))",
+        (1,),
+    ),
+}
+
+
+def _holding(
+    fragment: str, context: str, keys: tuple[KeyExpression, ...]
+) -> miniscript.Miniscript:
+    """Return an unpickled node whose node of `fragment` holds `keys`.
+
+    Unpickling skips `Miniscript`'s own checks, so a multisig of the other
+    context is read as the context's own and given the fragment.
+    """
+    _, tapscript, p2wsh, path = _HOLDING[fragment]
+    expression = tapscript if context == _TAPSCRIPT else p2wsh
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    root = _unpickled(miniscript.parse(expression.format(own[0], own[1]), context))
+    node = root
+    for index in path:
+        node = node.subs[index]
+    object.__setattr__(node, "fragment", fragment)
+    object.__setattr__(node, "keys", keys)
+    return root
+
+
+def _node_at(
+    root: miniscript.Miniscript, path: tuple[int, ...]
+) -> miniscript.Miniscript:
+    """Return the node `path` reaches from `root`."""
+    for index in path:
+        root = root.subs[index]
+    return root
+
+
+_WRAPPED: dict[str, tuple[str, Callable[[miniscript.Miniscript], Descriptor]]] = {
+    "tr": (_TAPSCRIPT, lambda node: TrDescriptor(_KEY, node)),
+    "bare": (_P2WSH, MiniscriptDescriptor),
+    "wsh": (_P2WSH, lambda node: WshDescriptor(MiniscriptDescriptor(node))),
+    "sh-wsh": (
+        _P2WSH,
+        lambda node: ShDescriptor(WshDescriptor(MiniscriptDescriptor(node))),
+    ),
+}
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+@pytest.mark.parametrize("too_many", [False, True], ids=["no-key", "too-many"])
+@pytest.mark.parametrize("fragment", _HOLDING)
+def test_a_node_holding_a_number_of_keys_its_fragment_does_not_take_is_refused(
+    fragment: str, too_many: bool, wrapped: str
+) -> None:
+    """With the message the node's own build gives, before its text is written.
+
+    A multisig of the other context is refused for its context, as its
+    build refuses it. Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    keys = own[:1] * (_HOLDING[fragment][0] if too_many else 0)
+    if fragment in {"multi", "multi_a"} and (fragment == "multi") == (
+        context == _TAPSCRIPT
+    ):
+        err_msg = (
+            "multi() is not allowed in a tapscript"
+            if fragment == "multi"
+            else "multi_a() is only allowed in a tapscript"
+        )
+    else:
+        err_msg = f"invalid number of keys in {fragment}: {len(keys)}"
+    root = _holding(fragment, context, keys)
+    node = _node_at(root, _HOLDING[fragment][3])
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
+        replace(node, keys=keys)
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
+        wrap(root)
+
+
+# (fragment, context, the keys of its node, the refusal `parse` gives)
+_KEY_BEFORE_NUMBER = [
+    ("multi", _P2WSH, (_X_KEYS[0], *_C_KEYS[1:21]), f"key 1: {_X_ONLY_HERE}"),
+    ("multi", _P2WSH, (_U_KEY, *_C_KEYS[1:21]), f"key 1: {_UNCOMPRESSED_HERE}"),
+    ("pk_k", _P2WSH, (_X_KEYS[0], _C_KEYS[2]), f"key 1: {_X_ONLY_HERE}"),
+    ("pk_k", _P2WSH, (_U_KEY, _C_KEYS[2]), f"key 1: {_UNCOMPRESSED_HERE}"),
+    ("pk_h", _P2WSH, (_U_KEY, _C_KEYS[2]), f"key 1: {_UNCOMPRESSED_HERE}"),
+    ("pk_k", _TAPSCRIPT, (_U_KEY, _X_KEYS[2]), f"key 2: {_UNCOMPRESSED_HERE}"),
+    ("pk_h", _TAPSCRIPT, (_U_KEY, _X_KEYS[2]), f"key 2: {_UNCOMPRESSED_HERE}"),
+    ("multi_a", _TAPSCRIPT, (_U_KEY, *_X_KEYS[1:1000]), f"key 2: {_UNCOMPRESSED_HERE}"),
+]
+_TEMPLATES = {"tr": f"tr({_X},{{}})", "wsh": "wsh({})", "sh-wsh": "sh(wsh({}))"}
+
+
+@pytest.mark.parametrize(
+    "wrapped,fragment,keys,refusal",
+    [
+        (wrapped, fragment, keys, refusal)
+        for fragment, context, keys, refusal in _KEY_BEFORE_NUMBER
+        for wrapped in (("tr",) if context == _TAPSCRIPT else ("wsh", "sh-wsh"))
+    ],
+)
+def test_a_key_is_refused_before_the_number_of_keys_of_its_node(
+    wrapped: str, fragment: str, keys: tuple[KeyExpression, ...], refusal: str
+) -> None:
+    """With the message `parse` gives, naming the key by its position.
+
+    `parse` reads the keys of a node before it counts them, and so does
+    the node's own build. Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    root = _holding(fragment, context, keys)
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(_TEMPLATES[wrapped].format(root))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(root)
+
+
+# (fragment, the keys of its node, the refusal `parse` gives in each
+# wrapper) where another node holds `_U_KEY`
+_KEY_ELSEWHERE = [
+    ("pk_k", 2, {"tr": "key 1", "wsh": "key 0", "sh-wsh": "key 0"}),
+    ("multi", 21, {"wsh": "key 0", "sh-wsh": "key 0"}),
+    ("multi_a", 1000, {"tr": "key 1"}),
+]
+
+
+@pytest.mark.parametrize(
+    "wrapped,fragment,number,position",
+    [
+        (wrapped, fragment, number, position)
+        for fragment, number, positions in _KEY_ELSEWHERE
+        for wrapped, position in positions.items()
+    ],
+)
+def test_a_key_another_node_holds_is_refused_before_the_number_of_keys(
+    wrapped: str, fragment: str, number: int, position: str
+) -> None:
+    """With the message `parse` gives, as main gives it.
+
+    The text of the node of the wrong count can be written, so the key
+    check of ``tr()`` or ``wsh()`` names the key, and a bare
+    `MiniscriptDescriptor` builds it. Issue
+    btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    root = _holding(fragment, context, own[1 : number + 1])
+    object.__setattr__(_node_at(root, (0, 0, 0)), "keys", (_U_KEY,))
+    err_msg = f"^{position}: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(_TEMPLATES[wrapped].format(root))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(root)
+    if context == _P2WSH:
+        assert str(MiniscriptDescriptor(root)) == str(root)
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_pk_k_holding_no_key_is_refused_beside_an_uncompressed_key(
+    wrapped: str,
+) -> None:
+    """For its number of keys: it has no text to write.
+
+    Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    root = _holding("pk_k", context, ())
+    object.__setattr__(_node_at(root, (0, 0, 0)), "keys", (_U_KEY,))
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in pk_k: 0$"):
+        wrap(root)
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_multisig_of_the_other_context_is_refused_before_its_keys(
+    wrapped: str,
+) -> None:
+    """For its context, as its build refuses it, even holding a refused key.
+
+    Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    if context == _TAPSCRIPT:
+        fragment, keys = "multi", (_U_KEY, *_X_KEYS[1:21])
+        err_msg = "^multi\\(\\) is not allowed in a tapscript$"
+    else:
+        fragment, keys = "multi_a", (_U_KEY, *_C_KEYS[1:2] * 999)
+        err_msg = "^multi_a\\(\\) is only allowed in a tapscript$"
+    root = _holding(fragment, context, keys)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(_node_at(root, (1,)), keys=keys)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(root)
+
+
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+@pytest.mark.parametrize("fault", ["context", "type"])
+def test_a_node_s_type_or_context_is_refused_before_another_node_s_keys(
+    wrapped: str, fault: str
+) -> None:
+    """Wherever in the leaf either node is.
+
+    The keys are counted once every node has passed its type and its
+    context. Issue btclib-org/bip32-descriptors#235.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    root = _holding("pk_k", context, ())
+    other = _P2WSH if context == _TAPSCRIPT else _TAPSCRIPT
+    if fault == "context":
+        _with_context(_node_at(root, (0, 0, 0)), other)
+        error: type[Exception] = BTClibValueError
+        node = "tapscript" if context == _TAPSCRIPT else "P2WSH"
+        err_msg = f"^not a {node} node: pk_k in {other}$"
+    else:
+        object.__setattr__(_node_at(root, (0, 0)), "subs", ("not a node",))
+        error = BTClibTypeError
+        err_msg = "^invalid miniscript node type: str$"
+    with pytest.raises(error, match=err_msg):
+        wrap(root)
+
+
+def test_a_node_of_a_fragment_holding_no_key_is_refused_holding_one() -> None:
+    """Named "a node" where the library does not define its fragment.
+
+    Issue btclib-org/bip32-descriptors#235.
+    """
+    root = _unpickled(miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT))
+    object.__setattr__(root.subs[1], "keys", (_KEY2,))
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in older: 1$"):
+        TrDescriptor(_KEY, root)
+    object.__setattr__(root.subs[1], "fragment", ["older"])
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in a node: 1$"):
+        TrDescriptor(_KEY, root)
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_node_s_keys_given_as_a_list_are_refused(wrapped: str) -> None:
+    """As `Miniscript` refuses them. Issue btclib-org/bip32-descriptors#235."""
+    context, wrap = _WRAPPED[wrapped]
+    own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
+    root = _holding("pk_k", context, (own[2],))
+    object.__setattr__(_node_at(root, (1, 0)), "keys", [own[2]])
+    with pytest.raises(BTClibTypeError, match="^invalid keys type: list$"):
+        wrap(root)
