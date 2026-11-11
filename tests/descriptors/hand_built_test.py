@@ -55,8 +55,9 @@ names. Issue btclib-org/bip32-descriptors#221.
 of keys its fragment does not take, with the node's own message, before
 its text is written: a multisig of the other context for its context,
 any other node for its number of keys. Where the descriptor also holds
-an uncompressed key and the node's text can be written, ``tr()`` and
-``wsh()`` refuse that key instead, by its position, and a bare
+an uncompressed key and the node's text can be written, the node is left
+to the descriptor's text and sanity checks; where it passes them,
+``tr()`` and ``wsh()`` refuse that key by its position, and a bare
 `MiniscriptDescriptor` builds it. Issue btclib-org/bip32-descriptors#235.
 """
 

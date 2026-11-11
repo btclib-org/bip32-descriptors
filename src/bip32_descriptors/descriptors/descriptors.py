@@ -769,11 +769,13 @@ def _assert_key_numbers(
 
     Such a node is refused for a multisig outside its context, as its
     build refuses it. Otherwise, where `keys` hold an uncompressed one,
-    in that node or any other, it is left to the key check of ``tr()`` or
-    ``wsh()``, which names the first such key by its position among the
-    keys the nodes hold; a bare `MiniscriptDescriptor` builds it. A
-    ``pk_k`` or ``pk_h`` holding no key, which has no text to write, is
-    not left so. A node not left so is refused for its number of keys.
+    in that node or any other, it is left to the checks that follow: the
+    text and the sanity of what holds it, then the key check of ``tr()``
+    or ``wsh()``, which names the first such key by its position among
+    the keys the nodes hold. A bare `MiniscriptDescriptor` that passes
+    its other checks builds it. A ``pk_k`` or ``pk_h`` holding no key,
+    which has no text to write, is not left so. A node not left so is
+    refused for its number of keys.
     """
     uncompressed = not all(key.is_compressed for key in keys)
     stack = list(roots)
@@ -1956,8 +1958,9 @@ class MiniscriptDescriptor(Descriptor):
     unpickled one can, is refused before its text is written: for its
     context, where it is a multisig of the other one, and otherwise for
     its number of keys, unless the miniscript holds an uncompressed key
-    and the node's text can be written. That key is left to ``wsh()``,
-    which refuses it by its position.
+    and the node's text can be written: the node is then left to the
+    text and sanity checks above, and the key to ``wsh()``, which refuses
+    it by its position.
     """
 
     node: Miniscript
