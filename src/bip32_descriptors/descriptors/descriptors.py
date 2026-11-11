@@ -1813,7 +1813,7 @@ class ShDescriptor(Descriptor):
     A `ShDescriptor` argument whose class writes its text with
     `ShDescriptor`'s own `str` is refused for its position without
     writing what it holds, as `_assert_inner` says, unless it is a
-    `WshDescriptor` too: its argument is then refused first, as the next
+    `WshDescriptor` too: its argument is then checked first, as the next
     paragraph says.
 
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`

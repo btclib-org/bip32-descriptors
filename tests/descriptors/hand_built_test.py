@@ -114,10 +114,9 @@ message, once its nodes and keys pass. They do not ask again the sanity
 of one `parse` or `infer_descriptor` has read. Issue
 btclib-org/bip32-descriptors#267.
 
-`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
-a ``wsh()`` argument, refuse an unpickled ``sh()`` or ``wsh()`` by its
-position without writing the text of what it holds, a subclass writing
-its text with their own `str` included. Issue
+`WshDescriptor` and `ShDescriptor` refuse an unpickled ``sh()`` or
+``wsh()`` argument in a position `parse` refuses it without writing the
+text of what it holds, as their docstrings say. Issue
 btclib-org/bip32-descriptors#269.
 
 `WshDescriptor`, and `ShDescriptor` for its argument and for one inside
