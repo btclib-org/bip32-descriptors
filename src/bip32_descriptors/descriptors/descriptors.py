@@ -2907,6 +2907,9 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     The key of a ``wpkh()`` argument is refused uncompressed in any
     context, because `parse` reads it compressed only: an unpickled
     ``wpkh()`` skips its own check of it.
+
+    Each key is refused first if it is no `KeyExpression`, which an
+    unpickled argument skips the check of too.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(
         inner, (WshDescriptor, WpkhDescriptor)
@@ -2917,6 +2920,8 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
         if no_uncompressed:
             _assert_compressed(key)
 
+    for key in inner.key_expressions:
+        assert_type(key, KeyExpression, "key")
     _assert_keys(inner.key_expressions, check)
     if isinstance(inner, MultiDescriptor):
         name = str(inner).partition("(")[0]
