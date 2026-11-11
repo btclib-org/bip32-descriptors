@@ -91,6 +91,10 @@ btclib-org/bip32-descriptors#253.
 a key that is no `KeyExpression`, after its function and before its
 other keys, their number and its script size. Issue
 btclib-org/bip32-descriptors#257.
+
+`ShDescriptor` and `WshDescriptor` refuse an unpickled ``sh()`` or
+``wsh()`` argument by its position without writing the text of what it
+holds. Issue btclib-org/bip32-descriptors#269.
 """
 
 from __future__ import annotations
@@ -1701,6 +1705,69 @@ def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
         ShDescriptor(inner)
     parsed = cast("ShDescriptor", _PARSED[ShDescriptor])
     with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
+def _unpickled_sh(inner: Descriptor) -> Descriptor:
+    """Return ``sh(INNER)``, unpickled, as `_unpickled_wsh` does."""
+    parsed = _PARSED[ShDescriptor]
+    sh: ShDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(sh, "inner", inner)
+    return sh
+
+
+def _keyless_pk_k() -> Descriptor:
+    """Return ``and_v(v:pk(KEY),pk())``, unpickled, its second key removed."""
+    ms = _unpickled_and_v_pk(_C_KEY, _C_KEY)
+    assert isinstance(ms, MiniscriptDescriptor)
+    object.__setattr__(ms.node.subs[1].subs[0], "keys", ())
+    return ms
+
+
+def test_a_pk_k_of_no_key_raises_when_written_out() -> None:
+    """The control of the keyless case: `str` cannot write it out."""
+    with pytest.raises(IndexError, match="^tuple index out of range$"):
+        str(_keyless_pk_k())
+
+
+@pytest.mark.parametrize(
+    "wrapper,inner,refusal",
+    [
+        (
+            WshDescriptor,
+            _unpickled_sh(_keyless_pk_k()),
+            "sh() is not allowed inside wsh()",
+        ),
+        (
+            WshDescriptor,
+            _unpickled_wsh(_keyless_pk_k()),
+            "wsh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_wsh(_unpickled_wsh(_keyless_pk_k())),
+            "wsh() is not allowed inside wsh()",
+        ),
+        (
+            ShDescriptor,
+            _unpickled_sh(_keyless_pk_k()),
+            "sh() is not allowed inside sh()",
+        ),
+    ],
+    ids=["wsh-sh", "wsh-wsh", "sh-wsh-wsh", "sh-sh"],
+)
+def test_an_unpickled_sh_or_wsh_is_refused_by_position_without_its_text(
+    wrapper: type[ShDescriptor | WshDescriptor], inner: Descriptor, refusal: str
+) -> None:
+    """Refused by position, though what it holds writes no text.
+
+    Directly or by `replace`. Issue btclib-org/bip32-descriptors#269.
+    """
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(inner)
+    parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
+    with pytest.raises(BTClibValueError, match=err_msg):
         replace(parsed, inner=inner)
 
 

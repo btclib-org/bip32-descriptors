@@ -2927,12 +2927,21 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     `parse` names for it. A name `_PARSERS` does not hold, as a subclass
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
+
+    A ``sh()`` or a ``wsh()``, of its exact type, is named by its type
+    without writing its text: an unpickled one can hold an argument whose
+    text cannot be written. A subclass is still named by its `str`.
     """
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
         return
-    name = str(inner).partition("(")[0]
+    if type(inner) is ShDescriptor:
+        name = "sh"
+    elif type(inner) is WshDescriptor:
+        name = "wsh"
+    else:
+        name = str(inner).partition("(")[0]
     if name not in _PARSERS:
         err_msg = f"{type(inner).__name__} writes no function parse reads"
         raise BTClibValueError(f"{err_msg} inside {context}")
