@@ -1839,6 +1839,10 @@ class _PlainWsh(WshDescriptor):
     """A subclass writing its text with `WshDescriptor`'s own `str`."""
 
 
+class _ShAndWsh(ShDescriptor, WshDescriptor):
+    """Both, writing its text with `ShDescriptor`'s own `str`."""
+
+
 def _unpickled_holding(
     cls: type[ShDescriptor | WshDescriptor], inner: Descriptor
 ) -> Descriptor:
@@ -1906,6 +1910,11 @@ def test_a_pk_k_of_no_key_raises_when_written_out() -> None:
             _unpickled_holding(_PlainSh, _keyless_pk_k()),
             "sh() is not allowed inside sh()",
         ),
+        (
+            WshDescriptor,
+            _unpickled_holding(_ShAndWsh, _keyless_pk_k()),
+            "sh() is not allowed inside wsh()",
+        ),
     ],
     ids=[
         "wsh-sh",
@@ -1916,6 +1925,7 @@ def test_a_pk_k_of_no_key_raises_when_written_out() -> None:
         "wsh-subclass-sh",
         "wsh-subclass-wsh",
         "sh-subclass-sh",
+        "wsh-sh-and-wsh",
     ],
 )
 def test_an_unpickled_sh_or_wsh_is_refused_by_position_without_its_text(
@@ -1931,6 +1941,36 @@ def test_an_unpickled_sh_or_wsh_is_refused_by_position_without_its_text(
     parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
     with pytest.raises(BTClibValueError, match=err_msg):
         replace(parsed, inner=inner)
+
+
+def test_an_sh_that_is_a_wsh_too_is_refused_for_its_argument_inside_sh() -> None:
+    """As `ShDescriptor` refuses the argument of a ``wsh()`` argument, first."""
+    inner = _unpickled_holding(_ShAndWsh, _keyless_pk_k())
+    with pytest.raises(BTClibValueError, match="^invalid number of keys in pk_k: 0$"):
+        ShDescriptor(inner)
+
+
+class _BorrowSh(PkDescriptor):
+    """A ``pk()`` borrowing `ShDescriptor`'s `str`, holding no argument."""
+
+    __str__ = ShDescriptor.__str__
+
+
+class _BorrowWsh(PkDescriptor):
+    """A ``pk()`` borrowing `WshDescriptor`'s `str`, holding no argument."""
+
+    __str__ = WshDescriptor.__str__
+
+
+@pytest.mark.parametrize("wrapper", _WRAPPERS, ids=lambda cls: cls.__name__)
+@pytest.mark.parametrize("cls", [_BorrowSh, _BorrowWsh], ids=lambda cls: cls.__name__)
+def test_a_class_borrowing_the_str_of_sh_or_wsh_is_named_by_its_text(
+    cls: type[PkDescriptor], wrapper: type[ShDescriptor | WshDescriptor]
+) -> None:
+    """Not by the `str` it borrows: writing its text raises, as it would."""
+    err_msg = f"^'{cls.__name__}' object has no attribute 'inner'$"
+    with pytest.raises(AttributeError, match=err_msg):
+        wrapper(cls(_C_KEY))
 
 
 @pytest.mark.parametrize(
