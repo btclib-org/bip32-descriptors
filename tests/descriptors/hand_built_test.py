@@ -4122,3 +4122,40 @@ def test_an_unpickled_node_of_more_subexpressions_than_it_takes_is_refused(
     err_msg = "^and_v takes 2 subexpressions, 3 given$"
     with pytest.raises(BTClibValueError, match=err_msg):
         _outermost(wrapped, root)
+
+
+# (an expression of two keys, the path to the node given `threshold`, and
+# the refusal its build gives)
+_THRESHOLD_FAULTS = {
+    "thresh-3-of-2": (
+        "thresh(2,pk({}),s:pk({}))",
+        (),
+        3,
+        "invalid thresh() threshold: 3 of 2",
+    ),
+    "older-0": (
+        "and_v(v:pk({}),and_v(v:pk({}),older(1)))",
+        (1, 1),
+        0,
+        "invalid older() value: 0",
+    ),
+}
+
+
+@pytest.mark.parametrize("fault", _THRESHOLD_FAULTS)
+@pytest.mark.parametrize("wrapped", ["tr", "bare"])
+def test_an_unpickled_node_of_a_threshold_its_fragment_does_not_take_is_refused(
+    wrapped: str, fault: str
+) -> None:
+    """With its build's message, before its type and bounds are asked.
+
+    Issue btclib-org/bip32-descriptors#286; issue
+    btclib-org/bip32-descriptors#284 describes these nodes.
+    """
+    context, wrap = _WRAPPED[wrapped]
+    expression, path, threshold, refusal = _THRESHOLD_FAULTS[fault]
+    first, second = (_X, _X2) if context == _TAPSCRIPT else (_C, _C2)
+    root = _unpickled(miniscript.parse(expression.format(first, second), context))
+    object.__setattr__(_node_at(root, path), "threshold", threshold)
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(refusal)}$"):
+        wrap(root)
