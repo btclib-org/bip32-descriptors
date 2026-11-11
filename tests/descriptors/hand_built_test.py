@@ -69,6 +69,10 @@ holding a key that is no `KeyExpression`, before they count its keys.
 Issue btclib-org/bip32-descriptors#246. `TrDescriptor` refuses an
 unpickled `MultiA` leaf whose keys are not a tuple of `KeyExpression`,
 before it reads a key. Issue btclib-org/bip32-descriptors#249.
+
+A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
+text `parse` refuses: its docstring says why. Issue
+btclib-org/bip32-descriptors#253.
 """
 
 from __future__ import annotations
@@ -117,6 +121,7 @@ from bip32_descriptors.descriptors.descriptors import (
     WshDescriptor,
 )
 from bip32_descriptors.descriptors.key_expression import KeyExpression
+from tests.descriptors import MINISCRIPT_OUTSIDE
 from tests.secret_free import assert_secret_free
 
 _X = PrvKeyData(1).pub.sec.hex()[2:]
@@ -611,6 +616,25 @@ def test_a_sane_miniscript_built_by_hand_parses_back() -> None:
         MiniscriptDescriptor(miniscript.parse(f"and_v(v:pk({_C2}),pk({_C}))"))
     )
     assert parse(str(wsh)) == wsh
+
+
+def test_a_top_level_miniscript_built_by_hand_does_not_parse_back() -> None:
+    """`parse` takes a `MiniscriptDescriptor` only inside ``wsh()``.
+
+    One built at the top level gives its script, and `infer_descriptor`
+    answers the ``raw()`` of that script.
+    """
+    node = miniscript.parse(f"and_v(v:pk({_C}),older(1))", miniscript.P2WSH)
+    descriptor = MiniscriptDescriptor(node)
+    script = descriptor.script_pub_key().script
+    assert script == node.script()
+    text = str(descriptor)
+    with pytest.raises(BTClibValueError, match=MINISCRIPT_OUTSIDE):
+        parse(text)
+    wsh = WshDescriptor(descriptor)
+    assert parse(str(wsh)) == wsh
+    raw = add_checksum(f"raw({script.hex()})")
+    assert infer_descriptor(script, Provider()) == raw
 
 
 @pytest.mark.parametrize(
