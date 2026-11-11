@@ -1806,6 +1806,11 @@ class ShDescriptor(Descriptor):
     refuses it, a value of the wrong type included, and its function
     before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
     that check of its own.
+
+    The keys of a ``multi()`` argument, and of one inside a ``wsh()``
+    argument, are refused as `MultiDescriptor` refuses them when they are
+    no tuple, before anything writes the argument out: an unpickled
+    ``multi()`` skips that check of its own.
     """
 
     inner: Descriptor
@@ -1814,10 +1819,14 @@ class ShDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
+        if isinstance(self.inner, MultiDescriptor):
+            assert_type(self.inner.keys, tuple, "keys")
         if isinstance(self.inner, WshDescriptor):
             # before anything writes the argument out: a value of the wrong
             # type need not write itself without raising
             assert_type(self.inner.inner, Descriptor, "inner descriptor")
+            if isinstance(self.inner.inner, MultiDescriptor):
+                assert_type(self.inner.inner.keys, tuple, "keys")
         _assert_inner(self.inner, _P2SH)
         if isinstance(self.inner, WshDescriptor):
             _assert_inner(self.inner.inner, _P2WSH)
@@ -1886,6 +1895,10 @@ class WshDescriptor(Descriptor):
     the size of its script or by the number of keys of a ``multi()`` is
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
+
+    The keys of a ``multi()`` argument are refused as `MultiDescriptor`
+    refuses them when they are no tuple, before anything writes the
+    argument out: an unpickled ``multi()`` skips that check of its own.
     """
 
     inner: Descriptor
@@ -1894,6 +1907,8 @@ class WshDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
+        if isinstance(self.inner, MultiDescriptor):
+            assert_type(self.inner.keys, tuple, "keys")
         _assert_inner(self.inner, _P2WSH)
         _assert_embedded(self.inner, _P2WSH)
 

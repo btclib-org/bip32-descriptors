@@ -74,6 +74,9 @@ holding a key that is no `KeyExpression`, before they count its keys.
 Issue btclib-org/bip32-descriptors#246. `TrDescriptor` refuses an
 unpickled `MultiA` leaf whose keys are not a tuple of `KeyExpression`,
 before it reads a key. Issue btclib-org/bip32-descriptors#249.
+`WshDescriptor` and `ShDescriptor` refuse an unpickled ``multi()``
+argument, and one inside a ``wsh()`` argument, whose keys are no tuple,
+before they write it out. Issue btclib-org/bip32-descriptors#264.
 
 A `MiniscriptDescriptor` builds, and as a top-level descriptor writes a
 text `parse` refuses: its docstring says why. Issue
@@ -1599,6 +1602,32 @@ def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
     parsed = cast("ShDescriptor", _PARSED[ShDescriptor])
     with pytest.raises(BTClibTypeError, match=err_msg):
         replace(parsed, inner=inner)
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [WshDescriptor, ShDescriptor, lambda multi: ShDescriptor(_unpickled_wsh(multi))],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+@pytest.mark.parametrize(
+    "unpickled", [_unpickled_multi, _unpickled_sortedmulti], ids=["multi", "sorted"]
+)
+@pytest.mark.parametrize("keys", [None, 5, [_C_KEY]], ids=["None", "int", "list"])
+def test_an_unpickled_multi_holding_keys_of_another_type_is_refused(
+    keys: object,
+    unpickled: Callable[[tuple[KeyExpression, ...]], Descriptor],
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """As `MultiDescriptor` refuses them, before the argument is written out.
+
+    Issue btclib-org/bip32-descriptors#264.
+    """
+    err_msg = f"^invalid keys type: {type(keys).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        MultiDescriptor(1, cast("tuple[KeyExpression, ...]", keys))
+    multi = unpickled(cast("tuple[KeyExpression, ...]", keys))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        wrap(multi)
 
 
 @pytest.mark.parametrize(
