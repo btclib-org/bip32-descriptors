@@ -836,17 +836,27 @@ def _tapscript_node(node: object) -> Miniscript:
     return node
 
 
-def _assert_key_types(node: Miniscript) -> None:
+def _assert_key_types(node: Miniscript | MultiA) -> None:
     """Refuse a node whose keys are not a tuple of KEY expressions.
 
-    `Miniscript` refuses them when it is built, but an unpickled node
-    skips that check. A walk calls this where it reaches the node, before
-    anything reads a key, so the refusal comes before a fault of any node
-    the walk reaches later.
+    `Miniscript` and `MultiA` refuse them when they are built, but an
+    unpickled one skips that check. A walk calls this where it reaches
+    the node, before anything reads a key, so the refusal comes before a
+    fault of any node the walk reaches later.
     """
     assert_type(node.keys, tuple, "keys")
     for key in node.keys:
         assert_type(key, KeyExpression, "key")
+
+
+def _assert_tree_leaf(node: object) -> None:
+    """Refuse a tree leaf of the wrong type, and a `MultiA` one's keys.
+
+    The keys as `_assert_key_types` refuses them.
+    """
+    assert_type(node, _TREE_NODE_TYPES, "script tree node")
+    if isinstance(node, MultiA):
+        _assert_key_types(node)
 
 
 def _assert_tree(tree: DescriptorTree) -> None:
@@ -862,8 +872,8 @@ def _assert_tree(tree: DescriptorTree) -> None:
     BIP342 reads a 33-byte key as an unknown public key type, which any
     non-empty signature satisfies.
 
-    A miniscript node is refused where its keys are not a tuple of KEY
-    expressions, as `_assert_key_types` says.
+    A miniscript node and a `MultiA` leaf are refused where their keys are
+    not a tuple of KEY expressions, as `_assert_key_types` says.
 
     Once the walk is done, so that a node of the wrong type or context is
     named first, a miniscript leaf is refused where any of its nodes holds
@@ -888,7 +898,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
             stack += [(sub, depth, True) for sub in node.subs]
             continue
         if not isinstance(node, tuple):
-            assert_type(node, _TREE_NODE_TYPES, "script tree node")
+            _assert_tree_leaf(node)
             continue
         if len(node) != 2:
             err_msg = f"a script tree branch takes two subtrees, {len(node)} given"

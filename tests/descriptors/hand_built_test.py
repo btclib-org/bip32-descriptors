@@ -62,7 +62,9 @@ to the descriptor's text and sanity checks; where it passes them,
 
 `TrDescriptor` and `MiniscriptDescriptor` refuse an unpickled node
 holding a key that is no `KeyExpression`, before they count its keys.
-Issue btclib-org/bip32-descriptors#246.
+Issue btclib-org/bip32-descriptors#246. `TrDescriptor` refuses an
+unpickled `MultiA` leaf whose keys are not a tuple of `KeyExpression`,
+before it reads a key. Issue btclib-org/bip32-descriptors#249.
 """
 
 from __future__ import annotations
@@ -2450,3 +2452,27 @@ def test_a_key_of_another_type_is_refused_before_the_number_of_keys(
     root = _holding("pk_k", context, cast("tuple[KeyExpression, ...]", keys))
     with pytest.raises(BTClibTypeError, match="^invalid key type: str$"):
         wrap(root)
+
+
+@pytest.mark.parametrize("beside", [False, True], ids=["alone", "beside"])
+@pytest.mark.parametrize(
+    "keys,err_msg",
+    [
+        ([_KEY2], "^invalid keys type: list$"),
+        (None, "^invalid keys type: NoneType$"),
+        ((_KEY2, "abc"), "^invalid key type: str$"),
+    ],
+    ids=["list", "None", "str"],
+)
+def test_an_unpickled_multi_a_leaf_holding_keys_of_another_type_is_refused(
+    keys: object, err_msg: str, beside: bool
+) -> None:
+    """Alone and beside a miniscript leaf, before anything reads a key.
+
+    An unpickled `MultiA` skips its own check of its keys. Issue
+    btclib-org/bip32-descriptors#249.
+    """
+    leaf = _unpickled_multi_a(cast("tuple[KeyExpression, ...]", keys))
+    other = miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        TrDescriptor(_KEY, (leaf, other) if beside else leaf)
