@@ -762,20 +762,22 @@ def _assert_key_numbers(
     """Refuse a node holding a number of keys its fragment does not take.
 
     Each root and every node below it, which a walk has already checked
-    for their type and context; `keys` are every key the descriptor
-    holds. An unpickled node skips `Miniscript`'s own check, and the text
-    of a ``pk_k`` or ``pk_h`` reads only its first key. A fragment the
-    library does not define is named "a node", and taken to hold no key.
+    for their type and context; `keys` are the keys the nodes hold, and
+    in ``tr()`` those of its other leaves. An unpickled node skips
+    `Miniscript`'s own check, and the text of a ``pk_k`` or ``pk_h``
+    reads only its first key. A fragment the library does not define is
+    named "a node", and taken to hold no key.
 
     Such a node is refused for a multisig outside its context, as its
     build refuses it. Otherwise, where `keys` hold an uncompressed one,
     in that node or any other, it is left to the checks that follow: the
     text and the sanity of what holds it, then the key check of ``tr()``
-    or ``wsh()``, which names the first such key by its position among
-    the keys the nodes hold. A bare `MiniscriptDescriptor` that passes
-    its other checks builds it. A ``pk_k`` or ``pk_h`` holding no key,
-    which has no text to write, is not left so. A node not left so is
-    refused for its number of keys.
+    or ``wsh()``, which names the first such key by its position there,
+    counted as `_assert_keys` counts it: every key of each node counts,
+    not only those its text writes. A bare `MiniscriptDescriptor` that
+    passes its other checks builds it. A ``pk_k`` or ``pk_h`` holding no
+    key, which has no text to write, is not left so. A node not left so
+    is refused for its number of keys.
     """
     uncompressed = not all(key.is_compressed for key in keys)
     stack = list(roots)
