@@ -4035,3 +4035,20 @@ def test_a_node_above_a_multisig_of_no_key_is_not_asked_its_type_and_bounds(
             wrap(root)
     else:
         assert str(wrap(root)) == str(root)
+
+
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_an_unpickled_node_of_more_subexpressions_than_it_takes_is_refused(
+    wrapped: str,
+) -> None:
+    """With its build's message, before its type and bounds are asked.
+
+    Its text writes the subexpressions its fragment takes, and not the
+    one more. Issue btclib-org/bip32-descriptors#286.
+    """
+    context, _ = _WRAPPED[wrapped]
+    root = _forged_and_v(context, forged=False)
+    object.__setattr__(root, "subs", (*root.subs, root.subs[1]))
+    err_msg = "^and_v takes 2 subexpressions, 3 given$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _outermost(wrapped, root)
