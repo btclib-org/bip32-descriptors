@@ -1492,9 +1492,7 @@ def test_what_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
         replace(parsed, inner=inner)
 
 
-@pytest.mark.parametrize(
-    "value", [5, None, f"pk({_C})"], ids=["int", "none", "str"]
-)
+@pytest.mark.parametrize("value", [5, None, f"pk({_C})"], ids=["int", "none", "str"])
 def test_an_unpickled_wsh_holding_no_descriptor_is_refused_inside_sh(
     value: Any,
 ) -> None:
