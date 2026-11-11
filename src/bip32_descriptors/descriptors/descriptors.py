@@ -810,7 +810,7 @@ def _assert_node_key_number(node: Miniscript, *, uncompressed: bool) -> None:
 
     `uncompressed` says whether the descriptor holds an uncompressed key.
     """
-    fragment = _named_fragment(node)
+    fragment = node.fragment
     try:
         _assert_key_number(fragment, len(node.keys))
     except BTClibValueError:
