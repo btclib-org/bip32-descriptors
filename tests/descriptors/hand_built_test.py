@@ -103,6 +103,11 @@ btclib-org/bip32-descriptors#261.
 one inside a ``wsh()`` argument, refuse an unpickled ``multi()`` whose
 keys are no tuple as `MultiDescriptor` refuses it, before its function
 and its other checks. Issue btclib-org/bip32-descriptors#264.
+
+`WshDescriptor`, and `ShDescriptor` for its argument and for the argument
+of a ``wsh()`` argument, refuse an unpickled argument whose network is no
+`str` as `Descriptor` refuses it, before anything else about the
+argument. Issue btclib-org/bip32-descriptors#276.
 """
 
 from __future__ import annotations
@@ -1773,6 +1778,71 @@ def test_the_keys_of_a_multi_are_refused_before_its_function(
     object.__setattr__(multi, "keys", None)
     with pytest.raises(BTClibTypeError, match="^invalid keys type: NoneType$"):
         wrap(multi)
+
+
+def _with_network(inner: Descriptor, network: object) -> Descriptor:
+    """Return `inner`, unpickled, holding `network`.
+
+    `Descriptor` refuses a network that is no `str` when built, and
+    unpickling skips that check, so the network is given to an unpickled
+    copy.
+    """
+    unpickled: Descriptor = pickle.loads(pickle.dumps(inner))  # noqa: S301
+    object.__setattr__(unpickled, "network", network)
+    return unpickled
+
+
+_AND_V_PK = cast("WshDescriptor", parse(f"wsh(and_v(v:pk({_C}),pk({_C2})))")).inner
+# (wrapper, its argument) for a multi(), a wpkh() and a miniscript argument
+_NETWORK_HOLDERS: list[tuple[Callable[[Descriptor], Descriptor], Descriptor]] = [
+    (WshDescriptor, _PARSED[MultiDescriptor]),
+    (ShDescriptor, _PARSED[MultiDescriptor]),
+    (lambda inner: ShDescriptor(_unpickled_wsh(inner)), _PARSED[MultiDescriptor]),
+    (ShDescriptor, _PARSED[WpkhDescriptor]),
+    (WshDescriptor, _AND_V_PK),
+    (lambda inner: ShDescriptor(_unpickled_wsh(inner)), _AND_V_PK),
+]
+
+
+@pytest.mark.parametrize(
+    "wrap,inner",
+    _NETWORK_HOLDERS,
+    ids=["wsh-multi", "sh-multi", "sh-wsh-multi", "sh-wpkh", "wsh-ms", "sh-wsh-ms"],
+)
+@pytest.mark.parametrize("network", [5, None], ids=["int", "None"])
+def test_an_unpickled_argument_whose_network_is_no_str_is_refused(
+    network: object, wrap: Callable[[Descriptor], Descriptor], inner: Descriptor
+) -> None:
+    """As `Descriptor` refuses it, before anything else about the argument.
+
+    Its keys are read with its network. Issue
+    btclib-org/bip32-descriptors#276.
+    """
+    err_msg = f"^invalid network type: {type(network).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(inner, network=cast("str", network))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        wrap(_with_network(inner, network))
+    if isinstance(inner, MultiDescriptor):
+        # keys that are no tuple are refused, but after the network
+        multi = _with_network(inner, network)
+        object.__setattr__(multi, "keys", None)
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            wrap(multi)
+
+
+def test_the_network_of_a_wsh_argument_is_refused_before_its_argument() -> None:
+    """``sh()`` refuses the ``wsh()``'s own network first.
+
+    Issue btclib-org/bip32-descriptors#276.
+    """
+    multi = _with_network(_PARSED[MultiDescriptor], 5)
+    wsh = _with_network(_unpickled_wsh(multi), None)
+    with pytest.raises(BTClibTypeError, match="^invalid network type: NoneType$"):
+        ShDescriptor(wsh)
+    object.__setattr__(wsh, "network", "mainnet")
+    with pytest.raises(BTClibTypeError, match="^invalid network type: int$"):
+        ShDescriptor(wsh)
 
 
 @pytest.mark.parametrize(

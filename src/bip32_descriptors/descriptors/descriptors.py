@@ -1817,6 +1817,10 @@ class ShDescriptor(Descriptor):
 
     A ``multi()`` argument whose keys are no tuple is refused as
     `WshDescriptor` refuses one.
+
+    An argument whose network is no `str`, and the argument of a
+    ``wsh()`` argument, is refused as `WshDescriptor` refuses one, the
+    ``wsh()`` argument's own network first.
     """
 
     inner: Descriptor
@@ -1826,6 +1830,9 @@ class ShDescriptor(Descriptor):
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
         if isinstance(self.inner, WshDescriptor):
+            # the wsh()'s own network before anything about its argument,
+            # as `_assert_inner` refuses it first
+            assert_type(self.inner.network, str, "network")
             # before anything writes the argument out: a value of the wrong
             # type need not write itself without raising
             assert_type(self.inner.inner, Descriptor, "inner descriptor")
@@ -1910,6 +1917,10 @@ class WshDescriptor(Descriptor):
     `MultiDescriptor` refuses it, before its function: its text is
     written with its keys, and an unpickled ``multi()`` skips that check
     of its own.
+
+    An argument whose network is no `str` is refused as `Descriptor`
+    refuses it, before anything else about the argument: an unpickled
+    one skips that check of its own, and its keys are read with it.
     """
 
     inner: Descriptor
@@ -2958,9 +2969,12 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
 
-    A ``multi()`` whose keys are no tuple is refused first, as
-    `MultiDescriptor` refuses it: `str` writes its keys.
+    A network that is no `str` is refused first, as `Descriptor` refuses
+    it: an unpickled argument skips that check of its own, and its keys
+    are read with it. A ``multi()`` whose keys are no tuple is refused
+    next, as `MultiDescriptor` refuses it: `str` writes its keys.
     """
+    assert_type(inner.network, str, "network")
     if isinstance(inner, MultiDescriptor):
         assert_type(inner.keys, tuple, "keys")
     if isinstance(inner, MiniscriptDescriptor):
