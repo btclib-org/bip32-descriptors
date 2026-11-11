@@ -114,10 +114,10 @@ message, once its nodes and keys pass. They do not ask again the sanity
 of one `parse` or `infer_descriptor` has read. Issue
 btclib-org/bip32-descriptors#267.
 
-`ShDescriptor` and `WshDescriptor` refuse an unpickled ``raw()`` whose
-script, or ``rawpkh()`` whose key hash, is no bytes, with its own
-build's message, before writing its text. Issue
-btclib-org/bip32-descriptors#271.
+`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
+a ``wsh()`` argument, refuse an unpickled ``raw()`` whose script, or
+``rawpkh()`` whose key hash, is no bytes first, as its own build refuses
+it. Issue btclib-org/bip32-descriptors#271.
 """
 
 from __future__ import annotations
@@ -3395,7 +3395,11 @@ def test_a_parsed_or_inferred_wsh_miniscript_is_checked_for_sanity_once(
     assert len(asked) == 3
 
 
-@pytest.mark.parametrize("value", [None, 5], ids=["none", "int"])
+@pytest.mark.parametrize(
+    "value",
+    [None, 5, "51", bytearray(b"\x51")],
+    ids=["none", "int", "str", "bytearray"],
+)
 @pytest.mark.parametrize("wrapped", ["wsh", "sh", "sh-wsh"])
 @pytest.mark.parametrize(
     "parsed_type,field,what",
