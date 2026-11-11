@@ -1762,7 +1762,7 @@ class _RenamedMulti(MultiDescriptor):
 def test_the_keys_of_a_multi_are_refused_before_its_function(
     wrap: Callable[[Descriptor], Descriptor],
 ) -> None:
-    """Even where its text holds no keys, as a ``multi()``'s text does.
+    """Even where its text holds no keys, unlike a ``multi()``'s.
 
     Issue btclib-org/bip32-descriptors#264.
     """
