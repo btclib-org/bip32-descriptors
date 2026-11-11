@@ -1178,7 +1178,8 @@ def _assert_derived(root: Miniscript) -> None:
     asked whatever its keys hold: what its build computes reads at most
     their number, which its fragment takes. A node lacking a field its
     build computes is refused too. The caller has checked the type of
-    every node, its context, and the types of its fragment and its keys.
+    every node, its context, and the types of its fragment, its
+    subexpressions and its keys.
     """
     nodes: list[Miniscript] = []
     stack = [root]
@@ -1264,9 +1265,10 @@ class Miniscript:
         A fragment or a context given by hand is any value, so its refusal
         names only the library's own.
 
-        The fragment, the keys, the digest and the number each have their
-        type asserted just before their value is checked, the fragment as
-        `_assert_fragment_type` says, the keys as a tuple and each key as a
+        The fragment, the subexpressions, the keys, the digest and the
+        number each have their type asserted just before their value is
+        checked, the fragment as `_assert_fragment_type` says, the
+        subexpressions and the keys as a tuple and each key as a
         `KeyExpression`: a field of another type leaves as a
         `BTClibTypeError` naming the field and the type alone.
         """
@@ -1296,15 +1298,17 @@ class Miniscript:
         """Refuse a fragment the library does not define, and its arity.
 
         The fragment's type is asserted first, as `_assert_fragment_type`
-        says.
+        says, and the subexpressions are asserted a tuple once the
+        fragment is known.
         """
         fragment = self.fragment
         _assert_fragment_type(fragment)
+        if fragment != "thresh" and fragment not in _ARITY:
+            raise BTClibValueError("unknown miniscript fragment")
+        assert_type(self.subs, tuple, "subs")
         if fragment == "thresh":
             if not self.subs:
                 raise BTClibValueError("thresh() takes at least one subexpression")
-        elif fragment not in _ARITY:
-            raise BTClibValueError("unknown miniscript fragment")
         elif len(self.subs) != _ARITY[fragment]:
             err_msg = (
                 f"{fragment} takes {_ARITY[fragment]} subexpressions, "
