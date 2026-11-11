@@ -50,6 +50,10 @@ each with `parse`'s message. Issue btclib-org/bip32-descriptors#200.
 `parse`'s message. A `MultiA` and a tapscript `Miniscript` node refuse
 one too, without the key's position in the ``tr()`` that `parse`
 names. Issue btclib-org/bip32-descriptors#221.
+
+A `MiniscriptDescriptor` built at the top level is not refused, though
+`parse` takes one only inside ``wsh()``: `WshDescriptor` holds the same
+value. Issue btclib-org/bip32-descriptors#253.
 """
 
 from __future__ import annotations
@@ -90,6 +94,7 @@ from bip32_descriptors.descriptors.descriptors import (
     WshDescriptor,
 )
 from bip32_descriptors.descriptors.key_expression import KeyExpression
+from tests.descriptors import MINISCRIPT_OUTSIDE
 from tests.secret_free import assert_secret_free
 
 _X = PrvKeyData(1).pub.sec.hex()[2:]
@@ -563,6 +568,17 @@ def test_a_sane_miniscript_built_by_hand_parses_back() -> None:
     wsh = WshDescriptor(
         MiniscriptDescriptor(miniscript.parse(f"and_v(v:pk({_C2}),pk({_C}))"))
     )
+    assert parse(str(wsh)) == wsh
+
+
+def test_a_top_level_miniscript_built_by_hand_does_not_parse_back() -> None:
+    """It builds, `parse` refuses its text as Core does, ``wsh()`` takes it."""
+    node = miniscript.parse(f"and_v(v:pk({_C}),older(1))", miniscript.P2WSH)
+    descriptor = MiniscriptDescriptor(node)
+    assert descriptor.script_pub_key().script == node.script()
+    with pytest.raises(BTClibValueError, match=MINISCRIPT_OUTSIDE):
+        parse(str(descriptor))
+    wsh = WshDescriptor(descriptor)
     assert parse(str(wsh)) == wsh
 
 

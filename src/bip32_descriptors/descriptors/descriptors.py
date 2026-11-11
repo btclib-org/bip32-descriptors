@@ -1902,6 +1902,11 @@ class MiniscriptDescriptor(Descriptor):
     parse back from its text. So is one whose text `parse` reads as a
     descriptor function, such as ``pk()``, ``pkh()`` or ``multi()``: it
     would parse back as that function.
+
+    `parse` takes one only inside ``wsh()``. Built by hand and used at the
+    top level, it builds and gives a script, but writes text that `parse`
+    refuses, as Bitcoin Core does: whether it will be wrapped is not
+    known when it is built, and `WshDescriptor` holds this same value.
     """
 
     node: Miniscript
