@@ -1964,12 +1964,7 @@ class WshDescriptor(Descriptor):
 def _assert_wsh_argument(inner: Descriptor) -> None:
     """Refuse an argument of ``wsh()`` as `WshDescriptor` says.
 
-    Its function, then a miniscript's nodes, as `_assert_p2wsh` says,
-    then its keys, as `_assert_embedded` says, then a node holding a
-    number of keys its fragment does not take, as `_assert_key_numbers`
-    says: `parse` reads the keys of a node before it counts them. An
-    unpickled miniscript skips its own check of its nodes, and nothing
-    here writes the text of a miniscript argument.
+    Nothing here writes the text of a miniscript argument.
     """
     _assert_inner(inner, _P2WSH)
     if isinstance(inner, MiniscriptDescriptor):
