@@ -220,6 +220,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _assert_musig_allowed,
     _assert_network,
     _assert_outside_taproot,
+    _assert_point,
     _assert_prv_keys,
     _derived_once,
     _expression,
@@ -499,10 +500,10 @@ class MultiA:
         A threshold of none or of more keys than there are, or more keys
         than BIP387 allows, describes a script nobody can spend.
 
-        An uncompressed key is refused first, as `parse` reads the keys
-        before it counts them. Its message is `parse`'s without the
-        ``key N:`` that names the key's position in the ``tr()``, which a
-        leaf does not know.
+        An uncompressed key and a key that is no point are refused first,
+        as `parse` reads the keys before it counts them. Their message is
+        `parse`'s without the ``key N:`` that names the key's position in
+        the ``tr()``, which a leaf does not know.
         """
         if not is_integer(self.threshold):
             err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
@@ -513,6 +514,7 @@ class MultiA:
         assert_type(self.sort, bool, "sort")
         for key in self.keys:
             _assert_compressed(key)
+            _assert_point(key)
         name = "sortedmulti_a" if self.sort else "multi_a"
         if not 1 <= self.threshold <= len(self.keys):
             raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
@@ -906,7 +908,7 @@ def _assert_tree(tree: DescriptorTree) -> None:
     says. It is then refused where `parse` reads its text as a function,
     such as ``pk()`` or ``multi_a()``, or would refuse it without
     `prv_keys`: either way the descriptor would not parse back from its
-    text.
+    text. A key that is no point is left to `_assert_keys`.
     """
     # each entry carries whether it is a node under a miniscript leaf
     stack: list[tuple[object, int, bool]] = [(tree, 0, False)]
@@ -1645,12 +1647,13 @@ class Descriptor(ABC):
 def _assert_keys(
     keys: Iterable[KeyExpression], check: Callable[[KeyExpression], None]
 ) -> None:
-    """Refuse a key `check` refuses, with `parse`'s message.
+    """Refuse a key `check` refuses, then one that is no point.
 
-    The message names the key by its position, counted as `_parse_key`
-    counts it: a ``musig()`` takes one position for each participant and
-    one for itself, and a key refused for itself is named by the first
-    of its positions, where `parse` refuses it.
+    With `parse`'s message, which names the key by its position, counted
+    as `_parse_key` counts it: a ``musig()`` takes one position for each
+    participant and one for itself, and a key refused for itself is named
+    by the first of its positions, where `parse` refuses it. A key that is
+    no point is one `miniscript.from_script` reads.
     """
     position = 0
     for key in keys:
@@ -1658,6 +1661,10 @@ def _assert_keys(
             check(key)
         except BTClibValueError as e:
             raise BTClibValueError(f"key {position}: {e}") from None
+        try:
+            _assert_point(key)
+        except EccValueError as e:
+            raise EccValueError(f"key {position}: {e}") from None
         position += len(key.participants) + 1
 
 
@@ -1827,11 +1834,15 @@ class ShDescriptor(Descriptor):
     keys of a ``multi()`` is refused when built, with `parse`'s message,
     unless the argument is invalid by itself, as `Descriptor` says.
 
+    An argument whose network is no `str` is refused first, as
+    `WshDescriptor` says. So is the argument of a ``wsh()`` argument,
+    once that ``wsh()``'s own network passes.
+
     A `ShDescriptor` argument whose class writes its text with
     `ShDescriptor`'s own `str` is refused for its position without
     writing what it holds, as `_assert_inner` says, unless it is a
-    `WshDescriptor` too: its argument is then checked first, as the next
-    paragraph says.
+    `WshDescriptor` too: its argument is then checked before its
+    position, once its network passes, as the next paragraph says.
 
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
     refuses it, a value of the wrong type included, and its function
@@ -1840,8 +1851,9 @@ class ShDescriptor(Descriptor):
     `WshDescriptor` refuses one, before ``sh()`` writes its text.
 
     An unpickled ``multi()`` argument is refused for a field of the
-    wrong type and for its threshold as `WshDescriptor` says, and a
-    ``raw()`` or ``rawpkh()`` one for its bytes.
+    wrong type and for its threshold, a ``raw()`` or ``rawpkh()`` one for
+    its bytes, and a ``rawpkh()`` one for the size of its hash, as
+    `WshDescriptor` says.
     """
 
     inner: Descriptor
@@ -1851,6 +1863,9 @@ class ShDescriptor(Descriptor):
         super().__post_init__()
         assert_type(self.inner, Descriptor, "inner descriptor")
         if isinstance(self.inner, WshDescriptor):
+            # the wsh()'s own network before anything about its argument,
+            # as `_assert_inner` refuses it first
+            assert_type(self.inner.network, str, "network")
             # before anything writes the argument out: a value of the wrong
             # type need not write itself without raising
             assert_type(self.inner.inner, Descriptor, "inner descriptor")
@@ -1921,6 +1936,9 @@ class WshDescriptor(Descriptor):
     refused when built, with `parse`'s message, unless the argument is
     invalid by itself, as `Descriptor` says.
 
+    An argument whose network is no `str` is refused first, as
+    `_assert_inner` says.
+
     A `ShDescriptor` or `WshDescriptor` argument whose class writes its
     text with that class's own `str` is refused for its position without
     writing what it holds, as `_assert_inner` says: an unpickled one
@@ -1941,11 +1959,12 @@ class WshDescriptor(Descriptor):
     skips that check of its own too.
 
     An unpickled ``multi()`` argument skips its own check. A field of
-    the wrong type is refused first, as `_assert_multi_types` says, and
-    a threshold out of range whose text can be written in `parse`'s
-    order, as `_assert_embedded` says. A ``raw()`` script or a
-    ``rawpkh()`` key hash that is no bytes is refused first too, as
-    `_assert_script_only_types` says.
+    the wrong type is refused as `_assert_multi_types` says, and a
+    threshold out of range whose text can be written in `parse`'s order,
+    as `_assert_embedded` says. A ``raw()`` script or a ``rawpkh()`` key
+    hash that is no bytes is refused as `_assert_script_only_types`
+    says, and a ``rawpkh()`` key hash of other than 20 bytes as
+    `_assert_inner` says.
     """
 
     inner: Descriptor
@@ -2175,9 +2194,16 @@ class MultiDescriptor(Descriptor):
     The bound of three keys on a bare ``multi()`` or ``sortedmulti()`` is
     `parse`'s alone: the build cannot know whether the value will be bare,
     and ``sh()`` and ``wsh()`` check their own bounds when they wrap it.
-    One of more than three keys builds, gives a bare multisig script, and
-    writes a text `parse` refuses. Bitcoin Core's `InferDescriptor` writes
-    such a ``multi()`` for that script too, as `infer_descriptor` says.
+    One of more than three keys that ``sh()`` or ``wsh()`` takes builds,
+    gives a bare multisig script, and writes a text `parse` refuses.
+    Bitcoin Core's `InferDescriptor` writes such a ``multi()`` for that
+    script too, as `infer_descriptor` says.
+
+    One that no position takes is refused when built, after its k, with
+    the message `parse` gives inside ``sh()``: more than three keys, one
+    of them uncompressed, whose redeem script is over the push limit of
+    ``sh()``. No bare ``multi()`` takes more than three keys and no
+    ``wsh()`` an uncompressed one, so ``sh()`` is the position left.
     """
 
     threshold: int
@@ -2199,6 +2225,10 @@ class MultiDescriptor(Descriptor):
         _assert_multi_count(name, self.keys)
         if not 1 <= self.threshold <= len(self.keys):
             raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
+        if len(self.keys) > _MAX_BARE_MULTISIG_KEYS and not all(
+            key.is_compressed for key in self.keys
+        ):
+            _assert_multi_size(name, self.keys, _P2SH)
 
     @override
     def __str__(self) -> str:
@@ -3032,18 +3062,29 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     writing its own `str` can give, is refused naming the type: that text
     is any value, a key included.
 
-    A field of the wrong type that `_assert_multi_types` or
-    `_assert_script_only_types` checks is refused first, as those
-    functions say.
+    A network that is no `str` is refused first, with `Descriptor`'s
+    message: an unpickled argument skips that check of its own, and the
+    scripts of the ``sh()`` or ``wsh()`` are made with it. A field of the
+    wrong type that `_assert_multi_types` or `_assert_script_only_types`
+    checks is refused next, as those functions say. This is the order of
+    the argument's own build, which checks its network before its fields.
+
+    The hash of a ``rawpkh()`` is then refused for its size, with
+    `_assert_key_hash_size`'s message, before its position: an unpickled
+    ``rawpkh()`` skips that check of its own, which its build runs after
+    the type of the hash.
 
     A `ShDescriptor` or a `WshDescriptor` whose class writes its text
     with that class's own `str` is named without writing that text: an
     unpickled one can hold an argument whose text cannot be written.
     """
+    assert_type(inner.network, str, "network")
     if isinstance(inner, MultiDescriptor):
         _assert_multi_types(inner)
     elif isinstance(inner, _SCRIPT_ONLY):
         _assert_script_only_types(inner)
+        if isinstance(inner, RawPkhDescriptor):
+            _assert_key_hash_size(inner.key_hash)
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
@@ -4890,9 +4931,15 @@ def _inferred(  # noqa: C901, PLR0911, PLR0912  # sourcery skip: low-code-qualit
     if kind == "multisig" and context in key_contexts:
         keys = [_inferred_key(sec, context, known) for sec in data[1:]]
         if None not in keys:
-            return MultiDescriptor(
-                data[0][0], tuple(cast("list[KeyExpression]", keys)), network=network
-            )
+            # refused for keys no position takes, as `MultiDescriptor`
+            # says: the output is then an addr() or a raw(), as for any
+            # text that does not parse back
+            with suppress(BTClibValueError):
+                return MultiDescriptor(
+                    data[0][0],
+                    tuple(cast("list[KeyExpression]", keys)),
+                    network=network,
+                )
     if kind == "scripthash" and context == _TOP and data[0] in known.scripts:
         inner = _inferred(known.scripts[data[0]], _P2SH, known, network)
         if inner is not None:
