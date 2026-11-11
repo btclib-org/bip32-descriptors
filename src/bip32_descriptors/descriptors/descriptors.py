@@ -1934,11 +1934,10 @@ class WshDescriptor(Descriptor):
     skips that check of its own too.
 
     An unpickled ``multi()`` argument skips its own check. A field of
-    the wrong type is refused right after the network, as
-    `_assert_multi_types` says, and a threshold out of range whose text
-    can be written in `parse`'s order, as `_assert_embedded` says. A
-    ``raw()`` script or a ``rawpkh()`` key hash that is no bytes is
-    refused right after the network too, as `_assert_script_only_types`
+    the wrong type is refused as `_assert_multi_types` says, and a
+    threshold out of range whose text can be written in `parse`'s order,
+    as `_assert_embedded` says. A ``raw()`` script or a ``rawpkh()`` key
+    hash that is no bytes is refused as `_assert_script_only_types`
     says.
     """
 

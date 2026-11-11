@@ -101,9 +101,9 @@ btclib-org/bip32-descriptors#261.
 
 `WshDescriptor`, and `ShDescriptor` for a ``multi()`` argument and for
 one inside a ``wsh()`` argument, refuse an unpickled ``multi()`` holding
-a field of the wrong type first, as `MultiDescriptor` refuses it and
-before its function, and one whose threshold is out of range, where
-its text can be written, in `parse`'s order and with its message. Issues
+a field of the wrong type, as `MultiDescriptor` refuses it and before
+its function, and one whose threshold is out of range, where its text
+can be written, in `parse`'s order and with its message. Issues
 btclib-org/bip32-descriptors#248, btclib-org/bip32-descriptors#264 and
 btclib-org/bip32-descriptors#272.
 
@@ -121,8 +121,8 @@ btclib-org/bip32-descriptors#269.
 
 `WshDescriptor`, and `ShDescriptor` for its argument and for one inside
 a ``wsh()`` argument, refuse an unpickled ``raw()`` whose script, or
-``rawpkh()`` whose key hash, is no bytes first, as its own build refuses
-it. Issue btclib-org/bip32-descriptors#271.
+``rawpkh()`` whose key hash, is no bytes, as its own build refuses it.
+Issue btclib-org/bip32-descriptors#271.
 
 `WshDescriptor`, and `ShDescriptor` for its argument and for the argument
 of a ``wsh()`` argument, refuse an unpickled argument whose network is no
