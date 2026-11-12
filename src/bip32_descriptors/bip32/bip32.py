@@ -85,6 +85,7 @@ __all__ = [
     "derive_from_account_range_",
     "fingerprint",
     "key_data_from_bip32_key",
+    "point_from_xkey",
     "point_from_xpub",
     "prv_keyinfo_from_xprv",
     "pub_key_derivation_tweaks",
@@ -222,6 +223,14 @@ class BIP32KeyData:
     and parse; b58encode and b58decode add the customary Base58Check
     spelling. repr masks the key material of a private one.
 
+    It is also the object a caller works with, from a seed to a derived
+    key and the reads of it: `from_seed` and `derive` answer one, and
+    `q`, `sec`, `point_var` and `xpub` read the scalar, the compressed
+    public key, the curve point and the neutered key. Each answers
+    through the free function its docstring names, so the two spellings
+    cannot disagree. No `__str__`: the Base58Check text of a private key
+    is the secret itself, and `b58encode` is the call that asks for it.
+
     Frozen, so that a public function handed one can trust it rather
     than revalidate it: `check_validity=False` says "not checked yet",
     and a mutable field would let that stay true forever, one attribute
@@ -275,6 +284,58 @@ class BIP32KeyData:
             and self.index == 0
             and self.parent_fingerprint == b"\x00" * 4
         )
+
+    @classmethod
+    def from_seed(
+        cls: type[BIP32KeyData],
+        seed: Octets,
+        version: Octets = NETWORKS["mainnet"].bip32_prv,
+    ) -> BIP32KeyData:
+        """Return the root master extended private key of a seed.
+
+        `rootxprv_from_seed_`, as a constructor.
+        """
+        return rootxprv_from_seed_(seed, version)
+
+    def derive(
+        self, der_path: DerPath, forced_version: Octets | None = None
+    ) -> BIP32KeyData:
+        """Derive this key across a path: `derive_` with this key."""
+        return derive_(self, der_path, forced_version)
+
+    @property
+    def q(self) -> int:
+        """Return the private key scalar, `prv_keyinfo_from_xprv`'s.
+
+        A public key has none, and is refused as that function refuses it.
+        """
+        return prv_keyinfo_from_xprv(self)[0]
+
+    @property
+    def sec(self) -> bytes:
+        """Return the 33-byte compressed public key, of either half.
+
+        `pub_keyinfo_from_xkey`'s, and so computed for a private key.
+        """
+        return pub_keyinfo_from_xkey(self)[0]
+
+    @property
+    def point_var(self) -> Point:
+        """Return the public key's curve point, of either half.
+
+        `point_from_xkey`'s, named as btclib's `PubKeyData.point_var` is.
+        """
+        return point_from_xkey(self)
+
+    @property
+    def xpub(self) -> BIP32KeyData:
+        """Return the neutered key, which for a public key is itself.
+
+        `xpub_from_xprv_` for a private key; a public one is validated
+        and answered as it is.
+        """
+        xkey = key_data_from_bip32_key(self)
+        return xpub_from_xprv_(xkey) if xkey.is_private else xkey
 
     def __init__(
         self,
@@ -722,6 +783,10 @@ def point_from_xpub(xpub: BIP32Key, ec: Curve = secp256k1) -> Point:
     `ec` is compared against the curve of the network the version bytes
     name rather than used to parse with, so a caller asking about a curve
     the key is not of is told which of the two disagrees.
+
+    An xprv is refused, as `pub_keyinfo_from_xpub` refuses one, and
+    `point_from_xkey` below is the spelling for a caller that holds
+    either half.
     """
     assert_type(ec, Curve, "ec")
     xpub_data = key_data_from_bip32_key(xpub)
@@ -730,11 +795,30 @@ def point_from_xpub(xpub: BIP32Key, ec: Curve = secp256k1) -> Point:
         # never echo the key, which is private here:
         # the prefix already says what is wrong
         raise BTClibValueError(f"not a public key: prefix 0x{xpub_data.key[:1].hex()}")
+    return _point_from_xpub(xpub_data, ec)
+
+
+def _point_from_xpub(xpub_data: BIP32KeyData, ec: Curve) -> Point:
+    """`point_from_xpub` on a public key already decoded and validated."""
     ec2 = curve_from_xkeyversion(xpub_data.version)
     if ec != ec2:
         err_msg = f"ec/xpub version ({xpub_data.version.hex()}) mismatch"
         raise BTClibValueError(err_msg)
     return point_from_octets_var(xpub_data.key, ec)
+
+
+def point_from_xkey(xkey: BIP32Key, ec: Curve = secp256k1) -> Point:
+    """Return the curve point of an extended key's public key, either half.
+
+    `pub_keyinfo_from_xkey` above, answering the point: an xprv is
+    neutered first, so its `ec` is compared against the curve of the
+    xpub it neuters to, and `point_from_xpub` says why it is compared.
+    """
+    assert_type(ec, Curve, "ec")
+    xkey_data = key_data_from_bip32_key(xkey)
+    if xkey_data.is_private:
+        xkey_data = _xpub_from_xprv(xkey_data)
+    return _point_from_xpub(xkey_data, ec)
 
 
 # repr=False: a generated __repr__ would print key and prv_key_int, the
