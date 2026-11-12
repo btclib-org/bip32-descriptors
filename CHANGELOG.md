@@ -19,6 +19,55 @@ behind them.
 
 [std]: https://github.com/btclib-org/.github
 
+## v2026.11.13
+
+### BIP32KeyData reads a key's scalar and point; point_from_xkey is new
+
+`from_seed` and `derive` answer one, `q`, `sec`, `point_var` and `xpub`
+read it, and `point_from_xkey` takes either half (closes #297)
+(closes #298).
+
+### Miniscript refuses subexpressions that are no tuple
+
+With a `BTClibTypeError` naming the type, when built and on an
+unpickled node (closes #287).
+
+### parse names a multi_a() of over 999 keys for its count first
+
+As Bitcoin Core does, whatever the threshold; a hand-built `MultiA`
+does too (closes #220).
+
+### tr() and wsh() refuse an unpickled node of another shape
+
+Of a fragment the library does not define (closes #285), a multisig of
+the other context (closes #243) or a wrong number of subexpressions
+(closes #275).
+
+### tr() and wsh() refuse an unpickled node of forged type or bounds
+
+Its type, bounds, threshold and lock time are its build's own
+(closes #286) (closes #284).
+
+### Sourcery runs with every rule on but dont-import-test-modules
+
+The code takes its rewrites, which keep behaviour, and `sourcery.yml`
+takes the shared concurrency comment
+(issue btclib-org/.github#2162) (issue btclib-org/.github#2190).
+
+### The bestpractices.dev answers
+
+`osps_qa_07_01` cites `main-self-merge` by id, and `RELEASING.md`
+records a save nobody can make as owed
+(issue btclib-org/.github#2205) (issue btclib-org/.github#2214).
+
+### The calls into btclib-org/.github are pinned to v2026.11.12
+
+(#310).
+
+### The lock
+
+The GitHub Actions move (#310), and so does coverage (#311).
+
 ## v2026.11.12
 
 ### from_script reads a key that is no point, as Core's signer does

@@ -9,6 +9,50 @@ number says when a release was cut, and promises nothing about
 compatibility, so a breaking change is announced in this file — read it
 before upgrading, rather than a digit.
 
+## v2026.11.13
+
+This release needs btclib 2026.11.10, ecc 2026.11.8 and base58-bech32
+2026.10.23 or later, as v2026.11.12 does. The `secp256k1` extra installs
+`ecc[secp256k1]` 2026.11.8 or later.
+
+`BIP32KeyData` is the object a caller works with from a seed to a
+derived key: `BIP32KeyData.from_seed` and `derive` answer one, and the
+properties `q`, `sec`, `point_var` and `xpub` read the private key
+scalar, the 33-byte compressed public key, the curve point and the
+neutered key. `bip32.point_from_xkey` answers the curve point of either
+half, where `point_from_xpub` still refuses an xprv. These only add
+names: griffe and `api_gaps.py` find no break against v2026.11.12.
+
+This breaks the API. `Miniscript` refuses `subs` that is no tuple with a
+`BTClibTypeError` naming its type, as `invalid subs type: list`.
+v2026.11.12 built a node from a list, and raised the built-in
+`TypeError` for some other types, such as an `int`.
+
+`parse` refuses a `multi_a()` or a `sortedmulti_a()` of more than 999
+keys for its key count, as `invalid n in k-of-n multi_a: 1000`, whatever
+its threshold, as Bitcoin Core does. v2026.11.12 named the threshold
+where that was out of range too. A `MultiA` built by hand refuses it in
+the same order.
+
+`tr()`, `wsh()`, `sh(wsh())` and a bare miniscript descriptor check more
+of an unpickled miniscript node, raising `BTClibValueError` or
+`BTClibTypeError`. Its fragment, its subexpressions as a tuple and their
+number, a multisig of the other context, and its threshold or lock time
+are refused with the build's message. A type or bounds other than those
+its build computes is refused as `and_v holds a type or bounds its build
+does not compute`. v2026.11.12 built some such nodes, writing a text
+`parse` refuses, such as `wsh(and_v(older(2),older(2)))`, and raised
+the built-in `IndexError` for others, such as an `and_v` of one
+subexpression. Where such a descriptor holds several faults, the one
+named can differ from v2026.11.12's.
+
+The attestations name `reusable-build.yml` at btclib-org/.github's
+commit `cb5a79443399980ba717df2dea23dbedf6bdbc3a`, its tag v2026.11.12,
+where v2026.11.12's named `5be973d6a2969cfc572be91df4637d71d7c56a11`.
+The command `SECURITY.md` gives names the signer without a ref and
+verifies both. A check that pins `--signer-workflow` to the old commit
+fails: drop the ref.
+
 ## v2026.11.12
 
 This release needs btclib 2026.11.10, ecc 2026.11.8 and base58-bech32
