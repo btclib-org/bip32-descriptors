@@ -85,7 +85,7 @@ concurrency:
 
 jobs:
   regtest:
-    uses: btclib-org/.github/.github/workflows/reusable-integration-bitcoind.yml@5be973d6a2969cfc572be91df4637d71d7c56a11 # v2026.11.11
+    uses: btclib-org/.github/.github/workflows/reusable-integration-bitcoind.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
     # a caller's permissions: block bounds the called workflow and refuses
     # rather than trims
     permissions:

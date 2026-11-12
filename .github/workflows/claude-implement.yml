@@ -35,7 +35,7 @@ jobs:
     # cache, which is what actionlint's cache-call-unrestricted asks for;
     # the callee has no cache step
     cache-mode: none
-    uses: btclib-org/.github/.github/workflows/reusable-claude-implement.yml@5be973d6a2969cfc572be91df4637d71d7c56a11 # v2026.11.11
+    uses: btclib-org/.github/.github/workflows/reusable-claude-implement.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
     permissions:
       contents: read
       issues: write # the assessment's comment and the decision label
