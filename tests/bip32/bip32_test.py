@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from base58_bech32.base58 import b58decode_check, b58encode_check
 from btclib.b58 import p2pkh
-from btclib.exceptions import BTClibTypeError, BTClibValueError
+from btclib.exceptions import BTClibTypeError, BTClibValueError, InvalidPrvKeyError
 from btclib.hashes import hash160
 from btclib.key import PubKeyData
 from btclib.network import NETWORKS
@@ -47,6 +47,7 @@ from bip32_descriptors.bip32 import (
     derive_from_account_range,
     derive_from_account_range_,
     fingerprint,
+    point_from_xkey,
     point_from_xpub,
     prv_keyinfo_from_xprv,
     pub_key_derivation_tweaks,
@@ -149,6 +150,83 @@ def test_the_three_key_reads_answer_for_one_half_each() -> None:
     with pytest.raises(BTClibValueError) as excinfo:
         prv_keyinfo_from_xprv(xpub)
     assert str(excinfo.value) == f"not a private key: prefix 0x{prefix}"
+
+
+def test_point_from_xkey_takes_either_half() -> None:
+    """The point of a key's public half, whichever half it is handed.
+
+    The xprv `derive` answers is the case issue
+    btclib-org/bip32-descriptors#297 names: `point_from_xpub` refuses it,
+    and stays strict.
+    """
+    xprv = derive(rootxprv_from_seed(bytes(16)), "m/0")
+    xpub = xpub_from_xprv(xprv)
+    q = prv_keyinfo_from_xprv(xprv)[0]
+
+    assert point_from_xkey(xprv) == mult(q)
+    assert point_from_xkey(xpub) == point_from_xpub(xpub) == mult(q)
+    assert point_from_xkey(BIP32KeyData.b58decode(xprv)) == mult(q)
+    with pytest.raises(BTClibValueError) as excinfo:
+        point_from_xpub(xprv)
+    assert str(excinfo.value) == "not a public key: prefix 0x00"
+
+
+def test_the_key_data_is_the_object_one_works_with() -> None:
+    """A seed to a derived key's scalar and point, as one expression.
+
+    Each read is the free function it wraps, so each is compared with it
+    (issue btclib-org/bip32-descriptors#298).
+    """
+    seed = "000102030405060708090a0b0c0d0e0f"
+    path = "m/0h/1"
+    xprv = derive(rootxprv_from_seed(seed), path)
+    xpub = xpub_from_xprv(xprv)
+
+    k = BIP32KeyData.from_seed(seed).derive(path)
+    assert k == derive_(rootxprv_from_seed_(seed), path)
+    assert k.b58encode() == xprv
+    assert k.q == prv_keyinfo_from_xprv(xprv)[0]
+    assert k.sec == pub_keyinfo_from_xkey(xprv)[0]
+    assert k.point_var == mult(k.q) == point_from_xkey(xprv)
+    assert k.xpub.b58encode() == xpub
+
+    # the public half answers what it has, and is its own neutered key
+    pub = k.xpub
+    assert pub.xpub == pub
+    assert pub.sec == k.sec
+    assert pub.point_var == k.point_var
+    assert pub.derive("m/2").sec == k.derive("m/2").sec
+    # and has no scalar, refused as `prv_keyinfo_from_xprv` refuses it
+    with pytest.raises(InvalidPrvKeyError) as excinfo:
+        _ = pub.q
+    assert str(excinfo.value) == f"not a private key: prefix 0x{pub.key[:1].hex()}"
+
+    # `version` is `rootxprv_from_seed_`'s
+    tprv = NETWORKS["testnet"].bip32_prv
+    assert BIP32KeyData.from_seed(seed, tprv) == rootxprv_from_seed_(seed, tprv)
+
+    # no `__str__` of its own: formatting a private key shows the mask
+    assert str(k) == repr(k)
+    assert xprv not in f"{k}"
+
+
+@pytest.mark.parametrize("private", [True, False], ids=["xprv", "xpub"])
+def test_the_key_data_reads_validate_the_key(private: bool) -> None:
+    """A key built with `check_validity=False` is asked before it is read.
+
+    The reads are public, so each refuses an invalid key as the function
+    it wraps does: a depth of zero with a non-zero index is the fault.
+    """
+    k = BIP32KeyData.from_seed(bytes(16))
+    if not private:
+        k = k.xpub
+    bad = replace_unchecked(k, index=1)
+    err_msg = "zero depth with non-zero index: 1"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        bad.derive("m/0")
+    for read in ("q", "sec", "point_var", "xpub"):
+        with pytest.raises(BTClibValueError, match=err_msg):
+            getattr(bad, read)
 
 
 def test_exceptions() -> None:

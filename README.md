@@ -68,13 +68,23 @@ python -m pip install --upgrade "bip32-descriptors[secp256k1]"
 ## A key, a descriptor, an address
 
 ```python
-from bip32_descriptors.bip32 import derive, rootxprv_from_seed, xpub_from_xprv
+from bip32_descriptors.bip32 import (
+    BIP32KeyData,
+    derive,
+    rootxprv_from_seed,
+    xpub_from_xprv,
+)
 from bip32_descriptors.descriptors import add_checksum, parse
 
 # BIP32's test vector 1, and its m/0h/1 extended public key
 xprv = rootxprv_from_seed("000102030405060708090a0b0c0d0e0f")
 xpub = xpub_from_xprv(derive(xprv, "m/0h/1"))
 assert xpub.startswith("xpub6ASuArnXKPbfEwhqN6e3mwBcDTgzisQN1wXN9BJcM47s")
+
+# the same key as an object, its point and its neutered key read off it
+key = BIP32KeyData.from_seed("000102030405060708090a0b0c0d0e0f").derive("m/0h/1")
+assert key.xpub.b58encode() == xpub
+assert key.point_var == key.xpub.point_var
 
 # a ranged descriptor with its key origin, checksum included
 descriptor = parse(add_checksum(f"wpkh([3442193e/0h/1]{xpub}/0/*)"))

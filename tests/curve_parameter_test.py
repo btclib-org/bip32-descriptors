@@ -40,6 +40,7 @@ from ecc.curves import CURVES, CurveGroup, secp256k1
 
 from bip32_descriptors.bip32.bip32 import (
     BIP32KeyData,
+    point_from_xkey,
     point_from_xpub,
     rootxprv_from_seed,
     xpub_from_xprv,
@@ -50,7 +51,8 @@ _LIBRARY = Path(__file__).parents[1] / "src" / "bip32_descriptors"
 # a value of no type any `ec` declares, and both are calls mypy refuses
 _WRONG_TYPES: tuple[Any, ...] = (None, 1.5)
 
-_XPUB = xpub_from_xprv(rootxprv_from_seed("00" * 32))
+_XPRV = rootxprv_from_seed("00" * 32)
+_XPUB = xpub_from_xprv(_XPRV)
 
 # a group with p, a and b and neither the n nor the G a Curve adds, which
 # is the wrong type a check spelled against the base class would let in
@@ -76,6 +78,12 @@ _CASES = (
         "bip32_descriptors.bip32.bip32.point_from_xpub",
         point_from_xpub,
         {"xpub": _XPUB},
+    ),
+    # the same comparison, made on the xpub an xprv neuters to
+    _Case(
+        "bip32_descriptors.bip32.bip32.point_from_xkey",
+        point_from_xkey,
+        {"xkey": _XPRV},
     ),
 )
 
@@ -191,3 +199,6 @@ def test_the_curve_a_key_names_is_still_a_value() -> None:
     xpub = BIP32KeyData.b58decode(_XPUB)
     with pytest.raises(BTClibValueError, match="ec/xpub version"):
         point_from_xpub(xpub, CURVES["secp256r1"])
+    for xkey in (_XPRV, _XPUB):
+        with pytest.raises(BTClibValueError, match="ec/xpub version"):
+            point_from_xkey(xkey, CURVES["secp256r1"])

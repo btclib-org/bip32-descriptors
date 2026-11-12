@@ -292,7 +292,7 @@ exclude-operators = ["core/ReplaceBinaryOperator_BitOr_.*"]
 # `point_from_xpub` -- each survivor again run against the whole suite,
 # which kills none of them outside tests/bip32.
 # `prv_keyinfo_from_xprv`'s `key[:1]` widened to `key[:2]` in its "not a
-# private key" refusal, and `point_from_xpub`'s `ec != ec2` turned into
+# private key" refusal, and `_point_from_xpub`'s `ec != ec2` turned into
 # `is not`, die in tests/bip32/bip32_test.py: the first is now compared
 # whole, the second given a copy of secp256k1, an equal curve that is
 # another object. These operators are equivalent, where the paragraphs
