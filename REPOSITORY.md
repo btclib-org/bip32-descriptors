@@ -227,10 +227,13 @@ JSON
 ```
 
 `main-self-merge` requires a pull request, so a direct push to `main` is
-refused, and a merge needs an approval from somebody other than its
-author. It has no bypass actor either: the standard asks that of a tree
-whose `README.md` carries the OpenSSF Best Practices badge, and this one
-is to once the project is registered (section 11 of
+refused. Its one bypass actor is the maintainer, in `pull_request` mode,
+so the maintainer can merge without an approval from somebody other than
+the author, and nobody else can. It is the organization-wide bypass,
+which the maintainer keeps until the backlog settles, with no date set
+(btclib-org/.github#2021). Once it is removed, the ruleset has no bypass
+actor: the standard asks that of a tree whose `README.md` carries the
+OpenSSF Best Practices badge, and this one does (section 11 of
 [the organization's standard](https://github.com/btclib-org/.github#branch-protection-and-rulesets)).
 btclib-org/.github's
 [`GOVERNANCE.md`](https://github.com/btclib-org/.github/blob/main/GOVERNANCE.md#how-a-decision-is-made),
@@ -252,8 +255,8 @@ gh api -X POST repos/btclib-org/bip32-descriptors/rulesets --input - <<'JSON'
 JSON
 ```
 
-The `POST` answers with the ruleset's id, which is `<ruleset-id>` below.
-It has no bypass actor:
+The `POST` answers with the ruleset's id, which is `<ruleset-id>` below,
+and creates the ruleset with no bypass actor:
 
 ```shell
 gh api repos/btclib-org/bip32-descriptors/rulesets/<ruleset-id> --jq .bypass_actors
@@ -262,7 +265,7 @@ gh api repos/btclib-org/bip32-descriptors/rulesets/<ruleset-id> --jq .bypass_act
 The bypass is added back and removed with a `PUT`. A `PUT` replaces the
 whole ruleset, so each body carries every parameter the ruleset holds,
 which the read above (without `--jq`) shows. The `POST` above omits some
-of them. When added back, the bypass is actor `3296421`, `fametrano`'s
+of them. The bypass is actor `3296421`, `fametrano`'s
 account id (`gh api users/fametrano --jq .id`), in `pull_request` mode.
 To add it:
 
@@ -351,8 +354,9 @@ for id in $(gh api repos/btclib-org/bip32-descriptors/rulesets --jq '.[].id'); d
 done
 ```
 
-The loop is expected to print the three rulesets above, each matching
-the standard.
+The loop is expected to print the three rulesets above.
+`main-self-merge` holds the bypass *Branch protection* describes, and
+the other two match the standard.
 
 A `v*` tag push that brings an unsigned commit is refused. A tag on a
 commit already on `main` is accepted whether it is signed, unsigned or
