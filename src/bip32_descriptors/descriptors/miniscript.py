@@ -1163,18 +1163,12 @@ def _assert_derived(root: Miniscript) -> None:
     subexpressions, so that what it is computed from has been asked
     already, and is refused first for its fragment, its arity and its
     number as its build refuses them, without which nothing can be
-    computed.
+    computed. A node is refused where it lacks a field its build computes.
 
-    A multisig node of a number of keys its fragment does not take is not
-    asked: what its build computes depends on its number of keys, and no
-    build takes that number. Nor are the nodes above it, but for their
-    fragment, their arity and their number, which do not read it: the rest
-    would be computed from what it holds, which nothing asks. Any other node
-    is asked whatever its keys hold: what its build computes reads at most
-    their number, which its fragment takes. Any node but that multisig is
-    refused where it lacks a field its build computes. The caller has
-    checked the type of every node, its context, and the types of its
-    fragment, its subexpressions and its keys.
+    Every node is asked, a multisig of more keys than its fragment takes
+    included: what its build computes reads their number, whatever it is.
+    The caller has checked the type of every node, its context, and the
+    types of its fragment, its subexpressions and its keys.
     """
     nodes: list[Miniscript] = []
     stack = [root]
@@ -1182,25 +1176,12 @@ def _assert_derived(root: Miniscript) -> None:
         node = stack.pop()
         nodes.append(node)
         stack += node.subs
-    # the ids of the nodes not asked, each before the nodes above it
-    unasked: set[int] = set()
     for node in reversed(nodes):
-        above_unasked = any(id(sub) in unasked for sub in node.subs)
-        if not above_unasked and node.fragment in {"multi", "multi_a"}:
-            try:
-                _assert_key_number(node.fragment, len(node.keys))
-            except BTClibValueError:
-                unasked.add(id(node))
-                continue
         node._assert_arity()
         node._assert_number()
         # None, which no build computes, for a field an unpickled node lacks
         stored = tuple(getattr(node, name, None) for name in _DERIVED)
-        if above_unasked:
-            unasked.add(id(node))
-            if None not in stored:
-                continue
-        elif _derived(node) == stored:
+        if _derived(node) == stored:
             continue
         err_msg = f"{node.fragment} holds a type or bounds its build does not compute"
         raise BTClibValueError(err_msg)

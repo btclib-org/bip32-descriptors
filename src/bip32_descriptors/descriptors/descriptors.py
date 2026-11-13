@@ -779,15 +779,14 @@ def _assert_key_numbers(
     ``pk_h`` reads only its first key. A fragment the library does not
     define is refused by that walk first.
 
-    Where `keys` hold an uncompressed one, in that node or any other, it
-    is left to the checks that follow: the text of what holds it, the type
-    and bounds of its nodes as `_assert_derived` says, and its sanity, then
-    the key check of ``tr()`` or ``wsh()``, which names the first such key
-    by its position there, counted as `_assert_keys` counts it: every key
-    of each node counts, not only those its text writes. A bare
-    `MiniscriptDescriptor` that passes its other checks builds it. A
-    ``pk_k`` or ``pk_h`` holding no key, which has no text to write, is not
-    left so. A node not left so is refused for its number of keys.
+    Where `keys` hold an uncompressed one, in that node or any other, a
+    node holding a key is left to the key check of ``tr()`` or ``wsh()``,
+    which names the first such key by its position there, counted as
+    `_assert_keys` counts it: every key of each node counts, not only those
+    its text writes. A bare `MiniscriptDescriptor` has no such check: it
+    refuses the node where `_assert_miniscript_read` does, and otherwise
+    builds it. A node not left so is refused for its number of keys, a
+    node of a fragment taking keys and holding none among them.
     """
     uncompressed = not all(key.is_compressed for key in keys)
     stack = list(roots)
@@ -802,11 +801,10 @@ def _assert_node_key_number(node: Miniscript, *, uncompressed: bool) -> None:
 
     `uncompressed` says whether the descriptor holds an uncompressed key.
     """
-    fragment = node.fragment
     try:
-        _assert_key_number(fragment, len(node.keys))
+        _assert_key_number(node.fragment, len(node.keys))
     except BTClibValueError:
-        if not uncompressed or (fragment in {"pk_k", "pk_h"} and not node.keys):
+        if not uncompressed or not node.keys:
             raise
 
 
@@ -905,7 +903,7 @@ def _assert_tree_leaf(node: object) -> None:
         _assert_multi_a_numbers(node)
 
 
-def _assert_tree(tree: DescriptorTree) -> None:
+def _assert_tree(tree: DescriptorTree) -> list[Miniscript]:
     """Refuse a node of the wrong type, and a tree deeper than MAX_TREE_DEPTH.
 
     A leaf below that depth has no control block to be spent with, and
@@ -932,12 +930,10 @@ def _assert_tree(tree: DescriptorTree) -> None:
     named first, a miniscript leaf is refused where any of its nodes holds
     a number of keys its fragment does not take, as `_assert_key_numbers`
     says. It is then refused where `parse` reads its text as a function,
-    such as ``pk()`` or ``multi_a()``, or would refuse it without
-    `prv_keys`: either way the descriptor would not parse back from its
-    text. Before its sanity is asked, it is refused where a node holds a
-    type or bounds its build does not compute, as `_assert_derived` says,
-    since the sanity check reads them. A key that is no point is left to
-    `_assert_keys`.
+    such as ``pk()`` or ``multi_a()``: the descriptor would not parse back
+    from its text. A key that is no point is left to `_assert_keys`.
+
+    Return the miniscript leaves, for `_assert_leaves_sane`.
     """
     # each entry carries whether it is a node under a miniscript leaf
     stack: list[tuple[object, int, bool]] = [(tree, 0, False)]
@@ -967,9 +963,23 @@ def _assert_tree(tree: DescriptorTree) -> None:
         if name is not None:
             err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
             raise BTClibValueError(err_msg)
-        if not _SANE_BY_PARSE.get():
-            _assert_derived(leaf)
-            _assert_sane_script(leaf)
+    return leaves
+
+
+def _assert_leaves_sane(leaves: list[Miniscript]) -> None:
+    """Refuse a miniscript leaf `parse` refuses without `prv_keys`.
+
+    The descriptor would not parse back from its text. Unless its sanity
+    was asked already, as `_SANE_BY_PARSE` says. Before its sanity is
+    asked, a leaf is refused where a node holds a type or bounds its build
+    does not compute, as `_assert_derived` says, since the sanity check
+    reads them.
+    """
+    if _SANE_BY_PARSE.get():
+        return
+    for leaf in leaves:
+        _assert_derived(leaf)
+        _assert_sane_script(leaf)
 
 
 @dataclass(frozen=True)
@@ -2187,16 +2197,14 @@ class MiniscriptDescriptor(Descriptor):
     A node holding a number of keys its fragment does not take, as an
     unpickled one can, is refused before its text is written: as above
     where it is a ``multi_a()``, and otherwise for its number of keys,
-    unless the miniscript holds an uncompressed key and the node's text
-    can be written: the node is then left to the text and sanity checks
-    above, and the key to ``wsh()``, which refuses it by its position.
+    unless the miniscript holds an uncompressed key and the node holds a
+    key: the node is then left to the checks above and below, and the key
+    to ``wsh()``, which refuses it by its position.
 
     A node holding a type or bounds its build does not compute, as an
     unpickled one can, is refused before the sanity check reads them, and so
     is one of a threshold or lock time its fragment does not take, of
-    another type included. A multisig node left as the paragraph above says
-    is not asked, and the nodes above it are asked only as `_assert_derived`
-    says.
+    another type included.
 
     `parse` takes one only inside ``wsh()``. The refusal of a top-level one
     is `parse`'s alone: the build cannot know whether the value will be
@@ -2705,14 +2713,15 @@ class TrDescriptor(Descriptor):
     """``tr(KEY)`` or ``tr(KEY,TREE)``: a p2tr output, BIP386.
 
     An uncompressed key is refused when built, with `parse`'s message, and
-    so is a ``musig()`` participant `parse` refuses, as `_assert_taproot_key`
-    says.
-    The internal key is refused before the tree, as `parse` reads them,
-    and a leaf key once the tree passes its other checks. `parse` refuses
-    instead whichever fault it reads first. A `MultiA` leaf and a
-    tapscript `Miniscript` node refuse one when they are built, before
-    the ``tr()`` that holds them, and their message lacks the ``key N:``
-    that names the key's position in the ``tr()``.
+    so is a ``musig()`` participant `parse` refuses, as
+    `_assert_taproot_key` says. The internal key is refused before the tree,
+    as `parse` reads them, and a leaf key once the tree passes the checks of
+    `_assert_tree`, before a leaf is asked its type and bounds and its
+    sanity, as `_assert_leaves_sane` says. `parse` refuses instead whichever
+    fault it reads first. A `MultiA` leaf and a tapscript `Miniscript` node
+    refuse one when they are built, before the ``tr()`` that holds them, and
+    their message lacks the ``key N:`` that names the key's position in the
+    ``tr()``.
     """
 
     internal_key: KeyExpression
@@ -2724,10 +2733,11 @@ class TrDescriptor(Descriptor):
         assert_type(self.internal_key, KeyExpression, "internal key")
         _assert_keys((self.internal_key,), _assert_taproot_key)
         if self.tree is not None:
-            _assert_tree(self.tree)
+            leaves = _assert_tree(self.tree)
             # a pk() leaf is a bare key, and an unpickled leaf skipped its
             # own check
             _assert_keys(self.key_expressions, _assert_taproot_key)
+            _assert_leaves_sane(leaves)
 
     @override
     def __str__(self) -> str:
