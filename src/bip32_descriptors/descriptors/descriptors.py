@@ -220,6 +220,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _assert_musig_allowed,
     _assert_network,
     _assert_outside_taproot,
+    _assert_participant_types,
     _assert_point,
     _assert_prv_keys,
     _derived_once,
@@ -230,6 +231,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _offered_signature,
     _one_hardening,
     _parse_key,
+    _participant_fault,
     _read_multipath_keys,
     _read_split,
     _split_arguments,
@@ -1671,6 +1673,14 @@ class Descriptor(ABC):
         return hd_key_paths
 
 
+class _ParticipantError(BTClibValueError):
+    """A ``musig()`` participant refused, `index` its place among them."""
+
+    def __init__(self, message: str, index: int) -> None:
+        super().__init__(message)
+        self.index = index
+
+
 def _assert_keys(
     keys: Iterable[KeyExpression], check: Callable[[KeyExpression], None]
 ) -> None:
@@ -1679,13 +1689,17 @@ def _assert_keys(
     With `parse`'s message, which names the key by its position, counted
     as `_parse_key` counts it: a ``musig()`` takes one position for each
     participant and one for itself, and a key refused for itself is named
-    by the first of its positions, where `parse` refuses it. A key that is
-    no point is one `miniscript.from_script` reads.
+    by the first of its positions, where `parse` refuses it. A participant
+    `check` refuses, as a `_ParticipantError`, is named by its own
+    position. A key that is no point is one `miniscript.from_script` reads.
     """
     position = 0
     for key in keys:
         try:
             check(key)
+        except _ParticipantError as e:
+            err_msg = f"key {position + e.index}: {e}"
+            raise BTClibValueError(err_msg) from None
         except BTClibValueError as e:
             raise BTClibValueError(f"key {position}: {e}") from None
         try:
@@ -1701,6 +1715,24 @@ def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
     A ``musig()``, and an x-only key, as `_assert_keys` refuses it.
     """
     _assert_keys(keys, _assert_outside_taproot)
+
+
+def _assert_taproot_key(key: KeyExpression) -> None:
+    """Refuse a key ``tr()`` and ``rawtr()`` refuse when built.
+
+    An uncompressed key, and a ``musig()`` holding a participant
+    `KeyExpression` refuses when built, after one that is no
+    `KeyExpression`: an unpickled key skips that check. A participant is
+    refused as a `_ParticipantError`, as `_participant_fault` says, for
+    `_assert_keys` to name it by its own position.
+    """
+    _assert_compressed(key)
+    if key.participants:
+        _assert_participant_types(key.participants)
+        fault = _participant_fault(key.participants)
+        if fault is not None:
+            index, message = fault
+            raise _ParticipantError(message, index)
 
 
 @dataclass(frozen=True)
@@ -2672,7 +2704,9 @@ def _control_block(x_only: bytes, parity: int, leaf: _TreeLeaf) -> bytes:
 class TrDescriptor(Descriptor):
     """``tr(KEY)`` or ``tr(KEY,TREE)``: a p2tr output, BIP386.
 
-    An uncompressed key is refused when built, with `parse`'s message.
+    An uncompressed key is refused when built, with `parse`'s message, and
+    so is a ``musig()`` participant `parse` refuses, as `_assert_taproot_key`
+    says.
     The internal key is refused before the tree, as `parse` reads them,
     and a leaf key once the tree passes its other checks. `parse` refuses
     instead whichever fault it reads first. A `MultiA` leaf and a
@@ -2688,12 +2722,12 @@ class TrDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.internal_key, KeyExpression, "internal key")
-        _assert_keys((self.internal_key,), _assert_compressed)
+        _assert_keys((self.internal_key,), _assert_taproot_key)
         if self.tree is not None:
             _assert_tree(self.tree)
             # a pk() leaf is a bare key, and an unpickled leaf skipped its
             # own check
-            _assert_keys(self.key_expressions, _assert_compressed)
+            _assert_keys(self.key_expressions, _assert_taproot_key)
 
     @override
     def __str__(self) -> str:
@@ -2944,7 +2978,9 @@ class RawTrDescriptor(Descriptor):
     internal key with an empty merkle root, and it is why this is not a
     `TrDescriptor` carrying ``tree=None``.
 
-    An uncompressed key is refused when built, with `parse`'s message.
+    An uncompressed key is refused when built, with `parse`'s message, and
+    so is a ``musig()`` participant `parse` refuses, as `_assert_taproot_key`
+    says.
     """
 
     key: KeyExpression
@@ -2953,7 +2989,7 @@ class RawTrDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.key, KeyExpression, "key")
-        _assert_keys((self.key,), _assert_compressed)
+        _assert_keys((self.key,), _assert_taproot_key)
 
     @override
     def __str__(self) -> str:

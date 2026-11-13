@@ -992,10 +992,7 @@ def _assert_musig(key: KeyExpression) -> None:
     participants = key.participants
     if not participants:
         return
-    for participant in participants:
-        if not isinstance(participant, KeyExpression):
-            err_msg = f"invalid participant type: {type(participant).__name__}"  # type: ignore[unreachable]
-            raise BTClibTypeError(err_msg)
+    _assert_participant_types(participants)
     if key.xkey:
         raise BTClibValueError("a musig() takes no xkey")
     if key.origin is not None:
@@ -1007,20 +1004,46 @@ def _assert_musig(key: KeyExpression) -> None:
         _assert_musig_path(key)
 
 
-def _assert_participants(participants: tuple[KeyExpression, ...]) -> None:
-    """Refuse a participant that `_assert_musig` refuses whatever the path."""
-    if any(participant.participants for participant in participants):
-        raise BTClibValueError(_MUSIG_CLOSES)
+def _assert_participant_types(participants: tuple[KeyExpression, ...]) -> None:
+    """Refuse a participant that is no `KeyExpression`, naming its type."""
     for participant in participants:
+        if not isinstance(participant, KeyExpression):
+            err_msg = f"invalid participant type: {type(participant).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+
+
+def _assert_participants(participants: tuple[KeyExpression, ...]) -> None:
+    """Refuse a participant that `_assert_musig` refuses whatever the path.
+
+    With the message `_participant_fault` gives.
+    """
+    fault = _participant_fault(participants)
+    if fault is not None:
+        raise BTClibValueError(fault[1])
+
+
+def _participant_fault(
+    participants: tuple[KeyExpression, ...],
+) -> tuple[int, str] | None:
+    """Return the first participant `_assert_musig` refuses whatever the path.
+
+    Its index and `parse`'s message, or None. A participant that is a
+    ``musig()`` is refused before any other, at index 0, where `parse`
+    refuses it whichever participant it is.
+    """
+    if any(participant.participants for participant in participants):
+        return 0, _MUSIG_CLOSES
+    for index, participant in enumerate(participants):
         if participant.x_only:
-            raise BTClibValueError(f"musig(): {_X_ONLY_REFUSED}")
+            return index, f"musig(): {_X_ONLY_REFUSED}"
         if not participant.is_compressed:
-            raise BTClibValueError(f"musig(): {_UNCOMPRESSED_REFUSED}")
+            return index, f"musig(): {_UNCOMPRESSED_REFUSED}"
         # a key `miniscript.from_script` read may be no point
         try:
             _assert_point(participant)
         except EccValueError as e:
-            raise BTClibValueError(f"musig(): {e}") from None
+            return index, f"musig(): {e}"
+    return None
 
 
 def _assert_musig_path(key: KeyExpression) -> None:

@@ -184,6 +184,11 @@ build. Issue btclib-org/bip32-descriptors#284.
 as its build refuses it, then one of more keys than BIP387 allows, then
 one of a k outside 1 to n, with `parse`'s message. Issue
 btclib-org/bip32-descriptors#313.
+
+`TrDescriptor` and `RawTrDescriptor` refuse an unpickled ``musig()``
+key holding a participant `KeyExpression` refuses, with `parse`'s
+message where it has one, naming the participant by the position
+`parse` names. Issue btclib-org/bip32-descriptors#300.
 """
 
 from __future__ import annotations
@@ -2622,76 +2627,78 @@ _EXTENDED = (KeyExpression(xkey=_XPUB_A), KeyExpression(xkey=_XPUB_B))
 _MUSIG_PAIR = (_FIXED_A, _FIXED_B)
 
 
-@pytest.mark.parametrize(
-    "values,err_msg,text",
-    [
-        (
-            {"participants": _MUSIG_PAIR, "origin": _ORIGIN_KEY.origin},
-            "musig() cannot be nested inside a key origin",
-            f"tr([deadbeef/1h]musig({_K},{_K2}))",
-        ),
-        (
-            {"participants": (KeyExpression(participants=_MUSIG_PAIR), _FIXED_A)},
-            "Too many ')' in musig() expression",
-            f"tr(musig(musig({_K},{_K2}),{_K}))",
-        ),
-        (
-            {"participants": (replace(_FIXED_A, x_only=True), _FIXED_B)},
-            "musig(): x-only public keys are allowed in a taproot key expression only",
-            f"tr(musig({_K[2:]},{_K2}))",
-        ),
-        (
-            {"participants": (KeyExpression(pub_key=_UNCOMPRESSED), _FIXED_B)},
-            "musig(): uncompressed public keys are not allowed here",
-            f"tr(musig({_UNCOMPRESSED.hex()},{_K2}))",
-        ),
-        (
-            {"participants": (_READ_NO_POINT, _FIXED_B)},
-            "musig(): not a public key",
-            f"tr(musig({_NO_POINT_HEX},{_K2}))",
-        ),
-        (
-            {"participants": _MUSIG_PAIR, "der_path": (1,)},
-            "musig() derivation requires every participant to be extended",
-            f"tr(musig({_K},{_K2})/1)",
-        ),
-        (
-            {"participants": _MUSIG_PAIR, "wildcard": 0},
-            "musig() derivation requires every participant to be extended",
-            f"tr(musig({_K},{_K2})/*)",
-        ),
-        (
-            {
-                "participants": (replace(_EXTENDED[0], wildcard=0), _EXTENDED[1]),
-                "der_path": (1,),
-            },
-            "musig() cannot have a ranged participant and derivation too",
-            f"tr(musig({_XPUB_A}/*,{_XPUB_B})/1)",
-        ),
-        (
-            {"participants": _EXTENDED, "wildcard": 2**31},
-            "musig() cannot have a hardened wildcard",
-            f"tr(musig({_XPUB_A},{_XPUB_B})/*h)",
-        ),
-        (
-            {"participants": _EXTENDED, "der_path": (2**31,)},
-            "musig() cannot have hardened derivation steps",
-            f"tr(musig({_XPUB_A},{_XPUB_B})/0h)",
-        ),
-    ],
-    ids=[
-        "origin",
-        "nested",
-        "x-only participant",
-        "uncompressed participant",
-        "participant that is no point",
-        "path, fixed participant",
-        "wildcard, fixed participant",
-        "path, ranged participant",
-        "hardened wildcard",
-        "hardened step",
-    ],
-)
+# the fields of a musig() parse refuses, its message after the position
+# of the key, and a text parse refuses with it
+_MUSIG_FAULTS: list[tuple[dict[str, Any], str, str]] = [
+    (
+        {"participants": _MUSIG_PAIR, "origin": _ORIGIN_KEY.origin},
+        "musig() cannot be nested inside a key origin",
+        f"tr([deadbeef/1h]musig({_K},{_K2}))",
+    ),
+    (
+        {"participants": (KeyExpression(participants=_MUSIG_PAIR), _FIXED_A)},
+        "Too many ')' in musig() expression",
+        f"tr(musig(musig({_K},{_K2}),{_K}))",
+    ),
+    (
+        {"participants": (replace(_FIXED_A, x_only=True), _FIXED_B)},
+        "musig(): x-only public keys are allowed in a taproot key expression only",
+        f"tr(musig({_K[2:]},{_K2}))",
+    ),
+    (
+        {"participants": (KeyExpression(pub_key=_UNCOMPRESSED), _FIXED_B)},
+        "musig(): uncompressed public keys are not allowed here",
+        f"tr(musig({_UNCOMPRESSED.hex()},{_K2}))",
+    ),
+    (
+        {"participants": (_READ_NO_POINT, _FIXED_B)},
+        "musig(): not a public key",
+        f"tr(musig({_NO_POINT_HEX},{_K2}))",
+    ),
+    (
+        {"participants": _MUSIG_PAIR, "der_path": (1,)},
+        "musig() derivation requires every participant to be extended",
+        f"tr(musig({_K},{_K2})/1)",
+    ),
+    (
+        {"participants": _MUSIG_PAIR, "wildcard": 0},
+        "musig() derivation requires every participant to be extended",
+        f"tr(musig({_K},{_K2})/*)",
+    ),
+    (
+        {
+            "participants": (replace(_EXTENDED[0], wildcard=0), _EXTENDED[1]),
+            "der_path": (1,),
+        },
+        "musig() cannot have a ranged participant and derivation too",
+        f"tr(musig({_XPUB_A}/*,{_XPUB_B})/1)",
+    ),
+    (
+        {"participants": _EXTENDED, "wildcard": 2**31},
+        "musig() cannot have a hardened wildcard",
+        f"tr(musig({_XPUB_A},{_XPUB_B})/*h)",
+    ),
+    (
+        {"participants": _EXTENDED, "der_path": (2**31,)},
+        "musig() cannot have hardened derivation steps",
+        f"tr(musig({_XPUB_A},{_XPUB_B})/0h)",
+    ),
+]
+_MUSIG_FAULT_IDS = [
+    "origin",
+    "nested",
+    "x-only participant",
+    "uncompressed participant",
+    "participant that is no point",
+    "path, fixed participant",
+    "wildcard, fixed participant",
+    "path, ranged participant",
+    "hardened wildcard",
+    "hardened step",
+]
+
+
+@pytest.mark.parametrize("values,err_msg,text", _MUSIG_FAULTS, ids=_MUSIG_FAULT_IDS)
 def test_a_musig_parse_refuses_is_refused_when_built(
     values: dict[str, Any], err_msg: str, text: str
 ) -> None:
@@ -2700,6 +2707,70 @@ def test_a_musig_parse_refuses_is_refused_when_built(
         parse(text)
     with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
         KeyExpression(**values)
+
+
+# the faults of `_MUSIG_FAULTS` that are in the participants alone
+_PARTICIPANT_FAULTS = {
+    name: fault
+    for name, fault in zip(_MUSIG_FAULT_IDS, _MUSIG_FAULTS, strict=True)
+    if fault[0].keys() == {"participants"}
+}
+# each taproot descriptor holding a key, and the position of the key there
+_TAPROOT_HOLDERS: dict[str, tuple[Callable[[KeyExpression], Descriptor], str, int]] = {
+    "tr": (TrDescriptor, "tr({})", 0),
+    "rawtr": (RawTrDescriptor, "rawtr({})", 0),
+    "tr pk leaf": (lambda key: TrDescriptor(_KEY, key), f"tr({_X},pk({{}}))", 1),
+    "tr multi_a leaf": (
+        lambda key: TrDescriptor(_KEY, MultiA(1, (_KEY2, key))),
+        f"tr({_X},multi_a(1,{_X2},{{}}))",
+        2,
+    ),
+}
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+@pytest.mark.parametrize("holder", _TAPROOT_HOLDERS)
+@pytest.mark.parametrize("fault", _PARTICIPANT_FAULTS)
+def test_an_unpickled_musig_participant_parse_refuses_is_refused_in_taproot(
+    fault: str, holder: str, index: int
+) -> None:
+    """With the message `parse` gives the same key in the same position.
+
+    The participant at `index` of three is the faulty one, and is named
+    by its own position, but a ``musig()`` one, which `parse` names by the
+    first position of the ``musig()`` that holds it. An unpickled
+    ``musig()`` skips its own check of its participants. Issue
+    btclib-org/bip32-descriptors#300.
+    """
+    values, err_msg, _ = _PARTICIPANT_FAULTS[fault]
+    build, template, position = _TAPROOT_HOLDERS[holder]
+    participants = [_FIXED_A, _FIXED_B]
+    participants.insert(index, values["participants"][0])
+    key: KeyExpression = pickle.loads(  # noqa: S301
+        pickle.dumps(KeyExpression(participants=_MUSIG_PAIR))
+    )
+    object.__setattr__(key, "participants", tuple(participants))
+    if fault != "nested":
+        position += index
+    message = f"^key {position}: {re.escape(err_msg)}$"
+    with pytest.raises(BTClibValueError, match=message):
+        parse(template.format(key))
+    with pytest.raises(BTClibValueError, match=message):
+        build(key)
+
+
+@pytest.mark.parametrize("holder", _TAPROOT_HOLDERS)
+def test_an_unpickled_musig_participant_of_another_type_is_refused(
+    holder: str,
+) -> None:
+    """As `KeyExpression` refuses it. Issue btclib-org/bip32-descriptors#300."""
+    build, _, _ = _TAPROOT_HOLDERS[holder]
+    key: KeyExpression = pickle.loads(  # noqa: S301
+        pickle.dumps(KeyExpression(participants=_MUSIG_PAIR))
+    )
+    object.__setattr__(key, "participants", (_FIXED_A, _K2))
+    with pytest.raises(BTClibTypeError, match="^invalid participant type: str$"):
+        build(key)
 
 
 def test_a_musig_with_an_xkey_is_refused() -> None:
