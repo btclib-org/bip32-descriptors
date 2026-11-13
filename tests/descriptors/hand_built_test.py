@@ -3489,9 +3489,9 @@ def test_an_unpickled_empty_raw_script_is_refused_inside(
     """By the wrapper when built, with the message `parse` gives.
 
     An unpickled ``raw()`` skips its own check of the script, which the
-    wrapper runs before its position, as `_assert_inner` says. A script
-    that is not empty passes, to its position or to a build. Issue
-    btclib-org/bip32-descriptors#282.
+    wrapper runs after its network and before its position, as
+    `_assert_inner` says. A script that is not empty passes, to its
+    position or to a build. Issue btclib-org/bip32-descriptors#282.
     """
     err_msg = "^Raw script is not hex$"
     with pytest.raises(BTClibValueError, match=err_msg):
@@ -3500,6 +3500,8 @@ def test_an_unpickled_empty_raw_script_is_refused_inside(
         wrap(_unpickled_raw(b"", RawDescriptor))
     with pytest.raises(BTClibValueError, match=err_msg):
         wrap(_unpickled_raw(b"", _TrNamedRaw))
+    with pytest.raises(BTClibTypeError, match="^invalid network type: int$"):
+        wrap(_with_network(_unpickled_raw(b"", RawDescriptor), 5))
     with pytest.raises(BTClibValueError, match=r"^tr\(\) is not allowed inside "):
         wrap(_unpickled_raw(b"\x51", _TrNamedRaw))
     built = wrap(_unpickled_raw(b"\x51", RawDescriptor))
