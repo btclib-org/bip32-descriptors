@@ -196,6 +196,11 @@ the descriptor holds, and before a field of a node above it is read.
 ``tr()`` refuses an uncompressed leaf key before it asks a node its type
 and bounds, as ``wsh()`` does. Issues btclib-org/bip32-descriptors#302
 and btclib-org/bip32-descriptors#305.
+
+A `MultiA`, built or unpickled inside ``tr()``, refuses a k `parse`
+cannot read from its text with `parse`'s message, before its keys. It
+and a `Miniscript` node, built or unpickled, refuse a number of more
+digits than `parse` reads without quoting it: it may be a private key.
 """
 
 from __future__ import annotations
@@ -996,8 +1001,8 @@ def test_a_multi_a_sort_of_another_type_is_refused(sort: Any) -> None:
 @pytest.mark.parametrize("sort", [False, True])
 @pytest.mark.parametrize(
     "threshold,keys",
-    [(0, (_KEY,)), (-1, (_KEY,)), (3, (_KEY, _KEY2)), (1, ())],
-    ids=["zero", "negative", "above-key-count", "no-key"],
+    [(0, (_KEY,)), (3, (_KEY, _KEY2)), (1, ())],
+    ids=["zero", "above-key-count", "no-key"],
 )
 def test_a_multi_a_threshold_out_of_range_is_refused(
     threshold: int, keys: tuple[Any, ...], sort: bool
@@ -1007,6 +1012,81 @@ def test_a_multi_a_threshold_out_of_range_is_refused(
     err_msg = f"^invalid k in k-of-n {name}: {threshold}$"
     with pytest.raises(BTClibValueError, match=err_msg):
         MultiA(threshold, keys, sort=sort)
+
+
+# a number of the size of a private key, in decimal
+_SCALAR = int(_RANDOM_HEX, 16)
+
+
+@pytest.mark.parametrize(
+    "threshold,fault",
+    [
+        (-1, "digits expected"),
+        (2**32, "not in 0..2**32-1"),
+        (_SCALAR, "more than 10 digits"),
+        (-_SCALAR, "digits expected"),
+    ],
+    ids=["negative", "2**32", "scalar", "negative-scalar"],
+)
+@pytest.mark.parametrize("unpickled", [False, True], ids=["built", "unpickled"])
+def test_a_multi_a_threshold_parse_cannot_read_is_refused_as_parse_refuses_it(
+    threshold: int, fault: str, unpickled: bool
+) -> None:
+    """Before the keys, quoting none of it: it may be a private key.
+
+    Built, and unpickled inside ``tr()``, which matches the text `parse`
+    reads. Issue btclib-org/bip32-descriptors#313.
+    """
+    leaf = _unpickled_multi_a((_U_KEY,))
+    object.__setattr__(leaf, "threshold", threshold)
+    err_msg = f"^invalid multi_a\\(\\) threshold: {re.escape(fault)}$"
+    if unpickled:
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            TrDescriptor(_KEY, leaf)
+        with pytest.raises(BTClibValueError, match=err_msg):
+            parse(f"tr({_X},{leaf})")
+    else:
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            MultiA(threshold, (_U_KEY,))
+    assert_secret_free(e.value, [str(_SCALAR)])
+
+
+# a node of each kind of number, read from text, and the path to it
+_NUMBERED = {
+    "older": ("and_v(v:pk({}),older(1))", miniscript.P2WSH, (1,)),
+    "after": ("and_v(v:pk({}),after(1))", miniscript.P2WSH, (1,)),
+    "thresh": ("thresh(1,pk({}),s:pk({}))", miniscript.P2WSH, ()),
+    "multi": ("and_v(v:multi(1,{}),older(1))", miniscript.P2WSH, (0, 0)),
+    "multi_a": ("and_v(v:multi_a(1,{}),older(1))", miniscript.TAPSCRIPT, (0, 0)),
+    "pk_k": ("and_v(v:pk({}),older(1))", miniscript.P2WSH, (0, 0, 0)),
+}
+
+
+@pytest.mark.parametrize("sign", [1, -1], ids=["scalar", "negative-scalar"])
+@pytest.mark.parametrize("unpickled", [False, True], ids=["built", "unpickled"])
+@pytest.mark.parametrize("fragment", _NUMBERED)
+def test_a_miniscript_number_of_more_digits_than_parse_reads_is_refused_unquoted(
+    fragment: str, unpickled: bool, sign: int
+) -> None:
+    """As `parse` refuses its text, before the number is checked otherwise.
+
+    Built by `replace`, and unpickled in the descriptor that holds the
+    node: a number that long may be a private key.
+    """
+    expression, context, path = _NUMBERED[fragment]
+    first, second = (_X, _X2) if context == miniscript.TAPSCRIPT else (_C, _C2)
+    root = _unpickled(miniscript.parse(expression.format(first, second), context))
+    node = _node_at(root, path)
+    err_msg = rf"^invalid {fragment}\(\) number: more than 10 digits$"
+    if unpickled:
+        object.__setattr__(node, "threshold", sign * _SCALAR)
+        wrapped = "tr" if context == miniscript.TAPSCRIPT else "bare"
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            _outermost(wrapped, root)
+    else:
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            replace(node, threshold=sign * _SCALAR)
+    assert_secret_free(e.value, [str(_SCALAR)])
 
 
 # a hand-built `Miniscript` node for each field the tests below try,

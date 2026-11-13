@@ -204,6 +204,7 @@ from bip32_descriptors.bip32.bip32 import (
 from bip32_descriptors.bip32.der_path import (
     _HARDENING,
     HARDENED_OFFSET,
+    _assert_few_digits,
     _int_from_digits,
 )
 from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
@@ -503,8 +504,9 @@ class MultiA:
         A threshold of none or of more keys than there are, or more keys
         than BIP387 allows, describes a script nobody can spend.
 
-        An uncompressed key and a key that is no point are refused first,
-        as `parse` reads the keys before it counts them. Their message is
+        A k `parse` cannot read is refused first, as `parse` reads it first,
+        and an uncompressed key and a key that is no point next, as `parse`
+        reads the keys before it counts them. The message of a key is
         `parse`'s without the ``key N:`` that names the key's position in
         the ``tr()``, which a leaf does not know.
         """
@@ -513,6 +515,7 @@ class MultiA:
         for key in self.keys:
             assert_type(key, KeyExpression, "key")
         assert_type(self.sort, bool, "sort")
+        _assert_multi_a_threshold(self)
         for key in self.keys:
             _assert_compressed(key)
             _assert_point(key)
@@ -874,6 +877,21 @@ def _assert_threshold_type(threshold: object) -> None:
         raise BTClibTypeError(err_msg)
 
 
+def _assert_multi_a_threshold(leaf: MultiA) -> None:
+    """Refuse a `MultiA` whose k `parse` would not read from its text.
+
+    As `_read_multi_threshold` refuses it, with its messages and quoting
+    none of k: a negative one, then one of more digits than it reads,
+    then one past 2**32-1. `parse` reads k before the keys. The type of k
+    has been asserted.
+    """
+    name = "sortedmulti_a" if leaf.sort else "multi_a"
+    if leaf.threshold < 0:
+        raise BTClibValueError(f"invalid {name}() threshold: digits expected")
+    _assert_few_digits(leaf.threshold, f"{name}() threshold")
+    _assert_uint32_threshold(name, leaf.threshold)
+
+
 def _assert_multi_a_numbers(leaf: MultiA) -> None:
     """Refuse a `MultiA` of more keys than BIP387 allows, then its k.
 
@@ -891,8 +909,9 @@ def _assert_tree_leaf(node: object) -> None:
     """Refuse a tree node of the wrong type, and a `MultiA` leaf's keys and k.
 
     A `MultiA` leaf is refused where `_assert_key_types` refuses its keys,
-    then for the type of its threshold, then as `_assert_multi_a_numbers`
-    says: an unpickled leaf skips its own build's checks. Its keys are
+    then for the type of its threshold, then as `_assert_multi_a_threshold`
+    and `_assert_multi_a_numbers` say: an unpickled leaf skips its own
+    build's checks. Its keys are
     refused for what `parse` refuses in them once the tree passes, as
     `TrDescriptor` says.
     """
@@ -900,6 +919,7 @@ def _assert_tree_leaf(node: object) -> None:
     if isinstance(node, MultiA):
         _assert_key_types(node)
         _assert_threshold_type(node.threshold)
+        _assert_multi_a_threshold(node)
         _assert_multi_a_numbers(node)
 
 

@@ -112,7 +112,7 @@ from btclib.var_int import serialize as var_int_serialize
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import BIP32KeyData
-from bip32_descriptors.bip32.der_path import _int_from_digits
+from bip32_descriptors.bip32.der_path import _assert_few_digits, _int_from_digits
 from bip32_descriptors.descriptors.key_expression import (
     KeyExpression,
     PrvKeys,
@@ -1324,12 +1324,17 @@ class Miniscript:
         _assert_key_number(fragment, keys)
 
     def _assert_number(self) -> None:
-        """Refuse a lock time or a threshold not an integer or out of bounds."""
+        """Refuse a lock time or a threshold not an integer or out of bounds.
+
+        One of more digits than `parse` reads is refused first, as
+        `_assert_few_digits` says, so that no refusal quotes it.
+        """
         if not is_integer(self.threshold):
             err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
             raise BTClibTypeError(err_msg)
         fragment = self.fragment
         threshold = self.threshold
+        _assert_few_digits(threshold, f"{fragment}() number")
         if fragment in {"older", "after"}:
             if not 1 <= threshold < _MAX_TIMELOCK:
                 raise BTClibValueError(f"invalid {fragment}() value: {threshold}")

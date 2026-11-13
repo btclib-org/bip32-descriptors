@@ -68,8 +68,23 @@ def _int_from_digits(digits: str, what: str) -> int:
     """
     significant = digits.lstrip("0")
     if len(significant) > _MAX_DIGITS:
-        raise BTClibValueError(f"invalid {what}: more than {_MAX_DIGITS} digits")
+        raise _too_many_digits(what)
     return int(significant or "0")
+
+
+def _assert_few_digits(number: int, what: str) -> None:
+    """Refuse an integer of more digits than `_int_from_digits` reads.
+
+    With its message, quoting none of the number: one that long may be a
+    private key in decimal. A sign is not counted.
+    """
+    if abs(number) >= 10**_MAX_DIGITS:
+        raise _too_many_digits(what)
+
+
+def _too_many_digits(what: str) -> BTClibValueError:
+    """Return the refusal of a number of more than `_MAX_DIGITS` digits."""
+    return BTClibValueError(f"invalid {what}: more than {_MAX_DIGITS} digits")
 
 
 # The hardening symbol and this offset are one fact in two spellings,
