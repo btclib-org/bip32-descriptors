@@ -1934,6 +1934,28 @@ def test_what_parse_refuses_inside_sh_or_wsh_is_refused_when_built(
         replace(parsed, inner=inner)
 
 
+@pytest.mark.parametrize("wrapper,holding", _HOLDING_MULTI, ids=_HOLDING_MULTI_IDS)
+def test_an_unpickled_multi_whose_threshold_has_no_text_is_refused_inside(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    holding: Callable[[Descriptor], Descriptor],
+) -> None:
+    """Refused for its range, directly or by `replace`, without its text.
+
+    Python writes no `int` of more digits than its limit as text, so
+    `parse` has no text of it to refuse. Issue
+    btclib-org/bip32-descriptors#328.
+    """
+    inner = holding(_unpickled_multi_with(threshold=10**5000))
+    with pytest.raises(ValueError, match="integer string conversion"):
+        str(inner)
+    err_msg = f"^{re.escape(_OVER_UINT32)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrapper(inner)
+    parsed = cast("ShDescriptor | WshDescriptor", _PARSED[wrapper])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, inner=inner)
+
+
 class _NoText:
     """A value whose `str` raises."""
 

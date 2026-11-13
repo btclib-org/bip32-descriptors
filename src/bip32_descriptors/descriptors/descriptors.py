@@ -1965,8 +1965,8 @@ class WshDescriptor(Descriptor):
 
     An unpickled ``multi()`` argument skips its own check. A field of
     the wrong type is refused as `_assert_multi_types` says, and a
-    threshold out of range whose text can be written in `parse`'s order,
-    as `_assert_embedded` says. A ``raw()`` script or a ``rawpkh()`` key
+    threshold out of range in `parse`'s order, as `_assert_embedded`
+    says. A ``raw()`` script or a ``rawpkh()`` key
     hash that is no bytes is refused as `_assert_script_only_types`
     says, and a ``rawpkh()`` key hash of other than 20 bytes as
     `_assert_inner` says.
@@ -3098,7 +3098,8 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 
     A `ShDescriptor` or a `WshDescriptor` whose class writes its text
     with that class's own `str` is named without writing that text: an
-    unpickled one can hold an argument whose text cannot be written.
+    unpickled one can hold an argument whose text cannot be written. So
+    is a `MultiDescriptor`, as `_multi_name` says.
     """
     assert_type(inner.network, str, "network")
     if isinstance(inner, MultiDescriptor):
@@ -3118,6 +3119,8 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
         and type(inner).__str__ is WshDescriptor.__str__
     ):
         name = "wsh"
+    elif isinstance(inner, MultiDescriptor):
+        name = _multi_name(inner)
     else:
         name = str(inner).partition("(")[0]
     if name not in _PARSERS:
@@ -3136,9 +3139,7 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     with its messages: key by key, each refused for its taproot spelling
     before its compression, and a negative threshold as `parse` refuses
     the ``-`` that `str` writes. An unpickled argument skips its own
-    check of the keys and of the threshold. A threshold of more digits
-    than Python writes as text is not reached: `_assert_inner` raises
-    Python's `ValueError` writing it.
+    check of the keys and of the threshold.
     ``sh()`` and ``wsh()`` hold no key of their own, so a key's position
     in `inner`, counted as `_assert_keys` counts it, is the one `parse`
     names.
@@ -3172,7 +3173,7 @@ def _assert_multi_embedded(
     multi: MultiDescriptor, context: str, check: Callable[[KeyExpression], None]
 ) -> None:
     """Refuse a ``multi()`` as `_assert_embedded` says, `check` its keys."""
-    name = str(multi).partition("(")[0]
+    name = _multi_name(multi)
     if multi.threshold < 0:
         raise BTClibValueError(f"invalid {name}() threshold: digits expected")
     _assert_uint32_threshold(name, multi.threshold)
@@ -3183,6 +3184,19 @@ def _assert_multi_embedded(
     if not 1 <= multi.threshold <= len(multi.keys):
         raise BTClibValueError(f"invalid k in k-of-n {name}: {multi.threshold}")
     _assert_multi_size(name, multi.keys, context)
+
+
+def _multi_name(multi: MultiDescriptor) -> str:
+    """Return the function name `str` writes a ``multi()`` with.
+
+    Read from its sort, as `MultiDescriptor` names it, where its class
+    writes its text with `MultiDescriptor`'s own `str`: an unpickled one
+    can hold a threshold of more digits than Python writes as text. Its
+    sort is checked first, as `_assert_multi_types` says.
+    """
+    if type(multi).__str__ is MultiDescriptor.__str__:
+        return "sortedmulti" if multi.sort else "multi"
+    return str(multi).partition("(")[0]
 
 
 def _function_read(text: str) -> str | None:
