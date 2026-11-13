@@ -1943,8 +1943,8 @@ class ShDescriptor(Descriptor):
 
     An unpickled ``multi()`` argument is refused for a field of the
     wrong type and for its threshold, a ``raw()`` or ``rawpkh()`` one for
-    its bytes, and a ``rawpkh()`` one for the size of its hash, as
-    `WshDescriptor` says.
+    its bytes, a ``raw()`` one for an empty script, and a ``rawpkh()``
+    one for the size of its hash, as `WshDescriptor` says.
     """
 
     inner: Descriptor
@@ -2054,8 +2054,8 @@ class WshDescriptor(Descriptor):
     threshold out of range whose text can be written in `parse`'s order,
     as `_assert_embedded` says. A ``raw()`` script or a ``rawpkh()`` key
     hash that is no bytes is refused as `_assert_script_only_types`
-    says, and a ``rawpkh()`` key hash of other than 20 bytes as
-    `_assert_inner` says.
+    says, and an empty ``raw()`` script or a ``rawpkh()`` key hash of
+    other than 20 bytes as `_assert_inner` says.
     """
 
     inner: Descriptor
@@ -2549,7 +2549,10 @@ class AddrDescriptor(Descriptor):
 
 @dataclass(frozen=True)
 class RawDescriptor(Descriptor):
-    """``raw(HEX)``: the script those bytes are, BIP385."""
+    """``raw(HEX)``: the script those bytes are, BIP385.
+
+    An empty script is refused when built, with `parse`'s message.
+    """
 
     script: bytes
 
@@ -2557,6 +2560,7 @@ class RawDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         _assert_script_only_types(self)
+        _assert_raw_script(self.script)
 
     @override
     def __str__(self) -> str:
@@ -3186,7 +3190,8 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     The hash of a ``rawpkh()`` is then refused for its size, with
     `_assert_key_hash_size`'s message, before its position: an unpickled
     ``rawpkh()`` skips that check of its own, which its build runs after
-    the type of the hash.
+    the type of the hash. An empty ``raw()`` script is refused there
+    too, with `parse`'s message, for the same reason.
 
     A `ShDescriptor` or a `WshDescriptor` whose class writes its text
     with that class's own `str` is named without writing that text: an
@@ -3199,6 +3204,8 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
         _assert_script_only_types(inner)
         if isinstance(inner, RawPkhDescriptor):
             _assert_key_hash_size(inner.key_hash)
+        else:
+            _assert_raw_script(inner.script)
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
@@ -3814,9 +3821,18 @@ _EMBEDDED_SCRIPT_SIZE = {_P2SH: MAX_SCRIPT_ELEMENT_SIZE, _P2WSH: MAX_SCRIPT_SIZE
 def _parse_raw(
     args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
-    script = _hex_bytes(_one_argument(args, "raw"), "Raw script is not hex")
+    script = _hex_bytes(_one_argument(args, "raw"), _RAW_NOT_HEX)
     _assert_raw_size(script, context)
     return RawDescriptor(script, network=network)
+
+
+_RAW_NOT_HEX = "Raw script is not hex"
+
+
+def _assert_raw_script(script: bytes) -> None:
+    """Refuse an empty script, as `_hex_bytes` refuses empty hex."""
+    if not script:
+        raise BTClibValueError(_RAW_NOT_HEX)
 
 
 def _assert_raw_size(script: bytes, context: str) -> None:
@@ -3851,7 +3867,7 @@ def _assert_key_hash_size(key_hash: bytes) -> None:
 
 def _parse_bare_leaf(args: list[str]) -> RawLeaf:
     """Return the leaf of a ``raw(HEX)`` inside a tree: version c0."""
-    script = _hex_bytes(_one_argument(args, "raw"), "Raw script is not hex")
+    script = _hex_bytes(_one_argument(args, "raw"), _RAW_NOT_HEX)
     return RawLeaf(script, bare=True)
 
 
@@ -5186,6 +5202,9 @@ def infer_descriptor(
     script = bytes_from_octets(script)
     _assert_provider(provider)
     network = validated_network_name(network)
+    if not script:
+        # Core's answer, which `RawDescriptor` refuses to build
+        return add_checksum("raw()")
     inferred = str(_inferred(script, _TOP, _Known.of(provider), network))
     if not _parses_to(inferred, script, network):
         inferred = str(_addr_or_raw(script, _solved(script)[0], network))

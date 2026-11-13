@@ -152,6 +152,11 @@ a ``wsh()`` argument, refuse an unpickled ``rawpkh()`` whose hash is
 empty or of other than 20 bytes, as its own build refuses it, in the
 order `_assert_inner` gives. Issue btclib-org/bip32-descriptors#281.
 
+`RawDescriptor` refuses an empty script with `parse`'s message. So do
+`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
+a ``wsh()`` argument, for an unpickled ``raw()``, in the order
+`_assert_inner` gives. Issue btclib-org/bip32-descriptors#282.
+
 A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
 point, which `miniscript.from_script` reads, with `parse`'s message, the
 last two lacking the key's position. Issue
@@ -282,6 +287,22 @@ def test_a_raw_descriptor_script_of_another_type_is_refused(script: Any) -> None
     err_msg = f"^invalid script type: {type(script).__name__}$"
     with pytest.raises(BTClibTypeError, match=err_msg):
         RawDescriptor(script)
+
+
+def test_an_empty_raw_script_is_refused_when_built() -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    An empty script is what `parse` reads as no hex. Issue
+    btclib-org/bip32-descriptors#282.
+    """
+    err_msg = "^Raw script is not hex$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse("raw()")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        RawDescriptor(b"")
+    parsed = cast("RawDescriptor", _PARSED[RawDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, script=b"")
 
 
 @pytest.mark.parametrize("internal_key", [_X, 5, None, MultiA(1, (_KEY,))])
@@ -3435,6 +3456,53 @@ def test_an_unpickled_rawpkh_of_20_bytes_is_refused_for_its_position(
     with pytest.raises(BTClibValueError, match=r"^tr\(\) is not allowed inside "):
         wrap(inner)
     built = wrap(_unpickled_rawpkh(bytes(20), RawPkhDescriptor))
+    assert parse(str(built)) == built
+
+
+class _TrNamedRaw(RawDescriptor):
+    """A subclass writing ``tr()``, which ``sh()`` and ``wsh()`` refuse."""
+
+    @override
+    def __str__(self) -> str:
+        return f"tr({self.script.hex()})"
+
+
+def _unpickled_raw(script: bytes, cls: type[RawDescriptor]) -> Descriptor:
+    """Return ``raw(SCRIPT)`` of `cls`, unpickled, skipping its check."""
+    unpickled: RawDescriptor = pickle.loads(pickle.dumps(cls(b"\x51")))  # noqa: S301
+    object.__setattr__(unpickled, "script", script)
+    return unpickled
+
+
+@pytest.mark.parametrize(
+    "wrap,text",
+    [
+        (WshDescriptor, "wsh(raw())"),
+        (ShDescriptor, "sh(raw())"),
+        (_sh_wsh, "sh(wsh(raw()))"),
+    ],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+def test_an_unpickled_empty_raw_script_is_refused_inside(
+    wrap: Callable[[Descriptor], Descriptor], text: str
+) -> None:
+    """By the wrapper when built, with the message `parse` gives.
+
+    An unpickled ``raw()`` skips its own check of the script, which the
+    wrapper runs before its position, as `_assert_inner` says. A script
+    that is not empty passes, to its position or to a build. Issue
+    btclib-org/bip32-descriptors#282.
+    """
+    err_msg = "^Raw script is not hex$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(text)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_raw(b"", RawDescriptor))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_raw(b"", _TrNamedRaw))
+    with pytest.raises(BTClibValueError, match=r"^tr\(\) is not allowed inside "):
+        wrap(_unpickled_raw(b"\x51", _TrNamedRaw))
+    built = wrap(_unpickled_raw(b"\x51", RawDescriptor))
     assert parse(str(built)) == built
 
 
