@@ -179,6 +179,11 @@ btclib-org/bip32-descriptors#286.
 Before its type and bounds, a node is refused for a threshold or a lock
 time out of range or of another type, with the message of its own
 build. Issue btclib-org/bip32-descriptors#284.
+
+`TrDescriptor` and `RawTrDescriptor` refuse an unpickled key whose
+`pub_key` or `participants` is of another type, or a ``musig()``
+participant whose `pub_key` is, wherever they hold it, as `KeyExpression`
+refuses it when built. Issue btclib-org/bip32-descriptors#323.
 """
 
 from __future__ import annotations
@@ -4571,3 +4576,74 @@ def test_an_unpickled_node_lacking_a_field_its_build_computes_is_refused(
     err_msg = "^c: holds a type or bounds its build does not compute$"
     with pytest.raises(BTClibValueError, match=err_msg):
         _outermost(wrapped, root)
+
+
+def _unpickled_key(key: KeyExpression) -> KeyExpression:
+    """Return a copy of the key, its participants copied too."""
+    copied: KeyExpression = pickle.loads(pickle.dumps(key))  # noqa: S301
+    return copied
+
+
+def _multi_a_leaf(key: KeyExpression) -> MultiA:
+    """Return an unpickled ``multi_a()`` leaf holding the key alone."""
+    leaf: MultiA = pickle.loads(pickle.dumps(MultiA(1, (_KEY,))))  # noqa: S301
+    object.__setattr__(leaf, "keys", (key,))
+    return leaf
+
+
+def _miniscript_leaf(key: KeyExpression) -> miniscript.Miniscript:
+    """Return an unpickled ``pk()`` miniscript leaf holding the key."""
+    leaf = _unpickled(miniscript.parse(f"pk({_X})", _TAPSCRIPT))
+    object.__setattr__(leaf.subs[0], "keys", (key,))
+    return leaf
+
+
+# each place of a taproot descriptor a key is held in
+_TAPROOT_PLACES: dict[str, Callable[[KeyExpression], object]] = {
+    "tr-internal": TrDescriptor,
+    "rawtr": RawTrDescriptor,
+    "pk-leaf": lambda key: TrDescriptor(_KEY2, key),
+    "multi_a-leaf": lambda key: TrDescriptor(_KEY2, _multi_a_leaf(key)),
+    "miniscript-leaf": lambda key: TrDescriptor(_KEY2, _miniscript_leaf(key)),
+}
+
+
+@pytest.mark.parametrize("place", _TAPROOT_PLACES)
+@pytest.mark.parametrize("participant", [False, True], ids=["key", "participant"])
+@pytest.mark.parametrize("pub_key", [5, _X, [2]], ids=["int", "str", "list"])
+def test_a_taproot_key_unpickled_with_a_pub_key_of_another_type_is_refused(
+    pub_key: object, participant: bool, place: str
+) -> None:
+    """Naming the type alone, as `KeyExpression` does when built.
+
+    A ``musig()`` participant too. An unpickled key skips its own check,
+    and `is_compressed` reads the `pub_key` before anything types it.
+    Issue btclib-org/bip32-descriptors#323.
+    """
+    key = _unpickled_key(_MUSIG if participant else _KEY)
+    held = key.participants[0] if participant else key
+    object.__setattr__(held, "pub_key", pub_key)
+    err_msg = f"^invalid pub_key type: {type(pub_key).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        _TAPROOT_PLACES[place](key)
+
+
+@pytest.mark.parametrize("place", _TAPROOT_PLACES)
+@pytest.mark.parametrize(
+    "participants,name",
+    [(5, "int"), ([_KEY], "list"), ((_KEY, _X), "str")],
+    ids=["int", "list", "item"],
+)
+def test_a_taproot_musig_unpickled_with_participants_of_another_type_is_refused(
+    participants: object, name: str, place: str
+) -> None:
+    """Naming the type alone, as `KeyExpression` does when built.
+
+    A `participants` that is no tuple, and an item of it that is no
+    `KeyExpression`. Issue btclib-org/bip32-descriptors#323.
+    """
+    key = _unpickled_key(_MUSIG)
+    object.__setattr__(key, "participants", participants)
+    noun = "participant" if isinstance(participants, tuple) else "participants"
+    with pytest.raises(BTClibTypeError, match=f"^invalid {noun} type: {name}$"):
+        _TAPROOT_PLACES[place](key)

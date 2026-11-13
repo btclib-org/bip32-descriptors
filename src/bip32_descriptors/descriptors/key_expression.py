@@ -1152,6 +1152,30 @@ def _assert_point(key: KeyExpression) -> None:
         point_from_pub_key(key.pub_key)
 
 
+def _assert_key_fields(key: KeyExpression) -> None:
+    """Refuse a `pub_key` or `participants` of another type.
+
+    With the message `KeyExpression` gives when built, which an unpickled
+    key skips: `is_compressed` and a count of the participants read them
+    before anything types them. Each participant is a `KeyExpression`,
+    refused the same way.
+    """
+    stack = [key]
+    while stack:
+        one = stack.pop()
+        if one.pub_key is not None and not isinstance(one.pub_key, bytes):
+            err_msg = f"invalid pub_key type: {type(one.pub_key).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+        if not isinstance(one.participants, tuple):
+            err_msg = f"invalid participants type: {type(one.participants).__name__}"  # type: ignore[unreachable]
+            raise BTClibTypeError(err_msg)
+        for participant in one.participants:
+            if not isinstance(participant, KeyExpression):
+                err_msg = f"invalid participant type: {type(participant).__name__}"  # type: ignore[unreachable]
+                raise BTClibTypeError(err_msg)
+            stack.append(participant)
+
+
 # Bitcoin Core's own message, refusing a key path with two multipath steps
 _MULTIPLE_MULTIPATH = "Multiple multipath key path specifiers found"
 _ONE_ITEM_STEP = "a multipath step takes at least two elements"
