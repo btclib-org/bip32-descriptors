@@ -112,7 +112,7 @@ from btclib.var_int import serialize as var_int_serialize
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import BIP32KeyData
-from bip32_descriptors.bip32.der_path import _int_from_digits
+from bip32_descriptors.bip32.der_path import _MAX_DIGITS, _int_from_digits
 from bip32_descriptors.descriptors.key_expression import (
     KeyExpression,
     PrvKeys,
@@ -1206,6 +1206,33 @@ def _assert_derived(root: Miniscript) -> None:
         raise BTClibValueError(err_msg)
 
 
+def _assert_numbers(root: Miniscript) -> None:
+    """Refuse a tree a node of which holds a number its build refuses.
+
+    What `Miniscript.satisfy` asks before the satisfaction reads the
+    numbers, which an unpickled node holds unchecked: a ``thresh()``
+    threshold past its subexpressions indexes nothing, and a ``multi()``
+    one is how many signatures are searched for. Each node is refused for
+    its fragment and its arity as it is reached, since the walk reads its
+    subexpressions, and then for its number after its subexpressions, as
+    its build refuses it. A number of more than ten digits, which may be a
+    private key in decimal, is refused without being quoted.
+    """
+    nodes: list[Miniscript] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        node._assert_arity()
+        nodes.append(node)
+        stack += node.subs
+    for node in reversed(nodes):
+        threshold = node.threshold
+        if is_integer(threshold) and abs(threshold) >= 10**_MAX_DIGITS:
+            err_msg = f"{node.fragment} holds a number of more than {_MAX_DIGITS}"
+            raise BTClibValueError(f"{err_msg} digits")
+        node._assert_number()
+
+
 @dataclass(frozen=True)
 class Miniscript:
     """A miniscript expression: a fragment, its arguments, its own type.
@@ -1655,8 +1682,12 @@ class Miniscript:
         higher sequence can turn "none" into a satisfaction, and can also
         turn a non-malleable one malleable, which is why the two are
         separate messages.
+
+        A node holding a number its build refuses, as an unpickled one can,
+        is refused first, as `_assert_numbers` says.
         """
         _assert_prv_keys(prv_keys)
+        _assert_numbers(self)
         offered = (
             {}
             if signatures is None

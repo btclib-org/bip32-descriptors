@@ -2305,7 +2305,17 @@ class MultiDescriptor(Descriptor):
 
         The first element is the one OP_CHECKMULTISIG pops without
         reading, which BIP147 requires to be the empty push.
+
+        A field of another type, and a threshold outside 0 to 2**32-1 or
+        outside 1 to n, as an unpickled ``multi()`` can hold, are refused
+        first with the messages of its build, which quote no threshold
+        past 2**32-1.
         """
+        _assert_multi_types(self)
+        name = "sortedmulti" if self.sort else "multi"
+        _assert_uint32_threshold(name, self.threshold)
+        if not 1 <= self.threshold <= len(self.keys):
+            raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
         offered = [
             (sec, _offered_signature(signatures, sec, x_only=False))
             for sec in self._pub_keys(index, prv_keys)
