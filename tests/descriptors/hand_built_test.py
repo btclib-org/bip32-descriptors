@@ -36,9 +36,8 @@ A ``musig()`` whose `hardening` is not h is refused too. Issue
 btclib-org/bip32-descriptors#181.
 
 `TrDescriptor` and `RawTrDescriptor` refuse an unpickled ``musig()``
-whose `origin`, `xkey`, `hardening`, path or wildcard its build
-refuses, with that refusal's message at the position `parse` names.
-Issue btclib-org/bip32-descriptors#321.
+whose own fields its build refuses, with that refusal's message at the
+position `parse` names. Issue btclib-org/bip32-descriptors#321.
 
 `WshDescriptor` refuses an argument holding an uncompressed key, and
 `ShDescriptor` a ``wsh()`` one. Both refuse an argument holding a
@@ -2966,6 +2965,62 @@ def test_an_unpickled_musig_its_build_refuses_is_refused_in_taproot(
     for build, position in builds:
         match = f"^key {position + shift}: {re.escape(err_msg)}$"
         with pytest.raises(BTClibValueError, match=match):
+            build()
+
+
+@pytest.mark.parametrize(
+    "name,value,position",
+    [
+        ("wildcard", "", None),
+        ("wildcard", 5, 2),
+        ("der_path", [0], None),
+        ("der_path", (2**32,), 2),
+        ("participants", list(_EXTENDED), None),
+        ("pub_key", _FIXED_A.pub_key, 0),
+        ("x_only", True, 0),
+        ("hardening", 5, None),
+        ("xkey", None, None),
+    ],
+    ids=[
+        "empty wildcard",
+        "wildcard 5",
+        "der_path list",
+        "step 2**32",
+        "participants list",
+        "pub_key",
+        "x_only",
+        "hardening int",
+        "xkey None",
+    ],
+)
+def test_an_unpickled_musig_field_any_key_refuses_is_refused_in_taproot(
+    name: str, value: object, position: int | None
+) -> None:
+    """With the refusal of `KeyExpression`'s build of the same fields.
+
+    An unpickled ``musig()`` skips that check of its own. A type is
+    refused with no position, as the build refuses it. A step or a
+    wildcard is named at the position after the participants, where
+    `parse` reads it, and the rest at the first position of the key. The
+    participants are extended and none is ranged, which is the path
+    `_assert_musig_path` takes, so an empty wildcard is refused for its
+    type only.
+    """
+    built = KeyExpression(participants=_EXTENDED, der_path=(0,))
+    musig: KeyExpression = pickle.loads(pickle.dumps(built))  # noqa: S301
+    object.__setattr__(musig, name, value)
+    values = {field.name: getattr(musig, field.name) for field in fields(musig)}
+    with pytest.raises((BTClibTypeError, BTClibValueError)) as refused:
+        KeyExpression(**values)
+    builds: list[tuple[Callable[[], object], int]] = [
+        (lambda: TrDescriptor(musig), 0),
+        (lambda: TrDescriptor(_KEY, musig), 1),
+        (lambda: RawTrDescriptor(musig), 0),
+    ]
+    for build, first in builds:
+        prefix = "" if position is None else f"key {first + position}: "
+        match = f"^{re.escape(prefix + str(refused.value))}$"
+        with pytest.raises(type(refused.value), match=match):
             build()
 
 

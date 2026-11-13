@@ -205,6 +205,7 @@ from bip32_descriptors.bip32.der_path import (
     _HARDENING,
     HARDENED_OFFSET,
     _assert_few_digits,
+    _assert_valid_index,
     _int_from_digits,
 )
 from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
@@ -216,6 +217,8 @@ from bip32_descriptors.descriptors.key_expression import (
     PrvKeys,
     Wifs,
     _assert_compressed,
+    _assert_fixed_key_alone,
+    _assert_hardening,
     _assert_index_range,
     _assert_multipath_keys,
     _assert_musig_allowed,
@@ -226,6 +229,8 @@ from bip32_descriptors.descriptors.key_expression import (
     _assert_participant_types,
     _assert_point,
     _assert_prv_keys,
+    _assert_pub_key,
+    _assert_wildcard,
     _derived_once,
     _expression,
     _filed_wifs,
@@ -1727,9 +1732,8 @@ def _assert_keys(
     `check` refuses, as a `_ParticipantError`, is named by its own
     position. A key that is no point is one `miniscript.from_script` reads.
     A ``musig()`` that `check` takes has its path or wildcard refused as
-    `_assert_musig` refuses it, at the position after its participants,
-    where `parse` reads the path: an unpickled one skips that check of its
-    own.
+    `_assert_musig_path_fields` says, at the position after its
+    participants, where `parse` reads the path.
     """
     position = 0
     for key in keys:
@@ -1747,7 +1751,7 @@ def _assert_keys(
         position += len(key.participants)
         if key.participants and (key.der_path or key.wildcard is not None):
             try:
-                _assert_musig_path(key)
+                _assert_musig_path_fields(key)
             except BTClibValueError as e:
                 raise BTClibValueError(f"key {position}: {e}") from None
         position += 1
@@ -1764,22 +1768,42 @@ def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
 def _assert_taproot_key(key: KeyExpression) -> None:
     """Refuse a key ``tr()`` and ``rawtr()`` refuse when built.
 
-    An uncompressed key, and a ``musig()`` that `_assert_musig` refuses for
-    a participant that is no `KeyExpression`, then for its `xkey`, `origin`
-    or `hardening`, then for a participant `KeyExpression` refuses when
-    built: an unpickled key skips that check. A participant is refused as
-    a `_ParticipantError`, as `_participant_fault` says, for `_assert_keys`
-    to name it by its own position. `_assert_keys` refuses the path or
-    wildcard.
+    An uncompressed key, then a ``musig()`` whose own fields or
+    participants `KeyExpression` refuses when built, with its messages and
+    in its order, but for the path and the wildcard, which `_assert_keys`
+    refuses last, as `_assert_musig_path_fields` says: an unpickled key
+    skips that check. A participant is refused as a `_ParticipantError`,
+    as `_participant_fault` says, for `_assert_keys` to name it by its own
+    position.
     """
     _assert_compressed(key)
-    if key.participants:
-        _assert_participant_types(key.participants)
-        _assert_musig_fields(key)
-        fault = _participant_fault(key.participants)
-        if fault is not None:
-            index, message = fault
-            raise _ParticipantError(message, index)
+    if not key.participants:
+        return
+    assert_type(key.der_path, tuple, "der_path")
+    assert_type(key.participants, tuple, "participants")
+    _assert_pub_key(key)
+    _assert_fixed_key_alone(key)
+    _assert_hardening(key.hardening)
+    _assert_participant_types(key.participants)
+    _assert_musig_fields(key)
+    fault = _participant_fault(key.participants)
+    if fault is not None:
+        index, message = fault
+        raise _ParticipantError(message, index)
+    assert_type(key.xkey, str, "xkey")
+
+
+def _assert_musig_path_fields(key: KeyExpression) -> None:
+    """Refuse the path or wildcard of a ``musig()`` its build refuses.
+
+    A step or a wildcard `KeyExpression` refuses for any key, then a path
+    or wildcard as `_assert_musig_path` says: an unpickled key skips those
+    checks.
+    """
+    for step in key.der_path:
+        _assert_valid_index(step)
+    _assert_wildcard(key.wildcard)
+    _assert_musig_path(key)
 
 
 @dataclass(frozen=True)
@@ -2752,14 +2776,14 @@ class TrDescriptor(Descriptor):
     """``tr(KEY)`` or ``tr(KEY,TREE)``: a p2tr output, BIP386.
 
     An uncompressed key is refused when built, with `parse`'s message, and
-    so is a ``musig()`` participant `parse` refuses, as
-    `_assert_taproot_key` says. The internal key is refused before the tree,
-    as `parse` reads them, and a leaf key once the tree passes the checks of
-    `_assert_tree`, before a leaf is asked its type and bounds and its
-    sanity, as `_assert_leaves_sane` says. `parse` refuses instead whichever
-    fault it reads first. A `MultiA` leaf and a tapscript `Miniscript` node
-    refuse one when they are built, before the ``tr()`` that holds them, and
-    their message lacks the ``key N:`` that names the key's position in the
+    so is a ``musig()`` its own build refuses, as `_assert_taproot_key`
+    says. The internal key is refused before the tree, as `parse` reads
+    them, and a leaf key once the tree passes the checks of `_assert_tree`,
+    before a leaf is asked its type and bounds and its sanity, as
+    `_assert_leaves_sane` says. `parse` refuses instead whichever fault it
+    reads first. A `MultiA` leaf and a tapscript `Miniscript` node refuse
+    one when they are built, before the ``tr()`` that holds them, and their
+    message lacks the ``key N:`` that names the key's position in the
     ``tr()``.
     """
 
@@ -3028,7 +3052,7 @@ class RawTrDescriptor(Descriptor):
     `TrDescriptor` carrying ``tree=None``.
 
     An uncompressed key is refused when built, with `parse`'s message, and
-    so is a ``musig()`` participant `parse` refuses, as `_assert_taproot_key`
+    so is a ``musig()`` its own build refuses, as `_assert_taproot_key`
     says.
     """
 
