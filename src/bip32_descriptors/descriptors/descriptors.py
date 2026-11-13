@@ -205,6 +205,7 @@ from bip32_descriptors.bip32.der_path import (
     _HARDENING,
     HARDENED_OFFSET,
     _assert_few_digits,
+    _assert_valid_index,
     _int_from_digits,
 )
 from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
@@ -216,14 +217,20 @@ from bip32_descriptors.descriptors.key_expression import (
     PrvKeys,
     Wifs,
     _assert_compressed,
+    _assert_fixed_key_alone,
+    _assert_hardening,
     _assert_index_range,
     _assert_multipath_keys,
     _assert_musig_allowed,
+    _assert_musig_fields,
+    _assert_musig_path,
     _assert_network,
     _assert_outside_taproot,
     _assert_participant_types,
     _assert_point,
     _assert_prv_keys,
+    _assert_pub_key,
+    _assert_wildcard,
     _derived_once,
     _expression,
     _filed_wifs,
@@ -951,11 +958,11 @@ def _assert_tree(tree: DescriptorTree) -> list[Miniscript]:
     Once the walk is done, so that a node of the wrong type or context is
     named first, a miniscript leaf is refused where any of its nodes holds
     a number of keys its fragment does not take, as `_assert_key_numbers`
-    says. It is then refused where `parse` reads its text as a function,
-    such as ``pk()`` or ``multi_a()``: the descriptor would not parse back
-    from its text. A key that is no point is left to `_assert_keys`.
+    says. A key that is no point is left to `_assert_keys`.
 
-    Return the miniscript leaves, for `_assert_leaves_sane`.
+    Return the miniscript leaves, for `_assert_leaves_read` and
+    `_assert_leaves_sane`. Nothing here writes a leaf's text, which reads
+    its keys' fields: `_assert_keys` checks them first.
     """
     # each entry carries whether it is a node under a miniscript leaf
     stack: list[tuple[object, int, bool]] = [(tree, 0, False)]
@@ -980,12 +987,20 @@ def _assert_tree(tree: DescriptorTree) -> list[Miniscript]:
             raise BTClibValueError(f"script tree deeper than {MAX_TREE_DEPTH}")
         stack += [(node[1], depth + 1, False), (node[0], depth + 1, False)]
     _assert_key_numbers(leaves, _tree_keys(tree))
+    return leaves
+
+
+def _assert_leaves_read(leaves: list[Miniscript]) -> None:
+    """Refuse a miniscript leaf whose text `parse` reads as a function.
+
+    Such as ``pk()`` or ``multi_a()``: the descriptor would not parse back
+    from its text.
+    """
     for leaf in leaves:
         name = _leaf_function(str(leaf))
         if name is not None:
             err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
             raise BTClibValueError(err_msg)
-    return leaves
 
 
 def _assert_leaves_sane(leaves: list[Miniscript]) -> None:
@@ -1724,6 +1739,10 @@ def _assert_keys(
     by the first of its positions, where `parse` refuses it. A participant
     `check` refuses, as a `_ParticipantError`, is named by its own
     position. A key that is no point is one `miniscript.from_script` reads.
+    A ``musig()`` that `check` takes has its path or wildcard refused as
+    `_assert_musig_path_fields` says, at the position after its
+    participants, where `parse` reads the path. A type is refused with no
+    position, as the build refuses it.
     """
     position = 0
     for key in keys:
@@ -1734,11 +1753,19 @@ def _assert_keys(
             raise BTClibValueError(err_msg) from None
         except BTClibValueError as e:
             raise BTClibValueError(f"key {position}: {e}") from None
+        except EccValueError as e:
+            raise EccValueError(f"key {position}: {e}") from None
         try:
             _assert_point(key)
         except EccValueError as e:
             raise EccValueError(f"key {position}: {e}") from None
-        position += len(key.participants) + 1
+        position += len(key.participants)
+        if key.participants and (key.der_path or key.wildcard is not None):
+            try:
+                _assert_musig_path_fields(key)
+            except BTClibValueError as e:
+                raise BTClibValueError(f"key {position}: {e}") from None
+        position += 1
 
 
 def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
@@ -1752,19 +1779,42 @@ def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
 def _assert_taproot_key(key: KeyExpression) -> None:
     """Refuse a key ``tr()`` and ``rawtr()`` refuse when built.
 
-    An uncompressed key, and a ``musig()`` holding a participant
-    `KeyExpression` refuses when built, after one that is no
-    `KeyExpression`: an unpickled key skips that check. A participant is
-    refused as a `_ParticipantError`, as `_participant_fault` says, for
-    `_assert_keys` to name it by its own position.
+    An uncompressed key that is no ``musig()``. A ``musig()`` whose own
+    fields or participants `KeyExpression` refuses when built, with its
+    messages and in its order, but for the path and the wildcard, which
+    `_assert_keys` refuses last, as `_assert_musig_path_fields` says: an
+    unpickled key skips that check. A participant is refused as a
+    `_ParticipantError`, as `_participant_fault` says, for `_assert_keys`
+    to name it by its own position.
     """
-    _assert_compressed(key)
-    if key.participants:
-        _assert_participant_types(key.participants)
-        fault = _participant_fault(key.participants)
-        if fault is not None:
-            index, message = fault
-            raise _ParticipantError(message, index)
+    if not key.participants:
+        _assert_compressed(key)
+        return
+    assert_type(key.der_path, tuple, "der_path")
+    assert_type(key.participants, tuple, "participants")
+    _assert_pub_key(key)
+    _assert_fixed_key_alone(key)
+    _assert_hardening(key.hardening)
+    _assert_participant_types(key.participants)
+    _assert_musig_fields(key)
+    fault = _participant_fault(key.participants)
+    if fault is not None:
+        index, message = fault
+        raise _ParticipantError(message, index)
+    assert_type(key.xkey, str, "xkey")
+
+
+def _assert_musig_path_fields(key: KeyExpression) -> None:
+    """Refuse the path or wildcard of a ``musig()`` its build refuses.
+
+    A step or a wildcard `KeyExpression` refuses for any key, then a path
+    or wildcard as `_assert_musig_path` says: an unpickled key skips those
+    checks.
+    """
+    for step in key.der_path:
+        _assert_valid_index(step)
+    _assert_wildcard(key.wildcard)
+    _assert_musig_path(key)
 
 
 @dataclass(frozen=True)
@@ -2737,15 +2787,15 @@ class TrDescriptor(Descriptor):
     """``tr(KEY)`` or ``tr(KEY,TREE)``: a p2tr output, BIP386.
 
     An uncompressed key is refused when built, with `parse`'s message, and
-    so is a ``musig()`` participant `parse` refuses, as
-    `_assert_taproot_key` says. The internal key is refused before the tree,
-    as `parse` reads them, and a leaf key once the tree passes the checks of
-    `_assert_tree`, before a leaf is asked its type and bounds and its
-    sanity, as `_assert_leaves_sane` says. `parse` refuses instead whichever
-    fault it reads first. A `MultiA` leaf and a tapscript `Miniscript` node
-    refuse one when they are built, before the ``tr()`` that holds them, and
-    their message lacks the ``key N:`` that names the key's position in the
-    ``tr()``.
+    so is a ``musig()`` its own build refuses, as `_assert_taproot_key`
+    says. The internal key is refused before the tree, as `parse` reads
+    them, and a leaf key once the tree passes the checks of `_assert_tree`,
+    before a leaf's text is read, as `_assert_leaves_read` says, and before
+    it is asked its type and bounds and its sanity, as `_assert_leaves_sane`
+    says. `parse` refuses instead whichever fault it reads first. A `MultiA`
+    leaf and a tapscript `Miniscript` node refuse one when they are built,
+    before the ``tr()`` that holds them, and their message lacks the
+    ``key N:`` that names the key's position in the ``tr()``.
     """
 
     internal_key: KeyExpression
@@ -2761,6 +2811,7 @@ class TrDescriptor(Descriptor):
             # a pk() leaf is a bare key, and an unpickled leaf skipped its
             # own check
             _assert_keys(self.key_expressions, _assert_taproot_key)
+            _assert_leaves_read(leaves)
             _assert_leaves_sane(leaves)
 
     @override
@@ -3013,7 +3064,7 @@ class RawTrDescriptor(Descriptor):
     `TrDescriptor` carrying ``tree=None``.
 
     An uncompressed key is refused when built, with `parse`'s message, and
-    so is a ``musig()`` participant `parse` refuses, as `_assert_taproot_key`
+    so is a ``musig()`` its own build refuses, as `_assert_taproot_key`
     says.
     """
 

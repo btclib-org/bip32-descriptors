@@ -993,15 +993,20 @@ def _assert_musig(key: KeyExpression) -> None:
     if not participants:
         return
     _assert_participant_types(participants)
+    _assert_musig_fields(key)
+    _assert_participants(participants)
+    if key.der_path or key.wildcard is not None:
+        _assert_musig_path(key)
+
+
+def _assert_musig_fields(key: KeyExpression) -> None:
+    """Refuse the `xkey`, `origin` or `hardening` `_assert_musig` refuses."""
     if key.xkey:
         raise BTClibValueError("a musig() takes no xkey")
     if key.origin is not None:
         raise BTClibValueError(_MUSIG_IN_ORIGIN)
     if key.hardening != _HARDENING:
         raise BTClibValueError("invalid musig() hardening symbol: h expected")
-    _assert_participants(participants)
-    if key.der_path or key.wildcard is not None:
-        _assert_musig_path(key)
 
 
 def _assert_participant_types(participants: tuple[KeyExpression, ...]) -> None:
