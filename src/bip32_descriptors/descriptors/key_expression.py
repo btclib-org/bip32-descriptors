@@ -388,53 +388,8 @@ class KeyExpression:
     wif_prefix: bytes = field(default=b"", compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Check key fields, `der_path`, `wildcard` and `hardening`.
-
-        A `pub_key` is SEC bytes, checked as `_assert_pub_key` says, and
-        the whole key: no `xkey`, `participants`, `der_path` or `wildcard`
-        beside it. `x_only` takes a 0x02 `pub_key` of 33 bytes.
-        `participants` make a ``musig()`` as `_assert_musig` says.
-        `wildcard` is None, 0 or 2**31. `hardening` is one of the two
-        symbols BIP380 allows. A refusal quotes no key, beyond the prefix
-        byte of a `pub_key`.
-
-        An `xkey` is an extended public key of any version btclib decodes,
-        or one of the wallet-policy stand-ins `_PLACEHOLDER` matches, or
-        nothing at all where the key is `pub_key` or `participants`. What
-        else is refused includes an xprv, and an xprv damaged by a
-        character, which decodes as no key -- and where only its checksum
-        changed still spells one.
-        """
-        if not isinstance(self.der_path, tuple):
-            err_msg = f"invalid der_path type: {type(self.der_path).__name__}"  # type: ignore[unreachable]
-            raise BTClibTypeError(err_msg)
-        if not isinstance(self.participants, tuple):
-            err_msg = f"invalid participants type: {type(self.participants).__name__}"  # type: ignore[unreachable]
-            raise BTClibTypeError(err_msg)
-        for step in self.der_path:
-            _assert_valid_index(step)
-        _assert_pub_key(self)
-        _assert_fixed_key_alone(self)
-        _assert_hardening(self.hardening)
-        _assert_wildcard(self.wildcard)
-        _assert_musig(self)
-        if not isinstance(self.xkey, str):
-            err_msg = f"invalid xkey type: {type(self.xkey).__name__}"  # type: ignore[unreachable]
-            raise BTClibTypeError(err_msg)
-        if not (self.pub_key or self.xkey or self.participants):
-            raise BTClibValueError(_NO_KEY)
-        if not self.xkey or _PLACEHOLDER.fullmatch(self.xkey):
-            return
-        try:
-            is_private = BIP32KeyData.b58decode(self.xkey).is_private
-        # from None: btclib's reason is about the characters, which are
-        # what this refuses to repeat
-        except ValueError:
-            err_msg = "invalid xkey: no extended public key and no placeholder"
-            raise BTClibValueError(err_msg) from None
-        if is_private:
-            err_msg = "an extended private key is no xkey: pass its xpub"
-            raise BTClibValueError(err_msg)
+        """Check the fields as `_assert_key_expression` says."""
+        _assert_key_expression(self)
 
     @property
     def is_ranged(self) -> bool:
@@ -898,6 +853,63 @@ def _script_keys() -> Iterator[None]:
         yield
     finally:
         _SCRIPT_KEYS.reset(token)
+
+
+def _assert_key_expression(key: KeyExpression) -> None:
+    """Check key fields, `origin`, `der_path`, `wildcard` and `hardening`.
+
+    `KeyExpression` checks itself with this when built, and a descriptor
+    checks each of its keys with it again, an unpickled key having
+    skipped the first.
+
+    A `pub_key` is SEC bytes, checked as `_assert_pub_key` says, and
+    the whole key: no `xkey`, `participants`, `der_path` or `wildcard`
+    beside it. `x_only` takes a 0x02 `pub_key` of 33 bytes.
+    `participants` make a ``musig()`` as `_assert_musig` says. `origin`
+    is None or a `BIP32KeyOrigin`. `wildcard` is None, 0 or 2**31.
+    `hardening` is one of the two symbols BIP380 allows. A refusal quotes
+    no key, beyond the prefix byte of a `pub_key`.
+
+    An `xkey` is an extended public key of any version btclib decodes,
+    or one of the wallet-policy stand-ins `_PLACEHOLDER` matches, or
+    nothing at all where the key is `pub_key` or `participants`. What
+    else is refused includes an xprv, and an xprv damaged by a
+    character, which decodes as no key -- and where only its checksum
+    changed still spells one.
+    """
+    if not isinstance(key.der_path, tuple):
+        err_msg = f"invalid der_path type: {type(key.der_path).__name__}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    if not isinstance(key.participants, tuple):
+        err_msg = f"invalid participants type: {type(key.participants).__name__}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    if key.origin is not None and not isinstance(key.origin, BIP32KeyOrigin):
+        err_msg = f"invalid origin type: {type(key.origin).__name__}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    for step in key.der_path:
+        _assert_valid_index(step)
+    _assert_pub_key(key)
+    _assert_fixed_key_alone(key)
+    _assert_hardening(key.hardening)
+    _assert_wildcard(key.wildcard)
+    _assert_musig(key)
+    if not isinstance(key.xkey, str):
+        err_msg = f"invalid xkey type: {type(key.xkey).__name__}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    if not (key.pub_key or key.xkey or key.participants):
+        raise BTClibValueError(_NO_KEY)
+    if not key.xkey or _PLACEHOLDER.fullmatch(key.xkey):
+        return
+    try:
+        is_private = BIP32KeyData.b58decode(key.xkey).is_private
+    # from None: btclib's reason is about the characters, which are
+    # what this refuses to repeat
+    except ValueError:
+        err_msg = "invalid xkey: no extended public key and no placeholder"
+        raise BTClibValueError(err_msg) from None
+    if is_private:
+        err_msg = "an extended private key is no xkey: pass its xpub"
+        raise BTClibValueError(err_msg)
 
 
 def _assert_pub_key(key: KeyExpression) -> None:

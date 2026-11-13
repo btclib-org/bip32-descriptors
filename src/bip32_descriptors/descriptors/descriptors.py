@@ -217,6 +217,7 @@ from bip32_descriptors.descriptors.key_expression import (
     Wifs,
     _assert_compressed,
     _assert_index_range,
+    _assert_key_expression,
     _assert_multipath_keys,
     _assert_musig_allowed,
     _assert_network,
@@ -235,6 +236,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _participant_fault,
     _read_multipath_keys,
     _read_split,
+    _script_keys,
     _split_arguments,
     _split_function,
     _split_unpaired_arguments,
@@ -1716,14 +1718,20 @@ class _ParticipantError(BTClibValueError):
 def _assert_keys(
     keys: Iterable[KeyExpression], check: Callable[[KeyExpression], None]
 ) -> None:
-    """Refuse a key `check` refuses, then one that is no point.
+    """Refuse a key `check` refuses, then one `KeyExpression` refuses.
 
-    With `parse`'s message, which names the key by its position, counted
-    as `_parse_key` counts it: a ``musig()`` takes one position for each
-    participant and one for itself, and a key refused for itself is named
-    by the first of its positions, where `parse` refuses it. A participant
-    `check` refuses, as a `_ParticipantError`, is named by its own
-    position. A key that is no point is one `miniscript.from_script` reads.
+    Then one that is no point. With `parse`'s message, which names the key
+    by its position, counted as `_parse_key` counts it: a ``musig()``
+    takes one position for each participant and one for itself, and a key
+    refused for itself is named by the first of its positions, where
+    `parse` refuses it. A participant `check` refuses, as a
+    `_ParticipantError`, is named by its own position. A key that is no
+    point is one `miniscript.from_script` reads.
+
+    A field `KeyExpression` refuses when built, which an unpickled key
+    skips, is refused with its message, after the position of the
+    participant that holds it, then of the key; a type is refused as it
+    is, without one.
     """
     position = 0
     for key in keys:
@@ -1734,11 +1742,29 @@ def _assert_keys(
             raise BTClibValueError(err_msg) from None
         except BTClibValueError as e:
             raise BTClibValueError(f"key {position}: {e}") from None
+        # participants of another type are refused by the key's own check
+        if isinstance(key.participants, tuple):
+            for index, participant in enumerate(key.participants):
+                _assert_fields(participant, position + index)
+        _assert_fields(key, position)
         try:
             _assert_point(key)
         except EccValueError as e:
             raise EccValueError(f"key {position}: {e}") from None
         position += len(key.participants) + 1
+
+
+def _assert_fields(key: KeyExpression, position: int) -> None:
+    """Refuse a key `KeyExpression` refuses when built, named by `position`.
+
+    Whether it is a point is left to `_assert_point`, as it is when
+    `miniscript.from_script` builds the key.
+    """
+    try:
+        with _script_keys():
+            _assert_key_expression(key)
+    except BTClibValueError as e:
+        raise BTClibValueError(f"key {position}: {e}") from None
 
 
 def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:

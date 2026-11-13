@@ -203,6 +203,12 @@ does a `Miniscript` node, built or unpickled, for its number, with the
 message `miniscript.parse` gives its text, before that text is written.
 Neither quotes a number longer than `parse` quotes: it may be a private
 key.
+
+`PkDescriptor`, `WpkhDescriptor`, `TrDescriptor` and `RawTrDescriptor`
+refuse an unpickled key, or ``musig()`` participant, holding a field
+`KeyExpression` refuses when built, with the error it refuses the field
+with, a value after the position of the key. Issue
+btclib-org/bip32-descriptors#334.
 """
 
 from __future__ import annotations
@@ -2913,6 +2919,118 @@ def test_an_unpickled_musig_participant_of_another_type_is_refused(
     )
     object.__setattr__(key, "participants", (_FIXED_A, _K2))
     with pytest.raises(BTClibTypeError, match="^invalid participant type: str$"):
+        build(key)
+
+
+def _unpickled_key(key: KeyExpression, name: str, value: object) -> KeyExpression:
+    """Return the key unpickled, given `value` for its field `name`.
+
+    `KeyExpression` refuses a field it never holds when built, and
+    unpickling skips that check, so the value is given to an unpickled copy.
+    """
+    copied: KeyExpression = pickle.loads(pickle.dumps(key))  # noqa: S301
+    object.__setattr__(copied, name, value)
+    return copied
+
+
+def _refusal(error: type[Exception], err_msg: str, position: int) -> str:
+    """Return the message a descriptor refuses a field of its key with.
+
+    The one `KeyExpression` gives, after the position of the key where it
+    refuses a value, as `parse` names it; a type is refused as it is.
+    """
+    if error is BTClibTypeError:
+        return f"^{re.escape(err_msg)}$"
+    return f"^key {position}: {re.escape(err_msg)}$"
+
+
+_RANGED_XPUB = KeyExpression(xkey=_XPUB_A, der_path=(0,), wildcard=0)
+# a field `KeyExpression` refuses when built, the value it is given, and
+# the error and the message it is refused with
+_FIELD_FAULTS: dict[str, tuple[str, Any, type[Exception], str]] = {
+    "empty wildcard": ("wildcard", "", BTClibTypeError, "invalid wildcard type: str"),
+    "wildcard 5": (
+        "wildcard",
+        5,
+        BTClibValueError,
+        "invalid wildcard: None, 0 or 2**31 expected",
+    ),
+    "der_path list": ("der_path", [0], BTClibTypeError, "invalid der_path type: list"),
+    "step 2**32": (
+        "der_path",
+        (2**32,),
+        BTClibValueError,
+        "invalid index: not in 0..2**32-1",
+    ),
+    "hardening 5": ("hardening", 5, BTClibTypeError, "invalid hardening type: int"),
+    "origin 5": ("origin", 5, BTClibTypeError, "invalid origin type: int"),
+    "no xkey": ("xkey", None, BTClibTypeError, "invalid xkey type: NoneType"),
+    "participants list": (
+        "participants",
+        [],
+        BTClibTypeError,
+        "invalid participants type: list",
+    ),
+}
+# each descriptor holding a plain key, and the position of the key there
+_KEY_HOLDERS: dict[str, tuple[Callable[[KeyExpression], Descriptor], int]] = {
+    "pk": (PkDescriptor, 0),
+    "wpkh": (WpkhDescriptor, 0),
+    "tr": (TrDescriptor, 0),
+    "tr pk leaf": (lambda key: TrDescriptor(_KEY, key), 1),
+    "rawtr": (RawTrDescriptor, 0),
+}
+
+
+@pytest.mark.parametrize("holder", _KEY_HOLDERS)
+@pytest.mark.parametrize("fault", _FIELD_FAULTS)
+def test_an_unpickled_key_field_keyexpression_refuses_is_refused(
+    fault: str, holder: str
+) -> None:
+    """With the error `KeyExpression` refuses the field with when built.
+
+    An unpickled key skips that check. Issue
+    btclib-org/bip32-descriptors#334.
+    """
+    name, value, error, err_msg = _FIELD_FAULTS[fault]
+    with pytest.raises(error, match=f"^{re.escape(err_msg)}$"):
+        replace(_RANGED_XPUB, **{name: value})
+    build, position = _KEY_HOLDERS[holder]
+    with pytest.raises(error, match=_refusal(error, err_msg, position)):
+        build(_unpickled_key(_RANGED_XPUB, name, value))
+
+
+@pytest.mark.parametrize("holder", _KEY_HOLDERS)
+def test_an_unpickled_fixed_key_with_a_path_is_refused(holder: str) -> None:
+    """As `KeyExpression` refuses it. Issue btclib-org/bip32-descriptors#334."""
+    err_msg = "a pub_key takes no der_path"
+    with pytest.raises(BTClibValueError, match=f"^{err_msg}$"):
+        replace(_FIXED_A, der_path=(0,))
+    build, position = _KEY_HOLDERS[holder]
+    with pytest.raises(BTClibValueError, match=f"^key {position}: {err_msg}$"):
+        build(_unpickled_key(_FIXED_A, "der_path", (0,)))
+
+
+@pytest.mark.parametrize("index", [0, 1])
+@pytest.mark.parametrize("holder", _TAPROOT_HOLDERS)
+@pytest.mark.parametrize("fault", ["empty wildcard", "wildcard 5"])
+def test_an_unpickled_musig_participant_field_keyexpression_refuses_is_refused(
+    fault: str, holder: str, index: int
+) -> None:
+    """With the error `KeyExpression` refuses the field with when built.
+
+    A value is named by the position of the participant, as `parse` names
+    the participant. An unpickled participant skips that check. Issue
+    btclib-org/bip32-descriptors#334.
+    """
+    name, value, error, err_msg = _FIELD_FAULTS[fault]
+    participants = list(_EXTENDED)
+    participants[index] = _unpickled_key(participants[index], name, value)
+    key = _unpickled_key(
+        KeyExpression(participants=_EXTENDED), "participants", tuple(participants)
+    )
+    build, _, position = _TAPROOT_HOLDERS[holder]
+    with pytest.raises(error, match=_refusal(error, err_msg, position + index)):
         build(key)
 
 
