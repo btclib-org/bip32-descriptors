@@ -59,10 +59,10 @@ names. Issue btclib-org/bip32-descriptors#221.
 `TrDescriptor` and `MiniscriptDescriptor` refuse a node holding a number
 of keys its fragment does not take, with the node's own message, before
 its text is written. Where the descriptor also holds an uncompressed key
-and the node's text can be written, the node is left to the descriptor's
-text and sanity checks; where it passes them, ``tr()`` and ``wsh()``
-refuse that key by its position, and a bare `MiniscriptDescriptor`
-builds it. Issue btclib-org/bip32-descriptors#235.
+and the node holds a key, ``tr()`` and ``wsh()`` refuse that key by its
+position, and a bare `MiniscriptDescriptor` builds it unless its text,
+its type and bounds or its sanity are refused. Issue
+btclib-org/bip32-descriptors#235.
 
 A `MultiDescriptor` of more than three keys that ``sh()`` or ``wsh()``
 takes builds, and as a top-level descriptor writes a text `parse`
@@ -173,12 +173,36 @@ btclib-org/bip32-descriptors#287.
 `ShDescriptor` refuse an unpickled node whose type and bounds are not
 those its build computes from its subexpressions, before its sanity is
 asked. A node left to those checks for its number of keys, as above, is
-asked, and so are the nodes above it, unless it is a multisig. Issue
-btclib-org/bip32-descriptors#286.
+asked, and so are the nodes above it. Issues
+btclib-org/bip32-descriptors#286 and btclib-org/bip32-descriptors#302.
 
 Before its type and bounds, a node is refused for a threshold or a lock
 time out of range or of another type, with the message of its own
 build. Issue btclib-org/bip32-descriptors#284.
+
+`TrDescriptor` refuses an unpickled `MultiA` leaf whose k is no integer,
+as its build refuses it, then one of more keys than BIP387 allows, then
+one of a k outside 1 to n, with `parse`'s message. Issue
+btclib-org/bip32-descriptors#313.
+
+`TrDescriptor` and `RawTrDescriptor` refuse an unpickled ``musig()``
+key holding a participant `KeyExpression` refuses, with `parse`'s
+message where it has one, naming the participant by the position
+`parse` names. Issue btclib-org/bip32-descriptors#300.
+
+`TrDescriptor` and `MiniscriptDescriptor` refuse a multisig node holding
+no key for its number of keys, as a ``pk_k`` holding none, whatever else
+the descriptor holds, and before a field of a node above it is read.
+``tr()`` refuses an uncompressed leaf key before it asks a node its type
+and bounds, as ``wsh()`` does. Issues btclib-org/bip32-descriptors#302
+and btclib-org/bip32-descriptors#305.
+
+A `MultiA`, built or unpickled inside ``tr()``, refuses a k `parse`
+cannot read from its text with `parse`'s message, before its keys. So
+does a `Miniscript` node, built or unpickled, for its number, with the
+message `miniscript.parse` gives its text, before that text is written.
+Neither quotes a number longer than `parse` quotes: it may be a private
+key.
 """
 
 from __future__ import annotations
@@ -979,8 +1003,8 @@ def test_a_multi_a_sort_of_another_type_is_refused(sort: Any) -> None:
 @pytest.mark.parametrize("sort", [False, True])
 @pytest.mark.parametrize(
     "threshold,keys",
-    [(0, (_KEY,)), (-1, (_KEY,)), (3, (_KEY, _KEY2)), (1, ())],
-    ids=["zero", "negative", "above-key-count", "no-key"],
+    [(0, (_KEY,)), (3, (_KEY, _KEY2)), (1, ())],
+    ids=["zero", "above-key-count", "no-key"],
 )
 def test_a_multi_a_threshold_out_of_range_is_refused(
     threshold: int, keys: tuple[Any, ...], sort: bool
@@ -990,6 +1014,135 @@ def test_a_multi_a_threshold_out_of_range_is_refused(
     err_msg = f"^invalid k in k-of-n {name}: {threshold}$"
     with pytest.raises(BTClibValueError, match=err_msg):
         MultiA(threshold, keys, sort=sort)
+
+
+# a number of the size of a private key, in decimal
+_SCALAR = int(_RANDOM_HEX, 16)
+
+
+@pytest.mark.parametrize(
+    "threshold,fault",
+    [
+        (-1, "digits expected"),
+        (2**32, "not in 0..2**32-1"),
+        (_SCALAR, "more than 10 digits"),
+        (-_SCALAR, "digits expected"),
+    ],
+    ids=["negative", "2**32", "scalar", "negative-scalar"],
+)
+@pytest.mark.parametrize("unpickled", [False, True], ids=["built", "unpickled"])
+def test_a_multi_a_threshold_parse_cannot_read_is_refused_as_parse_refuses_it(
+    threshold: int, fault: str, unpickled: bool
+) -> None:
+    """Before the keys, quoting none of it: it may be a private key.
+
+    Built, and unpickled inside ``tr()``, which matches the text `parse`
+    reads. Issue btclib-org/bip32-descriptors#313.
+    """
+    leaf = _unpickled_multi_a((_U_KEY,))
+    object.__setattr__(leaf, "threshold", threshold)
+    err_msg = f"^invalid multi_a\\(\\) threshold: {re.escape(fault)}$"
+    if unpickled:
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            TrDescriptor(_KEY, leaf)
+        with pytest.raises(BTClibValueError, match=err_msg):
+            parse(f"tr({_X},{leaf})")
+    else:
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            MultiA(threshold, (_U_KEY,))
+    assert_secret_free(e.value, [str(_SCALAR)])
+
+
+# each fragment `parse` reads a number for: an expression holding it as
+# `n`, its context, and the path to its node
+_NUMBERED = {
+    "older": ("and_v(v:pk({a}),older({n}))", miniscript.P2WSH, (1,)),
+    "after": ("and_v(v:pk({a}),after({n}))", miniscript.P2WSH, (1,)),
+    "thresh": ("thresh({n},pk({a}),s:pk({b}))", miniscript.P2WSH, ()),
+    "multi": ("and_v(v:multi({n},{a},{b}),older(1))", miniscript.P2WSH, (0, 0)),
+    "multi_a": (
+        "and_v(v:multi_a({n},{a},{b}),older(1))",
+        miniscript.TAPSCRIPT,
+        (0, 0),
+    ),
+}
+# zero, a number at each bound `parse` reads one to, and one longer than
+# Python writes as text, which `parse` is asked about as 10**19
+_PAST_TEXT = 10**5000
+_BOUNDS = {
+    "zero": 0,
+    "10-digits": 10**10 - 1,
+    "11-digits": 10**10,
+    "int64-max": 2**63 - 1,
+    "int64-max-plus-1": 2**63,
+    "20-digits": 10**19,
+    "scalar": _SCALAR,
+    "negative-scalar": -_SCALAR,
+    "past-text": _PAST_TEXT,
+}
+
+
+@pytest.mark.parametrize("unpickled", [False, True], ids=["built", "unpickled"])
+@pytest.mark.parametrize("bound", _BOUNDS)
+@pytest.mark.parametrize("fragment", _NUMBERED)
+def test_a_miniscript_number_is_refused_as_parse_refuses_its_text(
+    fragment: str, bound: str, unpickled: bool
+) -> None:
+    """With the message `miniscript.parse` gives the same text.
+
+    Built by `replace`, and unpickled in the descriptor that holds the
+    node, which asks the number before it writes the node's text. No
+    refusal quotes a number longer than `parse` quotes: a long one may be
+    a private key.
+    """
+    expression, context, path = _NUMBERED[fragment]
+    first, second = (_X, _X2) if context == miniscript.TAPSCRIPT else (_C, _C2)
+    number = _BOUNDS[bound]
+    written = 10**19 if number == _PAST_TEXT else number
+    text = expression.format(a=first, b=second, n=written)
+    with pytest.raises(BTClibValueError) as parsed:
+        miniscript.parse(text, context)
+    err_msg = f"^{re.escape(str(parsed.value))}$"
+    text = expression.format(a=first, b=second, n=1)
+    root = _unpickled(miniscript.parse(text, context))
+    node = _node_at(root, path)
+    if unpickled:
+        object.__setattr__(node, "threshold", number)
+        wrapped = "tr" if context == miniscript.TAPSCRIPT else "bare"
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            _outermost(wrapped, root)
+    else:
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            replace(node, threshold=number)
+    assert_secret_free(e.value, [str(_SCALAR)])
+
+
+@pytest.mark.parametrize(
+    "number",
+    [_SCALAR, -_SCALAR, _PAST_TEXT],
+    ids=["scalar", "negative-scalar", "past-text"],
+)
+@pytest.mark.parametrize("unpickled", [False, True], ids=["built", "unpickled"])
+@pytest.mark.parametrize(
+    "path,name",
+    [((0, 0, 0), r"pk_k\(\)"), ((0, 0), "c: wrapper")],
+    ids=["pk_k", "c-wrapper"],
+)
+def test_a_number_of_a_fragment_taking_none_is_refused_unquoted(
+    path: tuple[int, ...], name: str, unpickled: bool, number: int
+) -> None:
+    """Past the digits `parse` reads, as no text `parse` reads holds one."""
+    root = _unpickled(miniscript.parse(f"and_v(v:pk({_C}),older(1))", _P2WSH))
+    node = _node_at(root, path)
+    err_msg = f"^invalid {name} number: more than 10 digits$"
+    if unpickled:
+        object.__setattr__(node, "threshold", number)
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            MiniscriptDescriptor(root)
+    else:
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            replace(node, threshold=number)
+    assert_secret_free(e.value, [str(_SCALAR)])
 
 
 # a hand-built `Miniscript` node for each field the tests below try,
@@ -2617,76 +2770,78 @@ _EXTENDED = (KeyExpression(xkey=_XPUB_A), KeyExpression(xkey=_XPUB_B))
 _MUSIG_PAIR = (_FIXED_A, _FIXED_B)
 
 
-@pytest.mark.parametrize(
-    "values,err_msg,text",
-    [
-        (
-            {"participants": _MUSIG_PAIR, "origin": _ORIGIN_KEY.origin},
-            "musig() cannot be nested inside a key origin",
-            f"tr([deadbeef/1h]musig({_K},{_K2}))",
-        ),
-        (
-            {"participants": (KeyExpression(participants=_MUSIG_PAIR), _FIXED_A)},
-            "Too many ')' in musig() expression",
-            f"tr(musig(musig({_K},{_K2}),{_K}))",
-        ),
-        (
-            {"participants": (replace(_FIXED_A, x_only=True), _FIXED_B)},
-            "musig(): x-only public keys are allowed in a taproot key expression only",
-            f"tr(musig({_K[2:]},{_K2}))",
-        ),
-        (
-            {"participants": (KeyExpression(pub_key=_UNCOMPRESSED), _FIXED_B)},
-            "musig(): uncompressed public keys are not allowed here",
-            f"tr(musig({_UNCOMPRESSED.hex()},{_K2}))",
-        ),
-        (
-            {"participants": (_READ_NO_POINT, _FIXED_B)},
-            "musig(): not a public key",
-            f"tr(musig({_NO_POINT_HEX},{_K2}))",
-        ),
-        (
-            {"participants": _MUSIG_PAIR, "der_path": (1,)},
-            "musig() derivation requires every participant to be extended",
-            f"tr(musig({_K},{_K2})/1)",
-        ),
-        (
-            {"participants": _MUSIG_PAIR, "wildcard": 0},
-            "musig() derivation requires every participant to be extended",
-            f"tr(musig({_K},{_K2})/*)",
-        ),
-        (
-            {
-                "participants": (replace(_EXTENDED[0], wildcard=0), _EXTENDED[1]),
-                "der_path": (1,),
-            },
-            "musig() cannot have a ranged participant and derivation too",
-            f"tr(musig({_XPUB_A}/*,{_XPUB_B})/1)",
-        ),
-        (
-            {"participants": _EXTENDED, "wildcard": 2**31},
-            "musig() cannot have a hardened wildcard",
-            f"tr(musig({_XPUB_A},{_XPUB_B})/*h)",
-        ),
-        (
-            {"participants": _EXTENDED, "der_path": (2**31,)},
-            "musig() cannot have hardened derivation steps",
-            f"tr(musig({_XPUB_A},{_XPUB_B})/0h)",
-        ),
-    ],
-    ids=[
-        "origin",
-        "nested",
-        "x-only participant",
-        "uncompressed participant",
-        "participant that is no point",
-        "path, fixed participant",
-        "wildcard, fixed participant",
-        "path, ranged participant",
-        "hardened wildcard",
-        "hardened step",
-    ],
-)
+# the fields of a musig() parse refuses, its message after the position
+# of the key, and a text parse refuses with it
+_MUSIG_FAULTS: list[tuple[dict[str, Any], str, str]] = [
+    (
+        {"participants": _MUSIG_PAIR, "origin": _ORIGIN_KEY.origin},
+        "musig() cannot be nested inside a key origin",
+        f"tr([deadbeef/1h]musig({_K},{_K2}))",
+    ),
+    (
+        {"participants": (KeyExpression(participants=_MUSIG_PAIR), _FIXED_A)},
+        "Too many ')' in musig() expression",
+        f"tr(musig(musig({_K},{_K2}),{_K}))",
+    ),
+    (
+        {"participants": (replace(_FIXED_A, x_only=True), _FIXED_B)},
+        "musig(): x-only public keys are allowed in a taproot key expression only",
+        f"tr(musig({_K[2:]},{_K2}))",
+    ),
+    (
+        {"participants": (KeyExpression(pub_key=_UNCOMPRESSED), _FIXED_B)},
+        "musig(): uncompressed public keys are not allowed here",
+        f"tr(musig({_UNCOMPRESSED.hex()},{_K2}))",
+    ),
+    (
+        {"participants": (_READ_NO_POINT, _FIXED_B)},
+        "musig(): not a public key",
+        f"tr(musig({_NO_POINT_HEX},{_K2}))",
+    ),
+    (
+        {"participants": _MUSIG_PAIR, "der_path": (1,)},
+        "musig() derivation requires every participant to be extended",
+        f"tr(musig({_K},{_K2})/1)",
+    ),
+    (
+        {"participants": _MUSIG_PAIR, "wildcard": 0},
+        "musig() derivation requires every participant to be extended",
+        f"tr(musig({_K},{_K2})/*)",
+    ),
+    (
+        {
+            "participants": (replace(_EXTENDED[0], wildcard=0), _EXTENDED[1]),
+            "der_path": (1,),
+        },
+        "musig() cannot have a ranged participant and derivation too",
+        f"tr(musig({_XPUB_A}/*,{_XPUB_B})/1)",
+    ),
+    (
+        {"participants": _EXTENDED, "wildcard": 2**31},
+        "musig() cannot have a hardened wildcard",
+        f"tr(musig({_XPUB_A},{_XPUB_B})/*h)",
+    ),
+    (
+        {"participants": _EXTENDED, "der_path": (2**31,)},
+        "musig() cannot have hardened derivation steps",
+        f"tr(musig({_XPUB_A},{_XPUB_B})/0h)",
+    ),
+]
+_MUSIG_FAULT_IDS = [
+    "origin",
+    "nested",
+    "x-only participant",
+    "uncompressed participant",
+    "participant that is no point",
+    "path, fixed participant",
+    "wildcard, fixed participant",
+    "path, ranged participant",
+    "hardened wildcard",
+    "hardened step",
+]
+
+
+@pytest.mark.parametrize("values,err_msg,text", _MUSIG_FAULTS, ids=_MUSIG_FAULT_IDS)
 def test_a_musig_parse_refuses_is_refused_when_built(
     values: dict[str, Any], err_msg: str, text: str
 ) -> None:
@@ -2695,6 +2850,70 @@ def test_a_musig_parse_refuses_is_refused_when_built(
         parse(text)
     with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
         KeyExpression(**values)
+
+
+# the faults of `_MUSIG_FAULTS` that are in the participants alone
+_PARTICIPANT_FAULTS = {
+    name: fault
+    for name, fault in zip(_MUSIG_FAULT_IDS, _MUSIG_FAULTS, strict=True)
+    if fault[0].keys() == {"participants"}
+}
+# each taproot descriptor holding a key, and the position of the key there
+_TAPROOT_HOLDERS: dict[str, tuple[Callable[[KeyExpression], Descriptor], str, int]] = {
+    "tr": (TrDescriptor, "tr({})", 0),
+    "rawtr": (RawTrDescriptor, "rawtr({})", 0),
+    "tr pk leaf": (lambda key: TrDescriptor(_KEY, key), f"tr({_X},pk({{}}))", 1),
+    "tr multi_a leaf": (
+        lambda key: TrDescriptor(_KEY, MultiA(1, (_KEY2, key))),
+        f"tr({_X},multi_a(1,{_X2},{{}}))",
+        2,
+    ),
+}
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+@pytest.mark.parametrize("holder", _TAPROOT_HOLDERS)
+@pytest.mark.parametrize("fault", _PARTICIPANT_FAULTS)
+def test_an_unpickled_musig_participant_parse_refuses_is_refused_in_taproot(
+    fault: str, holder: str, index: int
+) -> None:
+    """With the message `parse` gives the same key in the same position.
+
+    The participant at `index` of three is the faulty one, and is named
+    by its own position, but a ``musig()`` one, which `parse` names by the
+    first position of the ``musig()`` that holds it. An unpickled
+    ``musig()`` skips its own check of its participants. Issue
+    btclib-org/bip32-descriptors#300.
+    """
+    values, err_msg, _ = _PARTICIPANT_FAULTS[fault]
+    build, template, position = _TAPROOT_HOLDERS[holder]
+    participants = [_FIXED_A, _FIXED_B]
+    participants.insert(index, values["participants"][0])
+    key: KeyExpression = pickle.loads(  # noqa: S301
+        pickle.dumps(KeyExpression(participants=_MUSIG_PAIR))
+    )
+    object.__setattr__(key, "participants", tuple(participants))
+    if fault != "nested":
+        position += index
+    message = f"^key {position}: {re.escape(err_msg)}$"
+    with pytest.raises(BTClibValueError, match=message):
+        parse(template.format(key))
+    with pytest.raises(BTClibValueError, match=message):
+        build(key)
+
+
+@pytest.mark.parametrize("holder", _TAPROOT_HOLDERS)
+def test_an_unpickled_musig_participant_of_another_type_is_refused(
+    holder: str,
+) -> None:
+    """As `KeyExpression` refuses it. Issue btclib-org/bip32-descriptors#300."""
+    build, _, _ = _TAPROOT_HOLDERS[holder]
+    key: KeyExpression = pickle.loads(  # noqa: S301
+        pickle.dumps(KeyExpression(participants=_MUSIG_PAIR))
+    )
+    object.__setattr__(key, "participants", (_FIXED_A, _K2))
+    with pytest.raises(BTClibTypeError, match="^invalid participant type: str$"):
+        build(key)
 
 
 def test_a_musig_with_an_xkey_is_refused() -> None:
@@ -3633,13 +3852,13 @@ def test_a_key_is_refused_before_the_number_of_keys_of_its_node(
     `parse` reads the keys of a node before it counts them, and so does
     the node's own build. Issue btclib-org/bip32-descriptors#235.
     """
-    context, wrap = _WRAPPED[wrapped]
+    context, _ = _WRAPPED[wrapped]
     root = _holding(fragment, context, keys)
     err_msg = f"^{re.escape(refusal)}$"
     with pytest.raises(BTClibValueError, match=err_msg):
         parse(_TEMPLATES[wrapped].format(root))
     with pytest.raises(BTClibValueError, match=err_msg):
-        wrap(root)
+        _outermost(wrapped, root)
 
 
 # (fragment, the keys of its node, the refusal `parse` gives in each
@@ -3665,11 +3884,13 @@ def test_a_key_another_node_holds_is_refused_before_the_number_of_keys(
     """With the message `parse` gives, as main gives it.
 
     The text of the node of the wrong count can be written, so the key
-    check of ``tr()`` or ``wsh()`` names the key, and a bare
-    `MiniscriptDescriptor` builds it. Issue
-    btclib-org/bip32-descriptors#235.
+    check of ``tr()`` or ``wsh()`` names the key. A bare
+    `MiniscriptDescriptor` builds it, unless the node is a multisig, which
+    keeps the type and bounds its build computed from another number of
+    keys. Issues btclib-org/bip32-descriptors#235 and
+    btclib-org/bip32-descriptors#302.
     """
-    context, wrap = _WRAPPED[wrapped]
+    context, _ = _WRAPPED[wrapped]
     own = _X_KEYS if context == _TAPSCRIPT else _C_KEYS
     root = _holding(fragment, context, own[1 : number + 1])
     object.__setattr__(_node_at(root, (0, 0, 0)), "keys", (_U_KEY,))
@@ -3677,8 +3898,12 @@ def test_a_key_another_node_holds_is_refused_before_the_number_of_keys(
     with pytest.raises(BTClibValueError, match=err_msg):
         parse(_TEMPLATES[wrapped].format(root))
     with pytest.raises(BTClibValueError, match=err_msg):
-        wrap(root)
-    if context == _P2WSH:
+        _outermost(wrapped, root)
+    if fragment == "multi":
+        err_msg = "^multi holds a type or bounds its build does not compute$"
+        with pytest.raises(BTClibValueError, match=err_msg):
+            MiniscriptDescriptor(root)
+    elif context == _P2WSH:
         assert str(MiniscriptDescriptor(root)) == str(root)
 
 
@@ -3998,6 +4223,51 @@ def test_an_unpickled_multi_a_leaf_holding_keys_of_another_type_is_refused(
     other = miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT)
     with pytest.raises(BTClibTypeError, match=err_msg):
         TrDescriptor(_KEY, (leaf, other) if beside else leaf)
+
+
+@pytest.mark.parametrize(
+    "threshold,keys,fault",
+    [
+        (0, (_KEY, _KEY2), "k in k-of-n {}: 0"),
+        (3, (_KEY, _KEY2), "k in k-of-n {}: 3"),
+        (1, (_KEY2,) * 1000, "n in k-of-n {}: 1000"),
+        (0, (_KEY2,) * 1000, "n in k-of-n {}: 1000"),
+    ],
+    ids=["k-0", "k-over-n", "n-over-999", "n-before-k"],
+)
+@pytest.mark.parametrize("sort", [False, True], ids=["multi_a", "sortedmulti_a"])
+def test_an_unpickled_multi_a_leaf_of_a_k_or_n_parse_refuses_is_refused(
+    threshold: int, keys: tuple[KeyExpression, ...], fault: str, sort: bool
+) -> None:
+    """With `parse`'s message for the same text, n before k.
+
+    An unpickled `MultiA` skips its own check of k and n. Issue
+    btclib-org/bip32-descriptors#313.
+    """
+    leaf = _unpickled_multi_a(keys)
+    object.__setattr__(leaf, "threshold", threshold)
+    object.__setattr__(leaf, "sort", sort)
+    name = "sortedmulti_a" if sort else "multi_a"
+    err_msg = f"^invalid {re.escape(fault.format(name))}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},{leaf})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
+
+
+@pytest.mark.parametrize("threshold", ["1", 1.0, None])
+def test_an_unpickled_multi_a_leaf_threshold_of_another_type_is_refused(
+    threshold: object,
+) -> None:
+    """As its build refuses it, before its keys are counted.
+
+    Issue btclib-org/bip32-descriptors#313.
+    """
+    leaf = _unpickled_multi_a((_KEY2,) * 1000)
+    object.__setattr__(leaf, "threshold", threshold)
+    err_msg = f"^invalid threshold type: {type(threshold).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
 
 
 def _unpickled_miniscript(expression: str) -> MiniscriptDescriptor:
@@ -4399,8 +4669,9 @@ def test_a_node_beside_an_uncompressed_key_is_asked_its_type_and_bounds(
     Its text does not write the key, and `_assert_key_numbers` leaves it
     to the checks that follow. Where `stale` is ``older``, it holds the
     type and bounds of the ``v:pk()`` it replaces, which the ``and_v``
-    was built from. ``wsh()`` refuses the key first, by its position.
-    Issue btclib-org/bip32-descriptors#286.
+    was built from. ``tr()`` and ``wsh()`` refuse the key first, by its
+    position, as `parse` reads the keys first. Issues
+    btclib-org/bip32-descriptors#286 and btclib-org/bip32-descriptors#302.
     """
     context, _ = _WRAPPED[wrapped]
     root = _forged_and_v(context, forged=True)
@@ -4410,64 +4681,116 @@ def test_a_node_beside_an_uncompressed_key_is_asked_its_type_and_bounds(
         v_pk = _forged_and_v(context, forged=False).subs[0]
         for name in _DERIVED_FIELDS:
             object.__setattr__(older, name, getattr(v_pk, name))
-    if wrapped in {"wsh", "sh-wsh"}:
-        err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
-    else:
+    if wrapped == "bare":
         err_msg = f"^{stale} holds a type or bounds its build does not compute$"
+    else:
+        err_msg = f"^key {int(wrapped == 'tr')}: {_UNCOMPRESSED_HERE}$"
     with pytest.raises(BTClibValueError, match=err_msg):
         _outermost(wrapped, root)
 
 
-@pytest.mark.parametrize("field", ["properties", "script_size"])
-@pytest.mark.parametrize("wrapped", ["tr", "bare"])
-def test_a_node_above_a_multisig_of_no_key_is_not_asked_its_type_and_bounds(
-    wrapped: str, field: str
+def _rederived(root: miniscript.Miniscript) -> miniscript.Miniscript:
+    """Give each node of `root` the fields its build computes, and return it.
+
+    Each node after its subexpressions, as a build computes them, so that
+    an unpickled node whose keys were changed is asked only for the faults
+    a test gives it afterwards.
+    """
+    nodes = [root]
+    for node in nodes:
+        nodes += node.subs
+    for node in reversed(nodes):
+        for name, value in zip(_DERIVED_FIELDS, miniscript._derived(node), strict=True):
+            object.__setattr__(node, name, value)
+    return root
+
+
+def _multisig_beside_an_uncompressed_key(
+    context: str, expression: str, path: tuple[int, ...], number: int
+) -> miniscript.Miniscript:
+    """Return an unpickled miniscript whose multisig holds `number` keys.
+
+    `expression` writes the multisig of its context as ``{}(1,{},{})``,
+    and `path` reaches it. The second subexpression of the root, which
+    takes no key, is given an uncompressed one, so that
+    `_assert_key_numbers` leaves a multisig of too many keys to the checks
+    that follow. Every node holds the fields its build computes.
+    """
+    fragment, own = (
+        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
+    )
+    text = expression.format(fragment, own[0], own[1])
+    root = _unpickled(miniscript.parse(text, context))
+    object.__setattr__(_node_at(root, path), "keys", own[2:3] * number)
+    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
+    return _rederived(root)
+
+
+# (the field a test forges on the ``and_v`` of `_AND_V_MULTISIG`, the
+# value it is given)
+_FORGED_FIELDS = [
+    ("script_size", None),
+    ("_stack", None),
+    ("_ops", None),
+    ("script_size", 7),
+    ("_ops", 3),
+]
+_AND_V_MULTISIG = "and_v(v:{}(1,{},{}),older(2))"
+
+
+@pytest.mark.parametrize("threshold", [1, 0, 5])
+@pytest.mark.parametrize("field,value", [(None, None), *_FORGED_FIELDS], ids=str)
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_multisig_of_no_key_is_refused_beside_an_uncompressed_key(
+    wrapped: str, field: str | None, value: object, threshold: int
 ) -> None:
-    """Where the multisig holds a field of the wrong type, and no key.
+    """For its number of keys, whatever its threshold, as a pk_k of no key is.
+
+    Before a field of the node above it is read, where one is forged.
+    ``wsh()`` refuses the key first, by its position. Issues
+    btclib-org/bip32-descriptors#302 and btclib-org/bip32-descriptors#305.
+    """
+    context, _ = _WRAPPED[wrapped]
+    root = _multisig_beside_an_uncompressed_key(context, _AND_V_MULTISIG, (0, 0), 0)
+    object.__setattr__(_node_at(root, (0, 0)), "threshold", threshold)
+    if field is not None:
+        object.__setattr__(root, field, value)
+    if wrapped in {"wsh", "sh-wsh"}:
+        err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
+    else:
+        fragment = _node_at(root, (0, 0)).fragment
+        err_msg = f"^invalid number of keys in {fragment}: 0$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        _outermost(wrapped, root)
+
+
+@pytest.mark.parametrize("also", [False, True], ids=["and_v", "and-multisig"])
+@pytest.mark.parametrize("field,value", _FORGED_FIELDS, ids=str)
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_node_above_a_multisig_of_too_many_keys_is_asked_its_type_and_bounds(
+    wrapped: str, field: str, value: object, also: bool
+) -> None:
+    """And so is the multisig, asked first, where its script size is forged.
 
     An ``older(2)`` beside it holds an uncompressed key, so
     `_assert_key_numbers` leaves the multisig to the checks that follow.
-    What its build computes reads its number of keys, which no build
-    takes, so neither it nor the ``and_v`` above it is asked: ``tr()``
-    refuses the key by its position, and a bare `MiniscriptDescriptor`
-    builds it. Issue btclib-org/bip32-descriptors#286.
-    """
-    context, wrap = _WRAPPED[wrapped]
-    fragment, own = (
-        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
-    )
-    expression = f"and_v(v:{fragment}(1,{own[0]},{own[1]}),older(2))"
-    root = _unpickled(miniscript.parse(expression, context))
-    multisig = _node_at(root, (0, 0))
-    object.__setattr__(multisig, "keys", ())
-    object.__setattr__(multisig, field, None)
-    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
-    if wrapped == "tr":
-        with pytest.raises(BTClibValueError, match=f"^key 1: {_UNCOMPRESSED_HERE}$"):
-            wrap(root)
-    else:
-        assert str(wrap(root)) == str(root)
-
-
-@pytest.mark.parametrize("name", _DERIVED_FIELDS)
-@pytest.mark.parametrize("wrapped", ["tr", "bare"])
-def test_a_node_above_a_multisig_of_no_key_is_refused_lacking_a_field(
-    wrapped: str, name: str
-) -> None:
-    """Though it is not asked its type and bounds, as the test above says.
-
-    Issue btclib-org/bip32-descriptors#286.
+    ``tr()`` and ``wsh()`` refuse the key first, by its position, as
+    `parse` reads the keys first. Issue btclib-org/bip32-descriptors#302.
     """
     context, _ = _WRAPPED[wrapped]
-    fragment, own = (
-        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
+    number = 1000 if context == _TAPSCRIPT else 21
+    root = _multisig_beside_an_uncompressed_key(
+        context, _AND_V_MULTISIG, (0, 0), number
     )
-    expression = f"and_v(v:{fragment}(1,{own[0]},{own[1]}),older(2))"
-    root = _unpickled(miniscript.parse(expression, context))
-    object.__setattr__(_node_at(root, (0, 0)), "keys", ())
-    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
-    object.__delattr__(root, name)
-    err_msg = "^and_v holds a type or bounds its build does not compute$"
+    multisig = _node_at(root, (0, 0))
+    if also:
+        object.__setattr__(multisig, "script_size", multisig.script_size - 1)
+    object.__setattr__(root, field, value)
+    if wrapped == "bare":
+        forged = multisig.fragment if also else "and_v"
+        err_msg = f"^{forged} holds a type or bounds its build does not compute$"
+    else:
+        err_msg = f"^key {number + int(wrapped == 'tr')}: {_UNCOMPRESSED_HERE}$"
     with pytest.raises(BTClibValueError, match=err_msg):
         _outermost(wrapped, root)
 
@@ -4475,29 +4798,32 @@ def test_a_node_above_a_multisig_of_no_key_is_refused_lacking_a_field(
 @pytest.mark.parametrize(
     "threshold, refusal",
     [
-        (0, BTClibValueError("invalid thresh() threshold: 0 of 2")),
+        (0, BTClibValueError("invalid thresh() threshold: 0")),
         (3, BTClibValueError("invalid thresh() threshold: 3 of 2")),
         ("2", BTClibTypeError("invalid threshold type: str")),
     ],
 )
-@pytest.mark.parametrize("wrapped", ["tr", "bare"])
-def test_a_node_above_a_multisig_of_no_key_is_refused_for_its_threshold(
+@pytest.mark.parametrize("wrapped", _WRAPPED)
+def test_a_node_above_a_multisig_of_too_many_keys_is_refused_for_its_threshold(
     wrapped: str, threshold: object, refusal: Exception
 ) -> None:
-    """With its build's message, though it is not asked its type and bounds.
+    """With its build's message, before its type and bounds are asked.
 
-    Issue btclib-org/bip32-descriptors#284.
+    ``tr()`` and ``wsh()`` refuse a threshold of 3 for the uncompressed key
+    first, by its position, and one of 0 or of another type for itself,
+    before the keys are read: `parse` refuses a threshold of 0 before the
+    subexpressions. Issues btclib-org/bip32-descriptors#284 and
+    btclib-org/bip32-descriptors#302.
     """
     context, _ = _WRAPPED[wrapped]
-    fragment, own = (
-        ("multi_a", _X_KEYS) if context == _TAPSCRIPT else ("multi", _C_KEYS)
-    )
-    expression = f"thresh(1,{fragment}(1,{own[0]},{own[1]}),s:pk({own[2]}))"
-    root = _unpickled(miniscript.parse(expression, context))
-    object.__setattr__(_node_at(root, (0,)), "keys", ())
-    object.__setattr__(_node_at(root, (1,)), "keys", (_U_KEY,))
+    number, own = (1000, _X_KEYS) if context == _TAPSCRIPT else (21, _C_KEYS)
+    expression = f"thresh(1,{{}}(1,{{}},{{}}),s:pk({own[3]}))"
+    root = _multisig_beside_an_uncompressed_key(context, expression, (0,), number)
     object.__setattr__(root, "threshold", threshold)
-    with pytest.raises(type(refusal), match=f"^{re.escape(str(refusal))}$"):
+    err_msg = f"^{re.escape(str(refusal))}$"
+    if wrapped != "bare" and threshold == 3:
+        err_msg = f"^key {number + int(wrapped == 'tr')}: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(type(refusal), match=err_msg):
         _outermost(wrapped, root)
 
 
@@ -4517,7 +4843,7 @@ _THRESHOLD_FAULTS: dict[str, tuple[str, tuple[int, ...], object, Exception]] = {
         _THRESH_TEXT,
         (),
         0,
-        BTClibValueError("invalid thresh() threshold: 0 of 2"),
+        BTClibValueError("invalid thresh() threshold: 0"),
     ),
     "thresh-str": (
         _THRESH_TEXT,
