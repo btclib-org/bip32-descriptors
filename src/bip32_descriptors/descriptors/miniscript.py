@@ -112,7 +112,7 @@ from btclib.var_int import serialize as var_int_serialize
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import BIP32KeyData
-from bip32_descriptors.bip32.der_path import _int_from_digits
+from bip32_descriptors.bip32.der_path import _assert_few_digits, _int_from_digits
 from bip32_descriptors.descriptors.key_expression import (
     KeyExpression,
     PrvKeys,
@@ -1163,18 +1163,12 @@ def _assert_derived(root: Miniscript) -> None:
     subexpressions, so that what it is computed from has been asked
     already, and is refused first for its fragment, its arity and its
     number as its build refuses them, without which nothing can be
-    computed.
+    computed. A node is refused where it lacks a field its build computes.
 
-    A multisig node of a number of keys its fragment does not take is not
-    asked: what its build computes depends on its number of keys, and no
-    build takes that number. Nor are the nodes above it, but for their
-    fragment, their arity and their number, which do not read it: the rest
-    would be computed from what it holds, which nothing asks. Any other node
-    is asked whatever its keys hold: what its build computes reads at most
-    their number, which its fragment takes. Any node but that multisig is
-    refused where it lacks a field its build computes. The caller has
-    checked the type of every node, its context, and the types of its
-    fragment, its subexpressions and its keys.
+    Every node is asked, a multisig of more keys than its fragment takes
+    included: what its build computes reads their number, whatever it is.
+    The caller has checked the type of every node, its context, and the
+    types of its fragment, its subexpressions and its keys.
     """
     nodes: list[Miniscript] = []
     stack = [root]
@@ -1182,25 +1176,12 @@ def _assert_derived(root: Miniscript) -> None:
         node = stack.pop()
         nodes.append(node)
         stack += node.subs
-    # the ids of the nodes not asked, each before the nodes above it
-    unasked: set[int] = set()
     for node in reversed(nodes):
-        above_unasked = any(id(sub) in unasked for sub in node.subs)
-        if not above_unasked and node.fragment in {"multi", "multi_a"}:
-            try:
-                _assert_key_number(node.fragment, len(node.keys))
-            except BTClibValueError:
-                unasked.add(id(node))
-                continue
         node._assert_arity()
         node._assert_number()
         # None, which no build computes, for a field an unpickled node lacks
         stored = tuple(getattr(node, name, None) for name in _DERIVED)
-        if above_unasked:
-            unasked.add(id(node))
-            if None not in stored:
-                continue
-        elif _derived(node) == stored:
+        if _derived(node) == stored:
             continue
         err_msg = f"{node.fragment} holds a type or bounds its build does not compute"
         raise BTClibValueError(err_msg)
@@ -1343,10 +1324,13 @@ class Miniscript:
         _assert_key_number(fragment, keys)
 
     def _assert_number(self) -> None:
-        """Refuse a lock time or a threshold not an integer or out of bounds."""
-        if not is_integer(self.threshold):
-            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
-            raise BTClibTypeError(err_msg)
+        """Refuse a lock time or a threshold not an integer or out of bounds.
+
+        One `parse` refuses when it reads the text `str` writes is refused
+        first, as `_assert_number_read` says, so that no refusal quotes a
+        number longer than `parse` quotes.
+        """
+        self._assert_number_read()
         fragment = self.fragment
         threshold = self.threshold
         if fragment in {"older", "after"}:
@@ -1362,6 +1346,18 @@ class Miniscript:
                 raise BTClibValueError(err_msg)
         elif threshold:
             raise BTClibValueError(f"{fragment} takes no number: {threshold}")
+
+    def _assert_number_read(self) -> None:
+        """Refuse a number of another type, then one `parse` cannot read.
+
+        As `_assert_read_number` says. A walk of an unpickled node calls
+        this before anything writes the node's text: Python refuses to
+        write an `int` past its limit on digits.
+        """
+        if not is_integer(self.threshold):
+            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
+            raise BTClibTypeError(err_msg)
+        _assert_read_number(self.fragment, self.threshold)
 
     @property
     def is_valid(self) -> bool:
@@ -2468,6 +2464,35 @@ def _read_multi(
     except BTClibValueError as error:
         # the number of keys, or a threshold out of its bounds
         raise _CoreFallbackError(str(error)) from error
+
+
+def _assert_read_number(fragment: str, number: int) -> None:
+    """Refuse a number of a node as `parse` refuses its text when reading it.
+
+    With `parse`'s message for the fragment, which quotes none of it: a
+    long one may be a private key in decimal. A negative number is
+    refused as `parse` refuses the ``-`` that `str` writes. Past that,
+    ``older()`` and ``after()`` are refused past `_int_from_digits`'s
+    bound, a multisig past an int64_t and then past that bound, and
+    ``thresh()`` past an int64_t or below 1, as `_read_thresh_threshold`
+    reads it before the subexpressions. A fragment `parse` reads no
+    number for is refused past `_int_from_digits`'s bound, quoting none of
+    it either; a wrapper is named ``c: wrapper``, as other refusals name
+    one.
+    """
+    if fragment not in {"older", "after", "thresh", "multi", "multi_a"}:
+        name = f"{fragment} wrapper" if fragment in _WRAPPERS else f"{fragment}()"
+        _assert_few_digits(number, f"{name} number")
+        return
+    noun = "threshold" if fragment in {"multi", "multi_a"} else "number"
+    if number < 0:
+        raise BTClibValueError(f"invalid {fragment}() {noun}: digits expected")
+    if fragment == "thresh" and number < 1:
+        raise BTClibValueError(f"invalid thresh() threshold: {number}")
+    if fragment not in {"older", "after"} and number >= 2**63:
+        raise BTClibValueError(f"invalid {fragment}() threshold: past an int64_t")
+    if fragment != "thresh":
+        _assert_few_digits(number, f"{fragment}() {noun}")
 
 
 def _int64_read_as_core(text: str) -> int | None:
