@@ -4803,20 +4803,28 @@ def test_a_node_above_a_multisig_of_too_many_keys_is_asked_its_type_and_bounds(
         ("2", BTClibTypeError("invalid threshold type: str")),
     ],
 )
+@pytest.mark.parametrize("wrapped", _WRAPPED)
 def test_a_node_above_a_multisig_of_too_many_keys_is_refused_for_its_threshold(
-    threshold: object, refusal: Exception
+    wrapped: str, threshold: object, refusal: Exception
 ) -> None:
-    """In a bare `MiniscriptDescriptor`, with its build's message.
+    """With its build's message, before its type and bounds are asked.
 
-    Before its type and bounds are asked. ``tr()`` and ``wsh()`` refuse the
-    uncompressed key first. Issues btclib-org/bip32-descriptors#284 and
+    ``tr()`` and ``wsh()`` refuse a threshold of 3 for the uncompressed key
+    first, by its position, and one of 0 or of another type for itself,
+    before the keys are read: `parse` refuses a threshold of 0 before the
+    subexpressions. Issues btclib-org/bip32-descriptors#284 and
     btclib-org/bip32-descriptors#302.
     """
-    expression = f"thresh(1,{{}}(1,{{}},{{}}),s:pk({_C_KEYS[3]}))"
-    root = _multisig_beside_an_uncompressed_key(_P2WSH, expression, (0,), 21)
+    context, _ = _WRAPPED[wrapped]
+    number, own = (1000, _X_KEYS) if context == _TAPSCRIPT else (21, _C_KEYS)
+    expression = f"thresh(1,{{}}(1,{{}},{{}}),s:pk({own[3]}))"
+    root = _multisig_beside_an_uncompressed_key(context, expression, (0,), number)
     object.__setattr__(root, "threshold", threshold)
-    with pytest.raises(type(refusal), match=f"^{re.escape(str(refusal))}$"):
-        MiniscriptDescriptor(root)
+    err_msg = f"^{re.escape(str(refusal))}$"
+    if wrapped != "bare" and threshold == 3:
+        err_msg = f"^key {number + int(wrapped == 'tr')}: {_UNCOMPRESSED_HERE}$"
+    with pytest.raises(type(refusal), match=err_msg):
+        _outermost(wrapped, root)
 
 
 _THRESH_TEXT = "thresh(2,pk({}),s:pk({}))"
