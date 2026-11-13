@@ -838,7 +838,8 @@ def _tapscript_node(node: object) -> Miniscript:
     `_assert_fragment_type` says, and then as `_assert_known_fragment`
     says. Its subexpressions are then refused where they are no tuple, or
     of a number its fragment does not take, as `Miniscript._assert_arity`
-    says, its keys as `_assert_key_types` says, and a ``multi()`` for its
+    says, its keys as `_assert_key_types` says, its number as
+    `Miniscript._assert_number_read` says, and a ``multi()`` for its
     context, as `Miniscript` refuses it when built.
     """
     assert_type(node, Miniscript, "miniscript node")
@@ -852,6 +853,7 @@ def _tapscript_node(node: object) -> Miniscript:
     _assert_known_fragment(node)
     node._assert_arity()
     _assert_key_types(node)
+    node._assert_number_read()
     if node.fragment == "multi":
         raise BTClibValueError(_multisig_context_fault("multi"))
     return node
@@ -2146,7 +2148,8 @@ def _assert_p2wsh(node: Miniscript) -> None:
     `Miniscript._assert_arity` says, before its keys are read.
 
     A node is also refused where its keys are not a tuple of KEY
-    expressions, as `_assert_key_types` says. A ``multi_a()`` node is then
+    expressions, as `_assert_key_types` says, then for its number as
+    `Miniscript._assert_number_read` says. A ``multi_a()`` node is then
     refused for its context, as `Miniscript` refuses it when built.
     """
     stack = [node]
@@ -2163,6 +2166,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
         _assert_known_fragment(sub)
         sub._assert_arity()
         _assert_key_types(sub)
+        sub._assert_number_read()
         if sub.fragment == "multi_a":
             raise BTClibValueError(_multisig_context_fault("multi_a"))
         stack += sub.subs

@@ -1326,15 +1326,13 @@ class Miniscript:
     def _assert_number(self) -> None:
         """Refuse a lock time or a threshold not an integer or out of bounds.
 
-        One of more digits than `parse` reads is refused first, as
-        `_assert_few_digits` says, so that no refusal quotes it.
+        One `parse` refuses when it reads the text `str` writes is refused
+        first, as `_assert_number_read` says, so that no refusal quotes a
+        number longer than `parse` quotes.
         """
-        if not is_integer(self.threshold):
-            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
-            raise BTClibTypeError(err_msg)
+        self._assert_number_read()
         fragment = self.fragment
         threshold = self.threshold
-        _assert_few_digits(threshold, f"{fragment}() number")
         if fragment in {"older", "after"}:
             if not 1 <= threshold < _MAX_TIMELOCK:
                 raise BTClibValueError(f"invalid {fragment}() value: {threshold}")
@@ -1348,6 +1346,18 @@ class Miniscript:
                 raise BTClibValueError(err_msg)
         elif threshold:
             raise BTClibValueError(f"{fragment} takes no number: {threshold}")
+
+    def _assert_number_read(self) -> None:
+        """Refuse a number of another type, then one `parse` cannot read.
+
+        As `_assert_read_number` says. A walk of an unpickled node calls
+        this before anything writes the node's text: Python refuses to
+        write an `int` past its limit on digits.
+        """
+        if not is_integer(self.threshold):
+            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
+            raise BTClibTypeError(err_msg)
+        _assert_read_number(self.fragment, self.threshold)
 
     @property
     def is_valid(self) -> bool:
@@ -2454,6 +2464,30 @@ def _read_multi(
     except BTClibValueError as error:
         # the number of keys, or a threshold out of its bounds
         raise _CoreFallbackError(str(error)) from error
+
+
+def _assert_read_number(fragment: str, number: int) -> None:
+    """Refuse a number of a node as `parse` refuses its text when reading it.
+
+    With `parse`'s message for the fragment, which quotes none of it: a
+    long one may be a private key in decimal. A negative number is
+    refused as `parse` refuses the ``-`` that `str` writes. Past that,
+    ``older()`` and ``after()`` are refused past `_int_from_digits`'s
+    bound, a multisig past an int64_t and then past that bound, and
+    ``thresh()`` past an int64_t, as `_read_thresh_threshold` reads it. A
+    fragment `parse` reads no number for is refused past
+    `_int_from_digits`'s bound, quoting none of it either.
+    """
+    if fragment not in {"older", "after", "thresh", "multi", "multi_a"}:
+        _assert_few_digits(number, f"{fragment}() number")
+        return
+    noun = "threshold" if fragment in {"multi", "multi_a"} else "number"
+    if number < 0:
+        raise BTClibValueError(f"invalid {fragment}() {noun}: digits expected")
+    if fragment not in {"older", "after"} and number >= 2**63:
+        raise BTClibValueError(f"invalid {fragment}() threshold: past an int64_t")
+    if fragment != "thresh":
+        _assert_few_digits(number, f"{fragment}() {noun}")
 
 
 def _int64_read_as_core(text: str) -> int | None:

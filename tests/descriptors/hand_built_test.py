@@ -198,9 +198,11 @@ and bounds, as ``wsh()`` does. Issues btclib-org/bip32-descriptors#302
 and btclib-org/bip32-descriptors#305.
 
 A `MultiA`, built or unpickled inside ``tr()``, refuses a k `parse`
-cannot read from its text with `parse`'s message, before its keys. It
-and a `Miniscript` node, built or unpickled, refuse a number of more
-digits than `parse` reads without quoting it: it may be a private key.
+cannot read from its text with `parse`'s message, before its keys. So
+does a `Miniscript` node, built or unpickled, for its number, with the
+message `miniscript.parse` gives its text, before that text is written.
+Neither quotes a number longer than `parse` quotes: it may be a private
+key.
 """
 
 from __future__ import annotations
@@ -1051,41 +1053,89 @@ def test_a_multi_a_threshold_parse_cannot_read_is_refused_as_parse_refuses_it(
     assert_secret_free(e.value, [str(_SCALAR)])
 
 
-# a node of each kind of number, read from text, and the path to it
+# each fragment `parse` reads a number for: an expression holding it as
+# `n`, its context, and the path to its node
 _NUMBERED = {
-    "older": ("and_v(v:pk({}),older(1))", miniscript.P2WSH, (1,)),
-    "after": ("and_v(v:pk({}),after(1))", miniscript.P2WSH, (1,)),
-    "thresh": ("thresh(1,pk({}),s:pk({}))", miniscript.P2WSH, ()),
-    "multi": ("and_v(v:multi(1,{}),older(1))", miniscript.P2WSH, (0, 0)),
-    "multi_a": ("and_v(v:multi_a(1,{}),older(1))", miniscript.TAPSCRIPT, (0, 0)),
-    "pk_k": ("and_v(v:pk({}),older(1))", miniscript.P2WSH, (0, 0, 0)),
+    "older": ("and_v(v:pk({a}),older({n}))", miniscript.P2WSH, (1,)),
+    "after": ("and_v(v:pk({a}),after({n}))", miniscript.P2WSH, (1,)),
+    "thresh": ("thresh({n},pk({a}),s:pk({b}))", miniscript.P2WSH, ()),
+    "multi": ("and_v(v:multi({n},{a},{b}),older(1))", miniscript.P2WSH, (0, 0)),
+    "multi_a": (
+        "and_v(v:multi_a({n},{a},{b}),older(1))",
+        miniscript.TAPSCRIPT,
+        (0, 0),
+    ),
+}
+# a number at each bound `parse` reads one to, and one longer than Python
+# writes as text, which `parse` is asked about as 10**19
+_PAST_TEXT = 10**5000
+_BOUNDS = {
+    "10-digits": 10**10 - 1,
+    "11-digits": 10**10,
+    "int64-max": 2**63 - 1,
+    "int64-max-plus-1": 2**63,
+    "20-digits": 10**19,
+    "scalar": _SCALAR,
+    "negative-scalar": -_SCALAR,
+    "past-text": _PAST_TEXT,
 }
 
 
-@pytest.mark.parametrize("sign", [1, -1], ids=["scalar", "negative-scalar"])
 @pytest.mark.parametrize("unpickled", [False, True], ids=["built", "unpickled"])
+@pytest.mark.parametrize("bound", _BOUNDS)
 @pytest.mark.parametrize("fragment", _NUMBERED)
-def test_a_miniscript_number_of_more_digits_than_parse_reads_is_refused_unquoted(
-    fragment: str, unpickled: bool, sign: int
+def test_a_miniscript_number_is_refused_as_parse_refuses_its_text(
+    fragment: str, bound: str, unpickled: bool
 ) -> None:
-    """As `parse` refuses its text, before the number is checked otherwise.
+    """With the message `miniscript.parse` gives the same text.
 
     Built by `replace`, and unpickled in the descriptor that holds the
-    node: a number that long may be a private key.
+    node, which asks the number before it writes the node's text. No
+    refusal quotes a number longer than `parse` quotes: a long one may be
+    a private key.
     """
     expression, context, path = _NUMBERED[fragment]
     first, second = (_X, _X2) if context == miniscript.TAPSCRIPT else (_C, _C2)
-    root = _unpickled(miniscript.parse(expression.format(first, second), context))
+    number = _BOUNDS[bound]
+    written = 10**19 if number == _PAST_TEXT else number
+    text = expression.format(a=first, b=second, n=written)
+    with pytest.raises(BTClibValueError) as parsed:
+        miniscript.parse(text, context)
+    err_msg = f"^{re.escape(str(parsed.value))}$"
+    text = expression.format(a=first, b=second, n=1)
+    root = _unpickled(miniscript.parse(text, context))
     node = _node_at(root, path)
-    err_msg = rf"^invalid {fragment}\(\) number: more than 10 digits$"
     if unpickled:
-        object.__setattr__(node, "threshold", sign * _SCALAR)
+        object.__setattr__(node, "threshold", number)
         wrapped = "tr" if context == miniscript.TAPSCRIPT else "bare"
         with pytest.raises(BTClibValueError, match=err_msg) as e:
             _outermost(wrapped, root)
     else:
         with pytest.raises(BTClibValueError, match=err_msg) as e:
-            replace(node, threshold=sign * _SCALAR)
+            replace(node, threshold=number)
+    assert_secret_free(e.value, [str(_SCALAR)])
+
+
+@pytest.mark.parametrize(
+    "number",
+    [_SCALAR, -_SCALAR, _PAST_TEXT],
+    ids=["scalar", "negative-scalar", "past-text"],
+)
+@pytest.mark.parametrize("unpickled", [False, True], ids=["built", "unpickled"])
+def test_a_number_of_a_fragment_taking_none_is_refused_unquoted(
+    unpickled: bool, number: int
+) -> None:
+    """Past the digits `parse` reads, as no text `parse` reads holds one."""
+    root = _unpickled(miniscript.parse(f"and_v(v:pk({_C}),older(1))", _P2WSH))
+    node = _node_at(root, (0, 0, 0))
+    err_msg = r"^invalid pk_k\(\) number: more than 10 digits$"
+    if unpickled:
+        object.__setattr__(node, "threshold", number)
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            MiniscriptDescriptor(root)
+    else:
+        with pytest.raises(BTClibValueError, match=err_msg) as e:
+            replace(node, threshold=number)
     assert_secret_free(e.value, [str(_SCALAR)])
 
 
