@@ -1,0 +1,20 @@
+# A shard of the descriptors profile: miniscript.py, a `|` turned into `//`,
+# `<<`, `%` or `*`. descriptors.toml is the profile: what it mutates and why,
+# the shards, the test command and the timeout copied here, and the triage of
+# the survivors.
+
+[cosmic-ray]
+module-path = "src/bip32_descriptors/descriptors/miniscript.py"
+test-command = "python -m pytest -x -q -n0 -p no:randomly tests/descriptors"
+timeout = 300
+excluded-modules = []
+
+# skips every operator but those the lookahead names: see descriptors.toml
+[cosmic-ray.filters.operators-filter]
+exclude-operators = [
+    '(?!core/ReplaceBinaryOperator_BitOr_(FloorDiv|LShift|Mod|Mul)$)',
+]
+
+# one mutant at a time, in this working tree: see btclib's sig_hash.toml
+[cosmic-ray.distributor]
+name = "local"
