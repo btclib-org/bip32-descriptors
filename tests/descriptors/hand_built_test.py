@@ -37,7 +37,9 @@ btclib-org/bip32-descriptors#181.
 
 `TrDescriptor` and `RawTrDescriptor` refuse an unpickled ``musig()``
 whose own fields its build refuses, with that refusal's message at the
-position `parse` names. Issue btclib-org/bip32-descriptors#321.
+position `parse` names. Issue btclib-org/bip32-descriptors#321. A
+``musig()`` leaf whose `pub_key` is no bytes is left to issue
+btclib-org/bip32-descriptors#323.
 
 `WshDescriptor` refuses an argument holding an uncompressed key, and
 `ShDescriptor` a ``wsh()`` one. Both refuse an argument holding a
@@ -2977,6 +2979,9 @@ def test_an_unpickled_musig_its_build_refuses_is_refused_in_taproot(
         ("der_path", (2**32,), 2),
         ("participants", list(_EXTENDED), None),
         ("pub_key", _FIXED_A.pub_key, 0),
+        ("pub_key", _UNCOMPRESSED, 0),
+        ("pub_key", _OFF_CURVE, 0),
+        ("pub_key", _K, None),
         ("x_only", True, 0),
         ("hardening", 5, None),
         ("xkey", None, None),
@@ -2988,6 +2993,9 @@ def test_an_unpickled_musig_its_build_refuses_is_refused_in_taproot(
         "step 2**32",
         "participants list",
         "pub_key",
+        "uncompressed pub_key",
+        "pub_key no point",
+        "pub_key str",
         "x_only",
         "hardening int",
         "xkey None",
@@ -3010,7 +3018,7 @@ def test_an_unpickled_musig_field_any_key_refuses_is_refused_in_taproot(
     musig: KeyExpression = pickle.loads(pickle.dumps(built))  # noqa: S301
     object.__setattr__(musig, name, value)
     values = {field.name: getattr(musig, field.name) for field in fields(musig)}
-    with pytest.raises((BTClibTypeError, BTClibValueError)) as refused:
+    with pytest.raises((BTClibTypeError, BTClibValueError, EccValueError)) as refused:
         KeyExpression(**values)
     builds: list[tuple[Callable[[], object], int]] = [
         (lambda: TrDescriptor(musig), 0),

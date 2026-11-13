@@ -1733,7 +1733,8 @@ def _assert_keys(
     position. A key that is no point is one `miniscript.from_script` reads.
     A ``musig()`` that `check` takes has its path or wildcard refused as
     `_assert_musig_path_fields` says, at the position after its
-    participants, where `parse` reads the path.
+    participants, where `parse` reads the path. A type is refused with no
+    position, as the build refuses it.
     """
     position = 0
     for key in keys:
@@ -1744,6 +1745,8 @@ def _assert_keys(
             raise BTClibValueError(err_msg) from None
         except BTClibValueError as e:
             raise BTClibValueError(f"key {position}: {e}") from None
+        except EccValueError as e:
+            raise EccValueError(f"key {position}: {e}") from None
         try:
             _assert_point(key)
         except EccValueError as e:
@@ -1768,16 +1771,16 @@ def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
 def _assert_taproot_key(key: KeyExpression) -> None:
     """Refuse a key ``tr()`` and ``rawtr()`` refuse when built.
 
-    An uncompressed key, then a ``musig()`` whose own fields or
-    participants `KeyExpression` refuses when built, with its messages and
-    in its order, but for the path and the wildcard, which `_assert_keys`
-    refuses last, as `_assert_musig_path_fields` says: an unpickled key
-    skips that check. A participant is refused as a `_ParticipantError`,
-    as `_participant_fault` says, for `_assert_keys` to name it by its own
-    position.
+    An uncompressed key that is no ``musig()``. A ``musig()`` whose own
+    fields or participants `KeyExpression` refuses when built, with its
+    messages and in its order, but for the path and the wildcard, which
+    `_assert_keys` refuses last, as `_assert_musig_path_fields` says: an
+    unpickled key skips that check. A participant is refused as a
+    `_ParticipantError`, as `_participant_fault` says, for `_assert_keys`
+    to name it by its own position.
     """
-    _assert_compressed(key)
     if not key.participants:
+        _assert_compressed(key)
         return
     assert_type(key.der_path, tuple, "der_path")
     assert_type(key.participants, tuple, "participants")
