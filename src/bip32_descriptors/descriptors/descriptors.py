@@ -218,6 +218,8 @@ from bip32_descriptors.descriptors.key_expression import (
     _assert_index_range,
     _assert_multipath_keys,
     _assert_musig_allowed,
+    _assert_musig_fields,
+    _assert_musig_path,
     _assert_network,
     _assert_outside_taproot,
     _assert_point,
@@ -1658,7 +1660,10 @@ def _assert_keys(
     as `_parse_key` counts it: a ``musig()`` takes one position for each
     participant and one for itself, and a key refused for itself is named
     by the first of its positions, where `parse` refuses it. A key that is
-    no point is one `miniscript.from_script` reads.
+    no point is one `miniscript.from_script` reads. A ``musig()`` that
+    `check` takes has its path or wildcard refused as `_assert_musig`
+    refuses it, at the position after its participants, where `parse`
+    reads the path: an unpickled one skips that check of its own.
     """
     position = 0
     for key in keys:
@@ -1670,7 +1675,13 @@ def _assert_keys(
             _assert_point(key)
         except EccValueError as e:
             raise EccValueError(f"key {position}: {e}") from None
-        position += len(key.participants) + 1
+        position += len(key.participants)
+        if key.participants and (key.der_path or key.wildcard is not None):
+            try:
+                _assert_musig_path(key)
+            except BTClibValueError as e:
+                raise BTClibValueError(f"key {position}: {e}") from None
+        position += 1
 
 
 def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
@@ -1679,6 +1690,24 @@ def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
     A ``musig()``, and an x-only key, as `_assert_keys` refuses it.
     """
     _assert_keys(keys, _assert_outside_taproot)
+
+
+def _assert_taproot_keys(keys: Iterable[KeyExpression]) -> None:
+    """Refuse a key ``tr()`` and ``rawtr()`` refuse, as `_assert_keys` does.
+
+    An uncompressed key, and a ``musig()`` whose `xkey`, `origin` or
+    `hardening` `_assert_musig` refuses, with its message: an unpickled
+    ``musig()`` skips that check of its own. `_assert_keys` refuses its
+    path or wildcard.
+    """
+    _assert_keys(keys, _assert_taproot_key)
+
+
+def _assert_taproot_key(key: KeyExpression) -> None:
+    """Refuse a key `_assert_taproot_keys` refuses for itself."""
+    _assert_compressed(key)
+    if key.participants:
+        _assert_musig_fields(key)
 
 
 @dataclass(frozen=True)
@@ -2666,12 +2695,12 @@ class TrDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.internal_key, KeyExpression, "internal key")
-        _assert_keys((self.internal_key,), _assert_compressed)
+        _assert_taproot_keys((self.internal_key,))
         if self.tree is not None:
             _assert_tree(self.tree)
             # a pk() leaf is a bare key, and an unpickled leaf skipped its
             # own check
-            _assert_keys(self.key_expressions, _assert_compressed)
+            _assert_taproot_keys(self.key_expressions)
 
     @override
     def __str__(self) -> str:
@@ -2931,7 +2960,7 @@ class RawTrDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.key, KeyExpression, "key")
-        _assert_keys((self.key,), _assert_compressed)
+        _assert_taproot_keys((self.key,))
 
     @override
     def __str__(self) -> str:

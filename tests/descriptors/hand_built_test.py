@@ -35,6 +35,11 @@ btclib-org/bip32-descriptors#179.
 A ``musig()`` whose `hardening` is not h is refused too. Issue
 btclib-org/bip32-descriptors#181.
 
+`TrDescriptor` and `RawTrDescriptor` refuse an unpickled ``musig()``
+whose `origin`, `xkey`, `hardening`, path or wildcard its build
+refuses, with that refusal's message at the position `parse` names.
+Issue btclib-org/bip32-descriptors#321.
+
 `WshDescriptor` refuses an argument holding an uncompressed key, and
 `ShDescriptor` a ``wsh()`` one. Both refuse an argument holding a
 ``musig()`` or an x-only key, and one whose script size or number of
@@ -2701,6 +2706,48 @@ def test_a_musig_with_an_xkey_is_refused() -> None:
     """`str` writes the ``musig()`` alone; `parse` has no message for it."""
     with pytest.raises(BTClibValueError, match=r"^a musig\(\) takes no xkey$"):
         KeyExpression(xkey=_XPUB_A, participants=_MUSIG_PAIR)
+
+
+_UNEXTENDED = "musig() derivation requires every participant to be extended"
+
+
+@pytest.mark.parametrize(
+    "name,value,first,err_msg",
+    [
+        (
+            "origin",
+            _ORIGIN_KEY.origin,
+            True,
+            "musig() cannot be nested inside a key origin",
+        ),
+        ("xkey", _XPUB_A, True, "a musig() takes no xkey"),
+        ("hardening", "'", True, "invalid musig() hardening symbol: h expected"),
+        ("der_path", (1,), False, _UNEXTENDED),
+        ("wildcard", 0, False, _UNEXTENDED),
+    ],
+    ids=["origin", "xkey", "hardening", "path", "wildcard"],
+)
+def test_an_unpickled_musig_its_build_refuses_is_refused_in_taproot(
+    name: str, value: object, first: bool, err_msg: str
+) -> None:
+    """With `_assert_musig`'s message, at the position `parse` names.
+
+    An unpickled ``musig()`` skips that check of its own. A path or a
+    wildcard is named at the position after the participants, where
+    `parse` reads it, and the rest at the first position of the key.
+    """
+    musig: KeyExpression = pickle.loads(pickle.dumps(_MUSIG))  # noqa: S301
+    object.__setattr__(musig, name, value)
+    shift = 0 if first else len(musig.participants)
+    builds: list[tuple[Callable[[], object], int]] = [
+        (lambda: TrDescriptor(musig), 0),
+        (lambda: TrDescriptor(_KEY, musig), 1),
+        (lambda: RawTrDescriptor(musig), 0),
+    ]
+    for build, position in builds:
+        match = f"^key {position + shift}: {re.escape(err_msg)}$"
+        with pytest.raises(BTClibValueError, match=match):
+            build()
 
 
 @pytest.mark.parametrize(
