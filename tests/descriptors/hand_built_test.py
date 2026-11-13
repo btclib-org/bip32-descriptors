@@ -2970,12 +2970,26 @@ def test_an_unpickled_musig_its_build_refuses_is_refused_in_taproot(
             build()
 
 
+def _in_tapscript_leaf(key: KeyExpression) -> miniscript.Miniscript:
+    """Return the tapscript ``and_v(v:pk(KEY),pk(C2))``, unpickled.
+
+    A tapscript `Miniscript` node refuses a key ``tr()`` refuses when
+    built, and unpickling skips that check, so the key is given to an
+    unpickled copy.
+    """
+    expression = f"and_v(v:pk({_C}),pk({_C2}))"
+    leaf = _unpickled(miniscript.parse(expression, miniscript.TAPSCRIPT))
+    object.__setattr__(leaf.subs[0].subs[0].subs[0], "keys", (key,))
+    return leaf
+
+
 @pytest.mark.parametrize(
     "name,value,position",
     [
         ("wildcard", "", None),
         ("wildcard", 5, 2),
         ("der_path", [0], None),
+        ("der_path", None, None),
         ("der_path", (2**32,), 2),
         ("participants", list(_EXTENDED), None),
         ("pub_key", _FIXED_A.pub_key, 0),
@@ -2990,6 +3004,7 @@ def test_an_unpickled_musig_its_build_refuses_is_refused_in_taproot(
         "empty wildcard",
         "wildcard 5",
         "der_path list",
+        "der_path None",
         "step 2**32",
         "participants list",
         "pub_key",
@@ -3012,7 +3027,8 @@ def test_an_unpickled_musig_field_any_key_refuses_is_refused_in_taproot(
     `parse` reads it, and the rest at the first position of the key. The
     participants are extended and none is ranged, which is the path
     `_assert_musig_path` takes, so an empty wildcard is refused for its
-    type only.
+    type only. A miniscript leaf writes its text from its keys' fields, so
+    it is refused for them before its text is read.
     """
     built = KeyExpression(participants=_EXTENDED, der_path=(0,))
     musig: KeyExpression = pickle.loads(pickle.dumps(built))  # noqa: S301
@@ -3023,6 +3039,7 @@ def test_an_unpickled_musig_field_any_key_refuses_is_refused_in_taproot(
     builds: list[tuple[Callable[[], object], int]] = [
         (lambda: TrDescriptor(musig), 0),
         (lambda: TrDescriptor(_KEY, musig), 1),
+        (lambda: TrDescriptor(_KEY, _in_tapscript_leaf(musig)), 1),
         (lambda: RawTrDescriptor(musig), 0),
     ]
     for build, first in builds:

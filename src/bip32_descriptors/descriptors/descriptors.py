@@ -958,11 +958,11 @@ def _assert_tree(tree: DescriptorTree) -> list[Miniscript]:
     Once the walk is done, so that a node of the wrong type or context is
     named first, a miniscript leaf is refused where any of its nodes holds
     a number of keys its fragment does not take, as `_assert_key_numbers`
-    says. It is then refused where `parse` reads its text as a function,
-    such as ``pk()`` or ``multi_a()``: the descriptor would not parse back
-    from its text. A key that is no point is left to `_assert_keys`.
+    says. A key that is no point is left to `_assert_keys`.
 
-    Return the miniscript leaves, for `_assert_leaves_sane`.
+    Return the miniscript leaves, for `_assert_leaves_read` and
+    `_assert_leaves_sane`. Nothing here writes a leaf's text, which reads
+    its keys' fields: `_assert_keys` checks them first.
     """
     # each entry carries whether it is a node under a miniscript leaf
     stack: list[tuple[object, int, bool]] = [(tree, 0, False)]
@@ -987,12 +987,20 @@ def _assert_tree(tree: DescriptorTree) -> list[Miniscript]:
             raise BTClibValueError(f"script tree deeper than {MAX_TREE_DEPTH}")
         stack += [(node[1], depth + 1, False), (node[0], depth + 1, False)]
     _assert_key_numbers(leaves, _tree_keys(tree))
+    return leaves
+
+
+def _assert_leaves_read(leaves: list[Miniscript]) -> None:
+    """Refuse a miniscript leaf whose text `parse` reads as a function.
+
+    Such as ``pk()`` or ``multi_a()``: the descriptor would not parse back
+    from its text.
+    """
     for leaf in leaves:
         name = _leaf_function(str(leaf))
         if name is not None:
             err_msg = f"parse reads {name}() as a descriptor function, not a miniscript"
             raise BTClibValueError(err_msg)
-    return leaves
 
 
 def _assert_leaves_sane(leaves: list[Miniscript]) -> None:
@@ -2782,12 +2790,12 @@ class TrDescriptor(Descriptor):
     so is a ``musig()`` its own build refuses, as `_assert_taproot_key`
     says. The internal key is refused before the tree, as `parse` reads
     them, and a leaf key once the tree passes the checks of `_assert_tree`,
-    before a leaf is asked its type and bounds and its sanity, as
-    `_assert_leaves_sane` says. `parse` refuses instead whichever fault it
-    reads first. A `MultiA` leaf and a tapscript `Miniscript` node refuse
-    one when they are built, before the ``tr()`` that holds them, and their
-    message lacks the ``key N:`` that names the key's position in the
-    ``tr()``.
+    before a leaf's text is read, as `_assert_leaves_read` says, and before
+    it is asked its type and bounds and its sanity, as `_assert_leaves_sane`
+    says. `parse` refuses instead whichever fault it reads first. A `MultiA`
+    leaf and a tapscript `Miniscript` node refuse one when they are built,
+    before the ``tr()`` that holds them, and their message lacks the
+    ``key N:`` that names the key's position in the ``tr()``.
     """
 
     internal_key: KeyExpression
@@ -2803,6 +2811,7 @@ class TrDescriptor(Descriptor):
             # a pk() leaf is a bare key, and an unpickled leaf skipped its
             # own check
             _assert_keys(self.key_expressions, _assert_taproot_key)
+            _assert_leaves_read(leaves)
             _assert_leaves_sane(leaves)
 
     @override
