@@ -506,9 +506,7 @@ class MultiA:
         `parse`'s without the ``key N:`` that names the key's position in
         the ``tr()``, which a leaf does not know.
         """
-        if not is_integer(self.threshold):
-            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
-            raise BTClibTypeError(err_msg)
+        _assert_threshold_type(self.threshold)
         assert_type(self.keys, tuple, "keys")
         for key in self.keys:
             assert_type(key, KeyExpression, "key")
@@ -516,10 +514,7 @@ class MultiA:
         for key in self.keys:
             _assert_compressed(key)
             _assert_point(key)
-        name = "sortedmulti_a" if self.sort else "multi_a"
-        _assert_multi_a_count(name, self.keys)
-        if not 1 <= self.threshold <= len(self.keys):
-            raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
+        _assert_multi_a_numbers(self)
 
     @override
     def __str__(self) -> str:
@@ -872,14 +867,40 @@ def _assert_key_types(node: Miniscript | MultiA) -> None:
         assert_type(key, KeyExpression, "key")
 
 
-def _assert_tree_leaf(node: object) -> None:
-    """Refuse a tree node of the wrong type, and a `MultiA` leaf's keys.
+def _assert_threshold_type(threshold: object) -> None:
+    """Refuse a threshold that is no integer, naming its type."""
+    if not is_integer(threshold):
+        err_msg = f"invalid threshold type: {type(threshold).__name__}"
+        raise BTClibTypeError(err_msg)
 
-    A `MultiA` leaf is refused where `_assert_key_types` refuses its keys.
+
+def _assert_multi_a_numbers(leaf: MultiA) -> None:
+    """Refuse a `MultiA` of more keys than BIP387 allows, then its k.
+
+    k runs from 1 to the number of keys. Each refusal is `parse`'s for that
+    n or k, in `parse`'s order, except that `parse` refuses a leaf of no
+    key for its missing key. The type of k has been asserted.
+    """
+    name = "sortedmulti_a" if leaf.sort else "multi_a"
+    _assert_multi_a_count(name, leaf.keys)
+    if not 1 <= leaf.threshold <= len(leaf.keys):
+        raise BTClibValueError(f"invalid k in k-of-n {name}: {leaf.threshold}")
+
+
+def _assert_tree_leaf(node: object) -> None:
+    """Refuse a tree node of the wrong type, and a `MultiA` leaf's keys and k.
+
+    A `MultiA` leaf is refused where `_assert_key_types` refuses its keys,
+    then for the type of its threshold, then as `_assert_multi_a_numbers`
+    says: an unpickled leaf skips its own build's checks. Its keys are
+    refused for what `parse` refuses in them once the tree passes, as
+    `TrDescriptor` says.
     """
     assert_type(node, _TREE_NODE_TYPES, "script tree node")
     if isinstance(node, MultiA):
         _assert_key_types(node)
+        _assert_threshold_type(node.threshold)
+        _assert_multi_a_numbers(node)
 
 
 def _assert_tree(tree: DescriptorTree) -> None:
@@ -902,7 +923,8 @@ def _assert_tree(tree: DescriptorTree) -> None:
     A miniscript node and a `MultiA` leaf are refused where their keys are
     not a tuple of KEY expressions, as `_assert_key_types` says. A
     ``multi()`` node is then refused for its context, as `_tapscript_node`
-    says.
+    says, and a `MultiA` leaf for its threshold and its number of keys, as
+    `_assert_tree_leaf` says.
 
     Once the walk is done, so that a node of the wrong type or context is
     named first, a miniscript leaf is refused where any of its nodes holds

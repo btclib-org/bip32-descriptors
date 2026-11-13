@@ -179,6 +179,11 @@ btclib-org/bip32-descriptors#286.
 Before its type and bounds, a node is refused for a threshold or a lock
 time out of range or of another type, with the message of its own
 build. Issue btclib-org/bip32-descriptors#284.
+
+`TrDescriptor` refuses an unpickled `MultiA` leaf whose k is no integer,
+as its build refuses it, then one of more keys than BIP387 allows, then
+one of a k outside 1 to n, with `parse`'s message. Issue
+btclib-org/bip32-descriptors#313.
 """
 
 from __future__ import annotations
@@ -3998,6 +4003,51 @@ def test_an_unpickled_multi_a_leaf_holding_keys_of_another_type_is_refused(
     other = miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT)
     with pytest.raises(BTClibTypeError, match=err_msg):
         TrDescriptor(_KEY, (leaf, other) if beside else leaf)
+
+
+@pytest.mark.parametrize(
+    "threshold,keys,fault",
+    [
+        (0, (_KEY, _KEY2), "k in k-of-n {}: 0"),
+        (3, (_KEY, _KEY2), "k in k-of-n {}: 3"),
+        (1, (_KEY2,) * 1000, "n in k-of-n {}: 1000"),
+        (0, (_KEY2,) * 1000, "n in k-of-n {}: 1000"),
+    ],
+    ids=["k-0", "k-over-n", "n-over-999", "n-before-k"],
+)
+@pytest.mark.parametrize("sort", [False, True], ids=["multi_a", "sortedmulti_a"])
+def test_an_unpickled_multi_a_leaf_of_a_k_or_n_parse_refuses_is_refused(
+    threshold: int, keys: tuple[KeyExpression, ...], fault: str, sort: bool
+) -> None:
+    """With `parse`'s message for the same text, n before k.
+
+    An unpickled `MultiA` skips its own check of k and n. Issue
+    btclib-org/bip32-descriptors#313.
+    """
+    leaf = _unpickled_multi_a(keys)
+    object.__setattr__(leaf, "threshold", threshold)
+    object.__setattr__(leaf, "sort", sort)
+    name = "sortedmulti_a" if sort else "multi_a"
+    err_msg = f"^invalid {re.escape(fault.format(name))}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},{leaf})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
+
+
+@pytest.mark.parametrize("threshold", ["1", 1.0, None])
+def test_an_unpickled_multi_a_leaf_threshold_of_another_type_is_refused(
+    threshold: object,
+) -> None:
+    """As its build refuses it, before its keys are counted.
+
+    Issue btclib-org/bip32-descriptors#313.
+    """
+    leaf = _unpickled_multi_a((_KEY2,) * 1000)
+    object.__setattr__(leaf, "threshold", threshold)
+    err_msg = f"^invalid threshold type: {type(threshold).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
 
 
 def _unpickled_miniscript(expression: str) -> MiniscriptDescriptor:
