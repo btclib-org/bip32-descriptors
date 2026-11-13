@@ -216,6 +216,7 @@ from bip32_descriptors.descriptors.key_expression import (
     Wifs,
     _assert_compressed,
     _assert_index_range,
+    _assert_key_fields,
     _assert_multipath_keys,
     _assert_musig_allowed,
     _assert_network,
@@ -840,8 +841,9 @@ def _tapscript_node(node: object) -> Miniscript:
     `_assert_fragment_type` says, and then as `_assert_known_fragment`
     says. Its subexpressions are then refused where they are no tuple, or
     of a number its fragment does not take, as `Miniscript._assert_arity`
-    says, its keys as `_assert_key_types` says, and a ``multi()`` for its
-    context, as `Miniscript` refuses it when built.
+    says, its keys as `_assert_key_types` says and then as
+    `_assert_key_fields` says, and a ``multi()`` for its context, as
+    `Miniscript` refuses it when built.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -854,6 +856,8 @@ def _tapscript_node(node: object) -> Miniscript:
     _assert_known_fragment(node)
     node._assert_arity()
     _assert_key_types(node)
+    for key in node.keys:
+        _assert_key_fields(key)
     if node.fragment == "multi":
         raise BTClibValueError(_multisig_context_fault("multi"))
     return node
@@ -875,11 +879,17 @@ def _assert_key_types(node: Miniscript | MultiA) -> None:
 def _assert_tree_leaf(node: object) -> None:
     """Refuse a tree node of the wrong type, and a `MultiA` leaf's keys.
 
-    A `MultiA` leaf is refused where `_assert_key_types` refuses its keys.
+    A `MultiA` leaf is refused where `_assert_key_types` refuses its keys,
+    and a key leaf, or a key of a `MultiA` leaf, where `_assert_key_fields`
+    refuses it.
     """
     assert_type(node, _TREE_NODE_TYPES, "script tree node")
+    if isinstance(node, KeyExpression):
+        _assert_key_fields(node)
     if isinstance(node, MultiA):
         _assert_key_types(node)
+        for key in node.keys:
+            _assert_key_fields(key)
 
 
 def _assert_tree(tree: DescriptorTree) -> None:
@@ -2657,6 +2667,10 @@ class TrDescriptor(Descriptor):
     tapscript `Miniscript` node refuse one when they are built, before
     the ``tr()`` that holds them, and their message lacks the ``key N:``
     that names the key's position in the ``tr()``.
+
+    A key whose `pub_key` or `participants` is of another type, as an
+    unpickled one can be, is refused where the walk reaches it, as
+    `_assert_key_fields` says.
     """
 
     internal_key: KeyExpression
@@ -2666,6 +2680,7 @@ class TrDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.internal_key, KeyExpression, "internal key")
+        _assert_key_fields(self.internal_key)
         _assert_keys((self.internal_key,), _assert_compressed)
         if self.tree is not None:
             _assert_tree(self.tree)
@@ -2922,7 +2937,9 @@ class RawTrDescriptor(Descriptor):
     internal key with an empty merkle root, and it is why this is not a
     `TrDescriptor` carrying ``tree=None``.
 
-    An uncompressed key is refused when built, with `parse`'s message.
+    An uncompressed key is refused when built, with `parse`'s message,
+    after a `pub_key` or `participants` of another type, as an unpickled
+    key can hold, is refused as `_assert_key_fields` says.
     """
 
     key: KeyExpression
@@ -2931,6 +2948,7 @@ class RawTrDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.key, KeyExpression, "key")
+        _assert_key_fields(self.key)
         _assert_keys((self.key,), _assert_compressed)
 
     @override
