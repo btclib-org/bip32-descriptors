@@ -2474,16 +2474,21 @@ def _assert_read_number(fragment: str, number: int) -> None:
     refused as `parse` refuses the ``-`` that `str` writes. Past that,
     ``older()`` and ``after()`` are refused past `_int_from_digits`'s
     bound, a multisig past an int64_t and then past that bound, and
-    ``thresh()`` past an int64_t, as `_read_thresh_threshold` reads it. A
-    fragment `parse` reads no number for is refused past
-    `_int_from_digits`'s bound, quoting none of it either.
+    ``thresh()`` past an int64_t or below 1, as `_read_thresh_threshold`
+    reads it before the subexpressions. A fragment `parse` reads no
+    number for is refused past `_int_from_digits`'s bound, quoting none of
+    it either; a wrapper is named ``c: wrapper``, as other refusals name
+    one.
     """
     if fragment not in {"older", "after", "thresh", "multi", "multi_a"}:
-        _assert_few_digits(number, f"{fragment}() number")
+        name = f"{fragment} wrapper" if fragment in _WRAPPERS else f"{fragment}()"
+        _assert_few_digits(number, f"{name} number")
         return
     noun = "threshold" if fragment in {"multi", "multi_a"} else "number"
     if number < 0:
         raise BTClibValueError(f"invalid {fragment}() {noun}: digits expected")
+    if fragment == "thresh" and number < 1:
+        raise BTClibValueError(f"invalid thresh() threshold: {number}")
     if fragment not in {"older", "after"} and number >= 2**63:
         raise BTClibValueError(f"invalid {fragment}() threshold: past an int64_t")
     if fragment != "thresh":

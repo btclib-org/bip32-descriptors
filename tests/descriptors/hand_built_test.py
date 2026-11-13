@@ -1066,10 +1066,11 @@ _NUMBERED = {
         (0, 0),
     ),
 }
-# a number at each bound `parse` reads one to, and one longer than Python
-# writes as text, which `parse` is asked about as 10**19
+# zero, a number at each bound `parse` reads one to, and one longer than
+# Python writes as text, which `parse` is asked about as 10**19
 _PAST_TEXT = 10**5000
 _BOUNDS = {
+    "zero": 0,
     "10-digits": 10**10 - 1,
     "11-digits": 10**10,
     "int64-max": 2**63 - 1,
@@ -1122,13 +1123,18 @@ def test_a_miniscript_number_is_refused_as_parse_refuses_its_text(
     ids=["scalar", "negative-scalar", "past-text"],
 )
 @pytest.mark.parametrize("unpickled", [False, True], ids=["built", "unpickled"])
+@pytest.mark.parametrize(
+    "path,name",
+    [((0, 0, 0), r"pk_k\(\)"), ((0, 0), "c: wrapper")],
+    ids=["pk_k", "c-wrapper"],
+)
 def test_a_number_of_a_fragment_taking_none_is_refused_unquoted(
-    unpickled: bool, number: int
+    path: tuple[int, ...], name: str, unpickled: bool, number: int
 ) -> None:
     """Past the digits `parse` reads, as no text `parse` reads holds one."""
     root = _unpickled(miniscript.parse(f"and_v(v:pk({_C}),older(1))", _P2WSH))
-    node = _node_at(root, (0, 0, 0))
-    err_msg = r"^invalid pk_k\(\) number: more than 10 digits$"
+    node = _node_at(root, path)
+    err_msg = f"^invalid {name} number: more than 10 digits$"
     if unpickled:
         object.__setattr__(node, "threshold", number)
         with pytest.raises(BTClibValueError, match=err_msg) as e:
@@ -4792,7 +4798,7 @@ def test_a_node_above_a_multisig_of_too_many_keys_is_asked_its_type_and_bounds(
 @pytest.mark.parametrize(
     "threshold, refusal",
     [
-        (0, BTClibValueError("invalid thresh() threshold: 0 of 2")),
+        (0, BTClibValueError("invalid thresh() threshold: 0")),
         (3, BTClibValueError("invalid thresh() threshold: 3 of 2")),
         ("2", BTClibTypeError("invalid threshold type: str")),
     ],
@@ -4829,7 +4835,7 @@ _THRESHOLD_FAULTS: dict[str, tuple[str, tuple[int, ...], object, Exception]] = {
         _THRESH_TEXT,
         (),
         0,
-        BTClibValueError("invalid thresh() threshold: 0 of 2"),
+        BTClibValueError("invalid thresh() threshold: 0"),
     ),
     "thresh-str": (
         _THRESH_TEXT,
