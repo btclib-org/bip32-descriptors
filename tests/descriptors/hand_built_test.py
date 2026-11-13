@@ -179,6 +179,11 @@ btclib-org/bip32-descriptors#286.
 Before its type and bounds, a node is refused for a threshold or a lock
 time out of range or of another type, with the message of its own
 build. Issue btclib-org/bip32-descriptors#284.
+
+`satisfy` refuses an unpickled ``multi()``, and an unpickled miniscript,
+holding a threshold or a lock time its build refuses, before it searches
+for a signature, and quotes no number of more than ten digits. Issue
+btclib-org/bip32-descriptors#324.
 """
 
 from __future__ import annotations
@@ -4571,3 +4576,75 @@ def test_an_unpickled_node_lacking_a_field_its_build_computes_is_refused(
     err_msg = "^c: holds a type or bounds its build does not compute$"
     with pytest.raises(BTClibValueError, match=err_msg):
         _outermost(wrapped, root)
+
+
+# a number of more than ten digits, as a private key in decimal is
+_LONG_NUMBER = int(_RANDOM_HEX, 16)
+
+
+@pytest.mark.parametrize("threshold", [_LONG_NUMBER, -_LONG_NUMBER])
+@pytest.mark.parametrize("sort", [False, True], ids=["multi", "sorted"])
+def test_satisfy_refuses_an_unpickled_multi_of_a_long_threshold(
+    sort: bool, threshold: int
+) -> None:
+    """Without quoting it, and before searching for its signatures.
+
+    Issue btclib-org/bip32-descriptors#324.
+    """
+    multi = _unpickled_multi_with(threshold=threshold, sort=sort)
+    name = "sortedmulti" if sort else "multi"
+    err_msg = rf"^invalid {name}\(\) threshold: not in 0..2\*\*32-1$"
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        multi.satisfy({})
+    assert_secret_free(e.value, [str(_LONG_NUMBER)])
+
+
+@pytest.mark.parametrize("threshold", [0, 3])
+def test_satisfy_refuses_an_unpickled_multi_of_a_k_outside_1_to_n(
+    threshold: int,
+) -> None:
+    """With the message of its build. Issue btclib-org/bip32-descriptors#324."""
+    multi = _unpickled_multi_with(threshold=threshold)
+    err_msg = f"^invalid k in k-of-n multi: {threshold}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        multi.satisfy({})
+
+
+# (an expression, and the path to its node holding a number)
+_NUMBER_HOLDERS: dict[str, tuple[str, tuple[int, ...]]] = {
+    "older": (f"and_v(v:pk({_C}),older(1))", (1,)),
+    "after": (f"and_v(v:pk({_C}),after(1))", (1,)),
+    "thresh": (f"thresh(1,pk({_C}),s:pk({_C2}))", ()),
+    "multi": (f"multi(1,{_C},{_C2})", ()),
+}
+
+
+@pytest.mark.parametrize("threshold", [_LONG_NUMBER, -_LONG_NUMBER])
+@pytest.mark.parametrize("fragment", _NUMBER_HOLDERS)
+def test_satisfy_refuses_an_unpickled_miniscript_of_a_long_number(
+    fragment: str, threshold: int
+) -> None:
+    """Without quoting it, and before the satisfaction reads it.
+
+    Of a ``thresh()``, a satisfaction would index by it, and of a
+    ``multi()`` search for that many signatures. Issue
+    btclib-org/bip32-descriptors#324.
+    """
+    expression, path = _NUMBER_HOLDERS[fragment]
+    ms = _unpickled_miniscript(expression)
+    object.__setattr__(_node_at(ms.node, path), "threshold", threshold)
+    err_msg = f"^{fragment} holds a number of more than 10 digits$"
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        ms.satisfy({})
+    assert_secret_free(e.value, [str(_LONG_NUMBER)])
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        ms.node.satisfy({})
+    assert_secret_free(e.value, [str(_LONG_NUMBER)])
+
+
+def test_satisfy_refuses_an_unpickled_miniscript_of_a_number_out_of_range() -> None:
+    """With the message of its build. Issue btclib-org/bip32-descriptors#324."""
+    ms = _unpickled_miniscript(f"and_v(v:pk({_C}),older(1))")
+    object.__setattr__(ms.node.subs[1], "threshold", 0)
+    with pytest.raises(BTClibValueError, match=r"^invalid older\(\) value: 0$"):
+        ms.satisfy({})
