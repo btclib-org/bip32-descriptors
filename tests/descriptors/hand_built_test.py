@@ -203,6 +203,9 @@ does a `Miniscript` node, built or unpickled, for its number, with the
 message `miniscript.parse` gives its text, before that text is written.
 Neither quotes a number longer than `parse` quotes: it may be a private
 key.
+
+`AddrDescriptor` refuses an address `parse` refuses, with `parse`'s
+message. Issue btclib-org/bip32-descriptors#332.
 """
 
 from __future__ import annotations
@@ -3370,6 +3373,35 @@ def test_a_rawpkh_hash_of_other_than_20_bytes_is_refused_when_built(
         replace(parsed, key_hash=key_hash)
     unpickled: RawPkhDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
     object.__setattr__(unpickled, "key_hash", key_hash)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        unpickled.script_pub_key()
+
+
+@pytest.mark.parametrize(
+    "address,refusal",
+    [
+        ("", "not enough bytes for checksum, invalid base58 decoded size: 0"),
+        ("x", "not enough bytes for checksum, invalid base58 decoded size: 1"),
+    ],
+    ids=["empty", "x"],
+)
+def test_an_addr_address_parse_refuses_is_refused_when_built(
+    address: str, refusal: str
+) -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    An unpickled one skips that check, and refuses to give its script.
+    """
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"addr({address})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        AddrDescriptor(address)
+    parsed = cast("AddrDescriptor", _PARSED[AddrDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, addr=address)
+    unpickled: AddrDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
+    object.__setattr__(unpickled, "addr", address)
     with pytest.raises(BTClibValueError, match=err_msg):
         unpickled.script_pub_key()
 
