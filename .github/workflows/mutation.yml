@@ -107,6 +107,8 @@ jobs:
       # split it. Each shard is cut so that the per-mutant times of the
       # scheduled run
       # https://github.com/btclib-org/bip32-descriptors/actions/runs/42634535109
+      # and the shard times of the run
+      # https://github.com/btclib-org/bip32-descriptors/actions/runs/43436179539
       # put its whole session well inside its budget, with room for the suite
       # to grow. The ceiling is the budget plus the environment, and stays
       # under those six hours.

@@ -1,7 +1,7 @@
-# A shard of the descriptors profile: miniscript.py, the other comparisons and
-# the `&` replaced. descriptors.toml is the profile: what it mutates and why,
-# the shards, the test command and the timeout copied here, and the triage of
-# the survivors.
+# A shard of the descriptors profile: miniscript.py, the comparisons that
+# replace anything but a `==`. descriptors.toml is the profile: what it mutates
+# and why, the shards, the test command and the timeout copied here, and the
+# triage of the survivors.
 
 [cosmic-ray]
 module-path = "src/bip32_descriptors/descriptors/miniscript.py"
@@ -12,7 +12,7 @@ excluded-modules = []
 # skips every operator but those the lookahead names: see descriptors.toml
 [cosmic-ray.filters.operators-filter]
 exclude-operators = [
-    '(?!core/ReplaceComparisonOperator_(?!Eq_)|core/ReplaceBinaryOperator_BitAnd_)',
+    '(?!core/ReplaceComparisonOperator_(?!Eq_))',
 ]
 
 # one mutant at a time, in this working tree: see btclib's sig_hash.toml
