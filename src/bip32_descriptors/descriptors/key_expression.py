@@ -926,8 +926,9 @@ def _assert_pub_key(key: KeyExpression) -> None:
     prefix = pub_key[0]
     if (size == 33 and prefix not in {2, 3}) or (size == 65 and prefix != 4):
         # 06 and 07 are the hybrid encoding, which nothing in bitcoin
-        # produces and Bitcoin Core refuses in a descriptor too
-        raise BTClibValueError(f"invalid public key prefix: 0x{prefix:02x}")
+        # produces and Bitcoin Core refuses in a descriptor too; the size
+        # is named, not the octet, which here holds no value SEC defines
+        raise BTClibValueError(f"invalid public key prefix for {size} bytes")
     # as Bitcoin Core's descriptor parser does
     if not _SCRIPT_KEYS.get():
         point_from_pub_key(pub_key)

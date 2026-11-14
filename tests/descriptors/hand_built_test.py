@@ -1637,17 +1637,25 @@ _ODD_WIF = b58.wif_from_prv_key(6, "mainnet", compressed=True)
     "pub_key,error,err_msg",
     [
         (_OFF_CURVE, EccValueError, "not a public key"),
-        (b"\x05" + _OFF_CURVE[1:], BTClibValueError, "invalid public key prefix: 0x05"),
-        (b"\x04" + _OFF_CURVE[1:], BTClibValueError, "invalid public key prefix: 0x04"),
+        (
+            b"\x05" + _OFF_CURVE[1:],
+            BTClibValueError,
+            "invalid public key prefix for 33 bytes",
+        ),
+        (
+            b"\x04" + _OFF_CURVE[1:],
+            BTClibValueError,
+            "invalid public key prefix for 33 bytes",
+        ),
         (
             b"\x06" + _UNCOMPRESSED[1:],
             BTClibValueError,
-            "invalid public key prefix: 0x06",
+            "invalid public key prefix for 65 bytes",
         ),
         (
             b"\x02" + _UNCOMPRESSED[1:],
             BTClibValueError,
-            "invalid public key prefix: 0x02",
+            "invalid public key prefix for 65 bytes",
         ),
     ],
     ids=["no point", "0x05", "0x04 short", "hybrid", "0x02 long"],
@@ -1662,6 +1670,29 @@ def test_a_pub_key_parse_refuses_is_refused_when_built(
         KeyExpression(pub_key=pub_key)
     with pytest.raises(error, match=f"^{re.escape(err_msg)}$"):
         replace(_C_KEY, pub_key=pub_key)
+
+
+# a fixed random key behind a prefix SEC does not define: the first is
+# the issue's example, an xprv's 00 || k
+_BAD_PREFIX_KEYS = [
+    b"\x00" + bytes.fromhex(_RANDOM_HEX),
+    bytes.fromhex(_RANDOM_HEX) * 2 + b"\x7e",
+]
+
+
+@pytest.mark.parametrize("pub_key", _BAD_PREFIX_KEYS, ids=["33 bytes", "65 bytes"])
+def test_a_pub_key_refused_for_its_prefix_is_not_echoed(pub_key: bytes) -> None:
+    """The size is named, not the octet, which can be a secret's first byte.
+
+    Issue btclib-org/bip32-descriptors#342.
+    """
+    err_msg = f"invalid public key prefix for {len(pub_key)} bytes"
+    with pytest.raises(BTClibValueError, match=f"^key 0: {err_msg}$") as e:
+        parse(f"pk({pub_key.hex()})")
+    assert_secret_free(e.value, [pub_key])
+    with pytest.raises(BTClibValueError, match=f"^{err_msg}$") as e:
+        KeyExpression(pub_key=pub_key)
+    assert_secret_free(e.value, [pub_key])
 
 
 @pytest.mark.parametrize("size", [0, 1, 32, 34, 64, 66])
