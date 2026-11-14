@@ -53,9 +53,9 @@ miniscript descriptor refuse more of what their build or `parse`
 refuses in a hand-built or unpickled descriptor, key, leaf or node,
 such as an unpickled `multi_a(0,K)` leaf, which v2026.11.13 built;
 `tests/descriptors/hand_built_test.py` holds the cases. A key's own
-fields are not all checked: a path step past 2**32-1 still builds, in a
-plain key, a `multi_a()` leaf's key or a `musig()` participant
-(issue #334).
+fields are not all checked: a path step past 2**32-1 set on an unpickled
+key still builds, in a plain key, a `multi_a()` leaf's key or a
+`musig()` participant (issue #334).
 
 ## v2026.11.13
 
