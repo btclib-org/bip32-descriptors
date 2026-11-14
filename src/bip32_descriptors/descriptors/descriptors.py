@@ -3258,7 +3258,7 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     an unpickled argument skips that check of its own too.
 
     A `RawDescriptor` argument has a script over the limit of `context`
-    refused by three rules, in this order, each with `parse`'s message:
+    refused by these rules, in this order, each with `parse`'s message:
 
     - where it writes ``raw()`` text, the script that text holds, read
       as `parse` reads it;
@@ -3268,11 +3268,12 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
       hand-built descriptor names;
     - where it is no `MultiDescriptor`, its `script` field.
 
-    The first two are not asked of a miniscript, whose text and scripts
-    are not computed before its nodes pass, as `_assert_wsh_argument`
-    says. One that holds a key expression may need a private key for its
-    scripts, and a ``multi()`` that is a ``raw()`` too writes and embeds
-    the ``multi()`` script, which the checks above bound.
+    The rules on its text and its scripts are not asked of a miniscript,
+    whose text and scripts are not computed before its nodes pass, as
+    `_assert_wsh_argument` says. One that holds a key expression may need
+    a private key for its scripts, and a ``multi()`` that is a ``raw()``
+    too writes and embeds the ``multi()`` script, which the checks above
+    bound.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 

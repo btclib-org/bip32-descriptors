@@ -156,7 +156,7 @@ order `_assert_inner` gives. Issue btclib-org/bip32-descriptors#281.
 `WshDescriptor`, and `ShDescriptor` for its argument and for one inside
 a ``wsh()`` argument, for an unpickled ``raw()``, in the order
 `_assert_inner` gives. An unpickled argument of a class deriving from
-two of ``raw()``, ``rawpkh()`` and ``multi()`` is refused for what
+several of ``raw()``, ``rawpkh()`` and ``multi()`` is refused for what
 `_OWN_CHECKS` checks of each, in the order its own build checks it: the
 types of their fields, an empty script and the size of a hash. The
 threshold and the keys of a ``multi()`` are refused in `parse`'s order,
@@ -3662,10 +3662,10 @@ def test_an_unpickled_argument_of_two_fragments_is_refused_for_each_ones_fields(
 ) -> None:
     """What `_OWN_CHECKS` checks of each, in the order the build checks it.
 
-    The build of a class deriving from two fragments runs the check of
-    the one later in its method resolution order first. An unpickled one
-    skips both, and the wrapper runs them in that order, after its
-    network. Issue btclib-org/bip32-descriptors#282.
+    The build of a class deriving from several fragments runs the check
+    of the fragment later in its method resolution order first. An
+    unpickled one skips them all, and the wrapper runs them in that
+    order, after its network. Issue btclib-org/bip32-descriptors#282.
     """
     err_msg = f"^{re.escape(refusal)}$"
     with pytest.raises(error, match=err_msg):
@@ -3785,7 +3785,7 @@ class _Delegating(RawDescriptor):
 def test_a_raw_of_delegating_overrides_is_refused_past_the_limit(
     wrap: Callable[[Descriptor], Descriptor], limit: int
 ) -> None:
-    """At the limit it builds, as `parse` reads it; one byte past it does not.
+    """At the limit it builds, as `parse` reads it; past the limit it does not.
 
     Issue btclib-org/bip32-descriptors#282.
     """
