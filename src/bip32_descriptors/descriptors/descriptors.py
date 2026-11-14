@@ -1993,8 +1993,8 @@ class ShDescriptor(Descriptor):
 
     An unpickled ``multi()`` argument is refused for a field of the
     wrong type and for its threshold, a ``raw()`` or ``rawpkh()`` one for
-    its bytes, and a ``rawpkh()`` one for the size of its hash, as
-    `WshDescriptor` says.
+    its bytes, a ``raw()`` one for an empty script, and a ``rawpkh()``
+    one for the size of its hash, as `WshDescriptor` says.
     """
 
     inner: Descriptor
@@ -2102,10 +2102,9 @@ class WshDescriptor(Descriptor):
     An unpickled ``multi()`` argument skips its own check. A field of
     the wrong type is refused as `_assert_multi_types` says, and a
     threshold out of range whose text can be written in `parse`'s order,
-    as `_assert_embedded` says. A ``raw()`` script or a ``rawpkh()`` key
-    hash that is no bytes is refused as `_assert_script_only_types`
-    says, and a ``rawpkh()`` key hash of other than 20 bytes as
-    `_assert_inner` says.
+    as `_assert_embedded` says. A ``raw()`` script that is no bytes or
+    is empty, and a ``rawpkh()`` key hash that is no bytes or of other
+    than 20 bytes, are refused as `_assert_inner` says.
     """
 
     inner: Descriptor
@@ -2599,14 +2598,17 @@ class AddrDescriptor(Descriptor):
 
 @dataclass(frozen=True)
 class RawDescriptor(Descriptor):
-    """``raw(HEX)``: the script those bytes are, BIP385."""
+    """``raw(HEX)``: the script those bytes are, BIP385.
+
+    An empty script is refused when built, with `parse`'s message.
+    """
 
     script: bytes
 
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
-        _assert_script_only_types(self)
+        _assert_raw_fields(self)
 
     @override
     def __str__(self) -> str:
@@ -2682,8 +2684,7 @@ class RawPkhDescriptor(Descriptor):
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
-        _assert_script_only_types(self)
-        _assert_key_hash_size(self.key_hash)
+        _assert_rawpkh_fields(self)
 
     @override
     def __str__(self) -> str:
@@ -2738,16 +2739,33 @@ class RawPkhDescriptor(Descriptor):
 _SCRIPT_ONLY = (RawDescriptor, RawPkhDescriptor)
 
 
-def _assert_script_only_types(inner: RawDescriptor | RawPkhDescriptor) -> None:
-    """Refuse a ``raw()`` script or a ``rawpkh()`` key hash that is no bytes.
+def _assert_raw_fields(raw: RawDescriptor) -> None:
+    """Refuse a ``raw()`` script that is no bytes, then an empty one.
 
     `_assert_inner` calls it too, for the reason `_assert_multi_types`
     gives.
     """
-    if isinstance(inner, RawDescriptor):
-        assert_type(inner.script, bytes, "script")
-    else:
-        assert_type(inner.key_hash, bytes, "key hash")
+    assert_type(raw.script, bytes, "script")
+    _assert_raw_script(raw.script)
+
+
+def _assert_rawpkh_fields(rawpkh: RawPkhDescriptor) -> None:
+    """Refuse a ``rawpkh()`` key hash that is no bytes, then its size.
+
+    `_assert_inner` calls it too, for the reason `_assert_multi_types`
+    gives.
+    """
+    assert_type(rawpkh.key_hash, bytes, "key hash")
+    _assert_key_hash_size(rawpkh.key_hash)
+
+
+# the check of its own fields each fragment's build runs, which
+# `_assert_inner` runs again on an argument that may have skipped it
+_OWN_CHECKS: dict[type[Descriptor], Callable[[Any], None]] = {
+    MultiDescriptor: _assert_multi_types,
+    RawDescriptor: _assert_raw_fields,
+    RawPkhDescriptor: _assert_rawpkh_fields,
+}
 
 
 def _embedded(
@@ -3229,27 +3247,23 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
 
     A network that is no `str` is refused first, with `Descriptor`'s
     message: an unpickled argument skips that check of its own, and the
-    scripts of the ``sh()`` or ``wsh()`` are made with it. A field of the
-    wrong type that `_assert_multi_types` or `_assert_script_only_types`
-    checks is refused next, as those functions say. This is the order of
-    the argument's own build, which checks its network before its fields.
-
-    The hash of a ``rawpkh()`` is then refused for its size, with
-    `_assert_key_hash_size`'s message, before its position: an unpickled
-    ``rawpkh()`` skips that check of its own, which its build runs after
-    the type of the hash.
+    scripts of the ``sh()`` or ``wsh()`` are made with it. Each fragment
+    `_OWN_CHECKS` names that the argument is an instance of then has its
+    fields refused by the check named for it, which that fragment's build
+    runs too, before the argument's position: the base class first, as
+    each build calls its parent's before its own checks. This is the
+    order of the argument's own build, which checks its network before
+    its fields; an unpickled argument skips all of it.
 
     A `ShDescriptor` or a `WshDescriptor` whose class writes its text
     with that class's own `str` is named without writing that text: an
     unpickled one can hold an argument whose text cannot be written.
     """
     assert_type(inner.network, str, "network")
-    if isinstance(inner, MultiDescriptor):
-        _assert_multi_types(inner)
-    elif isinstance(inner, _SCRIPT_ONLY):
-        _assert_script_only_types(inner)
-        if isinstance(inner, RawPkhDescriptor):
-            _assert_key_hash_size(inner.key_hash)
+    for cls in reversed(type(inner).__mro__):
+        own_check = _OWN_CHECKS.get(cls)
+        if own_check is not None:
+            own_check(inner)
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
@@ -3293,6 +3307,24 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     A key that is no `KeyExpression` is refused before any of these,
     whatever its position, with the message `_assert_key_types` gives:
     an unpickled argument skips that check of its own too.
+
+    A `RawDescriptor` argument has a script over the limit of `context`
+    refused by these rules, in this order, each with `parse`'s message:
+
+    - where it writes ``raw()`` text, the script that text holds, read
+      as `parse` reads it;
+    - where it holds no key expression, each script its `_scripts` gives
+      at index 0 with no private key: the call `redeem_script` makes
+      before `ScriptPubKey` reads the network, which need not be one a
+      hand-built descriptor names;
+    - where it is no `MultiDescriptor`, its `script` field.
+
+    The rules on its text and its scripts are not asked of a miniscript,
+    whose text and scripts are not computed before its nodes pass, as
+    `_assert_wsh_argument` says. One that holds a key expression may need
+    a private key for its scripts, and a ``multi()`` that is a ``raw()``
+    too writes and embeds the ``multi()`` script, which the checks above
+    bound.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
@@ -3305,10 +3337,23 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
         assert_type(key, KeyExpression, "key")
     if isinstance(inner, MultiDescriptor):
         _assert_multi_embedded(inner, context, check)
-        return
-    _assert_keys(inner.key_expressions, check)
+    else:
+        _assert_keys(inner.key_expressions, check)
     if isinstance(inner, RawDescriptor):
-        _assert_raw_size(inner.script, context)
+        _assert_raw_embedded(inner, context)
+
+
+def _assert_raw_embedded(raw: RawDescriptor, context: str) -> None:
+    """Refuse a ``raw()`` script by the rules `_assert_embedded` gives."""
+    if not isinstance(raw, MiniscriptDescriptor):
+        text = str(raw)
+        if text.partition("(")[0] == "raw":
+            _parse_expression(text, context, raw.network, {})
+        if not raw.key_expressions:
+            for script in raw._scripts(0, None):
+                _assert_raw_size(script, context)
+    if not isinstance(raw, MultiDescriptor):
+        _assert_raw_size(raw.script, context)
 
 
 def _assert_multi_embedded(
@@ -3865,9 +3910,22 @@ _EMBEDDED_SCRIPT_SIZE = {_P2SH: MAX_SCRIPT_ELEMENT_SIZE, _P2WSH: MAX_SCRIPT_SIZE
 def _parse_raw(
     args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
-    script = _hex_bytes(_one_argument(args, "raw"), "Raw script is not hex")
+    script = _hex_bytes(_one_argument(args, "raw"), _RAW_NOT_HEX)
     _assert_raw_size(script, context)
     return RawDescriptor(script, network=network)
+
+
+_RAW_NOT_HEX = "Raw script is not hex"
+
+
+def _assert_raw_script(script: bytes) -> None:
+    """Refuse an empty script, as `_hex_bytes` refuses empty hex.
+
+    By the length of its bytes, which no subclass's `__len__` or
+    `__bool__` answers.
+    """
+    if bytes.__len__(script) == 0:
+        raise BTClibValueError(_RAW_NOT_HEX)
 
 
 def _assert_raw_size(script: bytes, context: str) -> None:
@@ -3902,7 +3960,7 @@ def _assert_key_hash_size(key_hash: bytes) -> None:
 
 def _parse_bare_leaf(args: list[str]) -> RawLeaf:
     """Return the leaf of a ``raw(HEX)`` inside a tree: version c0."""
-    script = _hex_bytes(_one_argument(args, "raw"), "Raw script is not hex")
+    script = _hex_bytes(_one_argument(args, "raw"), _RAW_NOT_HEX)
     return RawLeaf(script, bare=True)
 
 
@@ -5237,6 +5295,9 @@ def infer_descriptor(
     script = bytes_from_octets(script)
     _assert_provider(provider)
     network = validated_network_name(network)
+    if not script:
+        # Core's answer, which `RawDescriptor` refuses to build
+        return add_checksum("raw()")
     inferred = str(_inferred(script, _TOP, _Known.of(provider), network))
     if not _parses_to(inferred, script, network):
         inferred = str(_addr_or_raw(script, _solved(script)[0], network))

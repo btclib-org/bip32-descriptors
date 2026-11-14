@@ -158,6 +158,18 @@ a ``wsh()`` argument, refuse an unpickled ``rawpkh()`` whose hash is
 empty or of other than 20 bytes, as its own build refuses it, in the
 order `_assert_inner` gives. Issue btclib-org/bip32-descriptors#281.
 
+`RawDescriptor` refuses an empty script with `parse`'s message. So do
+`WshDescriptor`, and `ShDescriptor` for its argument and for one inside
+a ``wsh()`` argument, for an unpickled ``raw()``, in the order
+`_assert_inner` gives. An unpickled argument of a class deriving from
+several of ``raw()``, ``rawpkh()`` and ``multi()`` is refused for what
+`_OWN_CHECKS` checks of each, in the order its own build checks it: the
+types of their fields, an empty script and the size of a hash. The
+threshold and the keys of a ``multi()`` are refused in `parse`'s order,
+as `WshDescriptor` says. `_assert_embedded` says which scripts of a
+``raw()`` argument are refused for their size. Issue
+btclib-org/bip32-descriptors#282.
+
 A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
 point, which `miniscript.from_script` reads, with `parse`'s message, the
 last two lacking the key's position. Issue
@@ -216,14 +228,14 @@ from __future__ import annotations
 import pickle
 import re
 from collections.abc import Callable
-from dataclasses import fields, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any, cast
 
 import pytest
 from btclib import b58
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
-from btclib.script.limits import MAX_SCRIPT_SIZE
+from btclib.script.limits import MAX_SCRIPT_ELEMENT_SIZE, MAX_SCRIPT_SIZE
 from ecc.exceptions import EccValueError
 from typing_extensions import override
 
@@ -257,7 +269,7 @@ from bip32_descriptors.descriptors.descriptors import (
     WpkhDescriptor,
     WshDescriptor,
 )
-from bip32_descriptors.descriptors.key_expression import KeyExpression
+from bip32_descriptors.descriptors.key_expression import KeyExpression, PrvKeys
 from tests.descriptors import MINISCRIPT_OUTSIDE
 from tests.secret_free import assert_secret_free
 
@@ -288,6 +300,22 @@ def test_a_raw_descriptor_script_of_another_type_is_refused(script: Any) -> None
     err_msg = f"^invalid script type: {type(script).__name__}$"
     with pytest.raises(BTClibTypeError, match=err_msg):
         RawDescriptor(script)
+
+
+def test_an_empty_raw_script_is_refused_when_built() -> None:
+    """Built directly or by `replace`, with the message `parse` gives.
+
+    An empty script is what `parse` reads as no hex. Issue
+    btclib-org/bip32-descriptors#282.
+    """
+    err_msg = "^Raw script is not hex$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse("raw()")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        RawDescriptor(b"")
+    parsed = cast("RawDescriptor", _PARSED[RawDescriptor])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(parsed, script=b"")
 
 
 @pytest.mark.parametrize("internal_key", [_X, 5, None, MultiA(1, (_KEY,))])
@@ -3563,6 +3591,430 @@ def test_an_unpickled_rawpkh_of_20_bytes_is_refused_for_its_position(
         wrap(inner)
     built = wrap(_unpickled_rawpkh(bytes(20), RawPkhDescriptor))
     assert parse(str(built)) == built
+
+
+class _TrNamedRaw(RawDescriptor):
+    """A subclass writing ``tr()``, which ``sh()`` and ``wsh()`` refuse."""
+
+    @override
+    def __str__(self) -> str:
+        return f"tr({self.script.hex()})"
+
+
+def _unpickled_raw(script: bytes, cls: type[RawDescriptor]) -> Descriptor:
+    """Return ``raw(SCRIPT)`` of `cls`, unpickled, skipping its check."""
+    unpickled: RawDescriptor = pickle.loads(pickle.dumps(cls(b"\x51")))  # noqa: S301
+    object.__setattr__(unpickled, "script", script)
+    return unpickled
+
+
+@pytest.mark.parametrize(
+    "wrap,text",
+    [
+        (WshDescriptor, "wsh(raw())"),
+        (ShDescriptor, "sh(raw())"),
+        (_sh_wsh, "sh(wsh(raw()))"),
+    ],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+def test_an_unpickled_empty_raw_script_is_refused_inside(
+    wrap: Callable[[Descriptor], Descriptor], text: str
+) -> None:
+    """By the wrapper when built, with the message `parse` gives.
+
+    An unpickled ``raw()`` skips its own check of the script, which the
+    wrapper runs after its network and before its position, as
+    `_assert_inner` says. A script that is not empty passes, to its
+    position or to a build. Issue btclib-org/bip32-descriptors#282.
+    """
+    err_msg = "^Raw script is not hex$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(text)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_raw(b"", RawDescriptor))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_raw(b"", _TrNamedRaw))
+    with pytest.raises(BTClibTypeError, match="^invalid network type: int$"):
+        wrap(_with_network(_unpickled_raw(b"", RawDescriptor), 5))
+    with pytest.raises(BTClibValueError, match=r"^tr\(\) is not allowed inside "):
+        wrap(_unpickled_raw(b"\x51", _TrNamedRaw))
+    built = wrap(_unpickled_raw(b"\x51", RawDescriptor))
+    assert parse(str(built)) == built
+
+
+class _TrueEmpty(bytes):
+    """No bytes, and true."""
+
+    def __bool__(self) -> bool:
+        return True
+
+
+class _FalseBytes(bytes):
+    """Bytes that are false, whatever they hold."""
+
+    def __bool__(self) -> bool:
+        return False
+
+
+class _LongEmpty(bytes):
+    """No bytes, whose length says one."""
+
+    @override
+    def __len__(self) -> int:
+        return 1
+
+
+class _ShortBytes(bytes):
+    """Bytes whose length says none, whatever they hold."""
+
+    @override
+    def __len__(self) -> int:
+        return 0
+
+
+@pytest.mark.parametrize("wrap", [None, WshDescriptor, ShDescriptor, _sh_wsh])
+@pytest.mark.parametrize(
+    "empty,one",
+    [(_TrueEmpty(), _FalseBytes(b"\x51")), (_LongEmpty(), _ShortBytes(b"\x51"))],
+    ids=["truth", "length"],
+)
+def test_a_raw_script_is_empty_by_its_bytes_not_its_methods(
+    empty: bytes, one: bytes, wrap: Callable[[Descriptor], Descriptor] | None
+) -> None:
+    """Built, or unpickled inside a wrapper, as `parse` reads its hex.
+
+    The subclass answers its truth or its length against its bytes.
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    assert (bool(empty), len(empty)) != (False, 0)
+    assert (bool(one), len(one)) != (True, 1)
+    err_msg = "^Raw script is not hex$"
+    if wrap is None:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            RawDescriptor(empty)
+        assert str(RawDescriptor(one)) == "raw(51)"
+        return
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_raw(empty, RawDescriptor))
+    built = wrap(_unpickled_raw(one, RawDescriptor))
+    assert parse(str(built)).script_pub_key() == built.script_pub_key()
+
+
+@dataclass(frozen=True)
+class _RawThenRawPkh(RawDescriptor, RawPkhDescriptor):
+    """A ``raw()`` and a ``rawpkh()``: its build checks the hash first."""
+
+
+@dataclass(frozen=True)
+class _RawPkhThenRaw(RawPkhDescriptor, RawDescriptor):
+    """A ``rawpkh()`` and a ``raw()``: its build checks the script first."""
+
+
+@dataclass(frozen=True)
+class _MultiThenRaw(MultiDescriptor, RawDescriptor):
+    """A ``multi()`` and a ``raw()``: its build checks the script first."""
+
+
+# fields each of the classes above builds with
+_BOTH_FIELDS: dict[type[Descriptor], dict[str, Any]] = {
+    _RawThenRawPkh: {"script": b"\x51", "key_hash": bytes(20)},
+    _RawPkhThenRaw: {"script": b"\x51", "key_hash": bytes(20)},
+    _MultiThenRaw: {"script": b"\x51", "threshold": 1, "keys": (_KEYS[0],)},
+}
+_EMPTY = "Raw script is not hex"
+_HASH_SIZE = "160 bits digest expected"
+_NETWORK = "invalid network type: int"
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+@pytest.mark.parametrize(
+    "cls,faults,error,refusal",
+    [
+        (_RawThenRawPkh, {"script": b""}, BTClibValueError, _EMPTY),
+        (_RawThenRawPkh, {"script": "51"}, BTClibTypeError, "invalid script type: str"),
+        (_RawThenRawPkh, {"key_hash": bytes(19)}, BTClibValueError, _HASH_SIZE),
+        (
+            _RawThenRawPkh,
+            {"key_hash": "ab" * 10},
+            BTClibTypeError,
+            "invalid key hash type: str",
+        ),
+        (
+            _RawThenRawPkh,
+            {"script": b"", "key_hash": bytes(19)},
+            BTClibValueError,
+            _HASH_SIZE,
+        ),
+        (_RawThenRawPkh, {"script": b"", "network": 5}, BTClibTypeError, _NETWORK),
+        (_RawPkhThenRaw, {"script": b""}, BTClibValueError, _EMPTY),
+        (
+            _RawPkhThenRaw,
+            {"key_hash": "ab" * 10},
+            BTClibTypeError,
+            "invalid key hash type: str",
+        ),
+        (
+            _RawPkhThenRaw,
+            {"script": b"", "key_hash": bytes(19)},
+            BTClibValueError,
+            _EMPTY,
+        ),
+        (_RawPkhThenRaw, {"script": b"", "network": 5}, BTClibTypeError, _NETWORK),
+        (_MultiThenRaw, {"script": b""}, BTClibValueError, _EMPTY),
+        (_MultiThenRaw, {"script": b"", "threshold": "1"}, BTClibValueError, _EMPTY),
+        (_MultiThenRaw, {"script": b"", "network": 5}, BTClibTypeError, _NETWORK),
+    ],
+    ids=[
+        "raw-rawpkh-empty",
+        "raw-rawpkh-script-type",
+        "raw-rawpkh-hash-size",
+        "raw-rawpkh-hash-type",
+        "raw-rawpkh-hash-first",
+        "raw-rawpkh-network-first",
+        "rawpkh-raw-empty",
+        "rawpkh-raw-hash-type",
+        "rawpkh-raw-script-first",
+        "rawpkh-raw-network-first",
+        "multi-raw-empty",
+        "multi-raw-script-first",
+        "multi-raw-network-first",
+    ],
+)
+def test_an_unpickled_argument_of_two_fragments_is_refused_for_each_ones_fields(
+    cls: type[Descriptor],
+    faults: dict[str, Any],
+    error: type[Exception],
+    refusal: str,
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """What `_OWN_CHECKS` checks of each, in the order the build checks it.
+
+    The build of a class deriving from several fragments runs the check
+    of the fragment later in its method resolution order first. An
+    unpickled one skips them all, and the wrapper runs them in that
+    order, after its network. Issue btclib-org/bip32-descriptors#282.
+    """
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(error, match=err_msg):
+        cls(**{**_BOTH_FIELDS[cls], **faults})
+    unpickled = pickle.loads(pickle.dumps(cls(**_BOTH_FIELDS[cls])))  # noqa: S301
+    for name, value in faults.items():
+        object.__setattr__(unpickled, name, value)
+    with pytest.raises(error, match=err_msg):
+        wrap(unpickled)
+
+
+@dataclass(frozen=True)
+class _RawThenMulti(RawDescriptor, MultiDescriptor):
+    """A ``raw()`` and a ``multi()``: it writes the ``raw()`` text."""
+
+    script: bytes = field(kw_only=True)
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_multi_that_is_a_raw_is_not_asked_its_raw_script_size(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """It writes the ``multi()`` text, which `parse` reads.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    inner = _MultiThenRaw(
+        script=bytes(MAX_SCRIPT_SIZE + 1), threshold=1, keys=_KEYS[:1]
+    )
+    built = wrap(inner)
+    parsed = parse(str(built))
+    assert parsed.script_pub_key() == built.script_pub_key()
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_raw_that_is_a_multi_is_refused_for_its_script_size(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """It writes the ``raw()`` text, as a ``raw()`` does.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    over = bytes(MAX_SCRIPT_SIZE + 1)
+    inner = _RawThenMulti(threshold=1, keys=_KEYS[:1], script=over)
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {len(over)} bytes, over the "
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(inner)
+
+
+class _OtherScripts(RawDescriptor):
+    """A ``raw()`` whose scripts are not the bytes it writes."""
+
+    @override
+    def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
+        return [b"\x51"]
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_raw_of_other_scripts_is_refused_for_the_size_it_writes(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """`parse` refuses the text, whatever script the argument embeds.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    assert _OtherScripts(b"\x52").redeem_script() == b"\x51"
+    over = bytes(MAX_SCRIPT_SIZE + 1)
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {len(over)} bytes, over the "
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_OtherScripts(over))
+
+
+class _OtherText(RawDescriptor):
+    """A ``raw()`` whose text is not the bytes it embeds."""
+
+    @override
+    def __str__(self) -> str:
+        return "raw(51)"
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_raw_of_other_text_is_refused_for_the_size_it_embeds(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """The script is over the limit, whatever text the argument writes.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    assert str(_OtherText(b"\x52")) == "raw(51)"
+    over = bytes(MAX_SCRIPT_SIZE + 1)
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {len(over)} bytes, over the "
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_OtherText(over))
+
+
+class _Delegating(RawDescriptor):
+    """A ``raw()`` overriding its text and scripts with its parent's."""
+
+    @override
+    def __str__(self) -> str:
+        return super().__str__()
+
+    @override
+    def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
+        return super()._scripts(index, prv_keys)
+
+
+@pytest.mark.parametrize(
+    "wrap,limit",
+    [
+        (WshDescriptor, MAX_SCRIPT_SIZE),
+        (ShDescriptor, MAX_SCRIPT_ELEMENT_SIZE),
+        (_sh_wsh, MAX_SCRIPT_SIZE),
+    ],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+def test_a_raw_of_delegating_overrides_is_refused_past_the_limit(
+    wrap: Callable[[Descriptor], Descriptor], limit: int
+) -> None:
+    """At the limit it builds, as `parse` reads it; past the limit it does not.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    built = wrap(_Delegating(bytes(limit)))
+    assert parse(str(built)).script_pub_key() == built.script_pub_key()
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {limit + 1} bytes, over the {limit}-"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_Delegating(bytes(limit + 1)))
+
+
+class _LongText(RawDescriptor):
+    """A ``raw()`` writing a script over the limit, embedding a short one."""
+
+    @override
+    def __str__(self) -> str:
+        return f"raw({bytes(MAX_SCRIPT_SIZE + 1).hex()})"
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_raw_writing_a_long_script_is_refused_for_the_size_it_writes(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """`parse` refuses the text, whatever script the argument embeds.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    inner = _LongText(b"\x51")
+    assert inner.redeem_script() == b"\x51"
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {MAX_SCRIPT_SIZE + 1} bytes, over the "
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(inner)
+
+
+class _KeyedRaw(RawDescriptor):
+    """A ``raw()`` holding a key, writing a short script, embedding its own."""
+
+    @property
+    @override
+    def key_expressions(self) -> tuple[KeyExpression, ...]:
+        return _KEYS[:1]
+
+    @override
+    def __str__(self) -> str:
+        return "raw(51)"
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_raw_holding_a_key_is_refused_for_its_script_field(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """Its scripts are not asked, a key holder's needing a private key.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    over = bytes(MAX_SCRIPT_SIZE + 1)
+    inner = _KeyedRaw(over)
+    assert str(inner) == "raw(51)"
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {len(over)} bytes, over the "
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(inner)
+
+
+@dataclass(frozen=True)
+class _MiniscriptThenRaw(MiniscriptDescriptor, RawDescriptor):
+    """A miniscript and a ``raw()``: it writes the miniscript's text."""
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, _sh_wsh])
+def test_a_miniscript_that_is_a_raw_is_refused_for_its_nodes_first(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """As a miniscript is: its text and scripts wait for its nodes to pass.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    node = cast("MiniscriptDescriptor", cast("WshDescriptor", _MINISCRIPT).inner).node
+    built = _MiniscriptThenRaw(script=b"\x51", node=node)
+    inner: _MiniscriptThenRaw = pickle.loads(pickle.dumps(built))  # noqa: S301
+    first = _first_key_node(inner.node)
+    object.__setattr__(first, "keys", ())
+    err_msg = f"^invalid number of keys in {first.fragment}: 0$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(inner)
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_multi_that_is_a_raw_of_hardened_ranged_keys_builds(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """Its scripts need a private key, which no build is given.
+
+    It embeds what the ``multi()`` alone embeds. Issue
+    btclib-org/bip32-descriptors#282.
+    """
+    prv_keys: dict[str, str] = {}
+    wsh = cast(
+        "WshDescriptor", parse(f"wsh(multi(1,{_XPRV}/0h/*h))", "mainnet", prv_keys)
+    )
+    multi = cast("MultiDescriptor", wsh.inner)
+    over = bytes(MAX_SCRIPT_SIZE + 1)
+    built = wrap(_MultiThenRaw(script=over, threshold=1, keys=multi.keys))
+    assert built.script_pub_key(0, prv_keys) == wrap(multi).script_pub_key(0, prv_keys)
 
 
 _TAPSCRIPT = miniscript.TAPSCRIPT
