@@ -585,7 +585,10 @@ class _RawLeafMultiA(RawLeaf, MultiA):
 
 
 class _MultiARawLeaf(MultiA, RawLeaf):
-    """A ``multi_a()`` and a ``rawleaf()``: its build checks the keys alone."""
+    """A ``multi_a()`` and a ``rawleaf()``.
+
+    Its build checks the ``multi_a()`` alone.
+    """
 
 
 def _hybrid_leaf(cls: type[Any]) -> Any:
