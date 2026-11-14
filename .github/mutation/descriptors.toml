@@ -6,12 +6,27 @@
 # properties and a witness whose size decides a fee, none of which a wrong bound
 # announces. This asks whether tests/descriptors would notice if a line of the
 # package's modules were wrong.
+#
+# The profile is split into shards, one session and one job each, because a
+# whole session of it does not fit in one hosted job; the comment on
+# `profiles` in .github/workflows/mutation.yml says how they are sized. This
+# file is the shard of every module of the package but miniscript.py and
+# descriptors.py, which miniscript-*.toml and descriptors-py-*.toml split by
+# operator. Those files copy this one's test-command and timeout.
+#
+# A numbered shard's filter is a negative lookahead: cr-filter-operators
+# skips a mutant whose operator name the pattern matches at its start, and
+# `(?!A|B)` matches every name that starts with neither A nor B, so the shard
+# runs A and B. A module's numbered shards run disjoint sets of operators, and
+# its `-rest` shard skips exactly the operators they run, so each mutant of the
+# package is judged by one shard, those of an operator a cosmic-ray release
+# adds included. In a shard's counts line, skipped counts the mutants of its
+# module that another shard judges. tests/mutation_shards_test.py checks the
+# copied settings and that each mutant has one shard.
 
 [cosmic-ray]
-# the package, `__init__.py` included: it is re-exports and a docstring, so
-# it contributes a handful of mutants rather than a scope of its own, and
-# naming the directory is what keeps a module added to it from being left
-# out in silence
+# the package, `__init__.py` included, and naming the directory is what keeps
+# a module added to it from being left out in silence
 module-path = "src/bip32_descriptors/descriptors"
 
 # tests/descriptors alone, the directory of these modules' tests and part of
@@ -40,7 +55,11 @@ test-command = "python -m pytest -x -q -n0 -p no:randomly tests/descriptors"
 # widens one of those is what the slack is for
 timeout = 300
 
-excluded-modules = []
+# the two modules the other shard files split
+excluded-modules = [
+    "src/bip32_descriptors/descriptors/descriptors.py",
+    "src/bip32_descriptors/descriptors/miniscript.py",
+]
 
 # No operator filter here, and that is a decision rather than an omission:
 # btclib's parsers.toml excludes `ReplaceBinaryOperator_BitOr_.*` because every
@@ -59,9 +78,7 @@ excluded-modules = []
 # first session says about the trade is that some of the `|` mutants it
 # ran were *killed*, which no annotation's ever is.
 #
-# The session is a sample and not a sweep: the comment on the budgets in
-# .github/workflows/mutation.yml says what a sample is worth. The
-# survivors triaged below are read off the `descriptors-survivors.txt`
+# The survivors triaged below are read off the `descriptors-survivors.txt`
 # the workflow uploads, at btclib's run 34833390559, except where a
 # paragraph names its own run.
 #

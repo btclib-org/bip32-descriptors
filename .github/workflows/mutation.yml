@@ -36,7 +36,7 @@ on:
       profile:
         # `all` is what the schedule does. Spelled rather than left empty:
         # a blank entry in a dropdown reads as a mistake
-        description: one profile's slug, or all of them
+        description: one job's slug, or all of them
         required: false
         default: all
         type: choice
@@ -44,6 +44,21 @@ on:
           - all
           - keys
           - descriptors
+          - miniscript-1
+          - miniscript-2
+          - miniscript-3
+          - miniscript-4
+          - miniscript-5
+          - miniscript-6
+          - miniscript-7
+          - miniscript-rest
+          - descriptors-py-1
+          - descriptors-py-2
+          - descriptors-py-3
+          - descriptors-py-4
+          - descriptors-py-5
+          - descriptors-py-6
+          - descriptors-py-rest
 
 # least privilege for the GITHUB_TOKEN: nothing here writes. No issues:
 # write either -- a survivor is a test to write rather than a defect to
@@ -62,38 +77,81 @@ jobs:
   mutation:
     uses: btclib-org/.github/.github/workflows/reusable-mutation.yml@cb5a79443399980ba717df2dea23dbedf6bdbc3a # v2026.11.12
     with:
-      # One object per profile, every value this tree's own: the phrase
-      # the job is named for, the slug the dropdown and the artifact are
-      # keyed on, the ceiling in minutes, and the sessions in the order
-      # they run. The callee's `profiles` input describes that shape.
+      # One object per job, every value this tree's own: the phrase the job
+      # is named for, the slug the dropdown and the artifact are keyed on, the
+      # ceiling in minutes, and the sessions in the order they run. The
+      # callee's `profiles` input describes that shape.
       #
-      # A session its budget cuts is a sample. Every run starts a new
-      # session, cosmic-ray takes its mutants in random order, and the job
-      # cuts the session at the budget and reports what it judged, so each
-      # cut session judges a different part of a profile. A verdict can
-      # change between two runs that both judged a mutant with no check lost
-      # where a timeout fired (it is answered KILLED, and a loaded runner is
-      # slower) or a property test drew different examples. Where neither
-      # applies, a kill that a later run lets live is read against what
-      # changed in the tests and the code in between: it may be a test that
-      # stopped checking what it used to.
+      # Every budget is sized for a whole session, so a run whose sessions no
+      # budget cuts judges every mutant of both profiles, except the bip32
+      # mutants that bip32.toml's operator filter skips, which never run. A
+      # session its budget cuts logs a `cut at` notice, and its counts line
+      # says how many mutants it left. cosmic-ray takes a session's mutants in
+      # random order and no run carries anything to the next, so a cut session
+      # leaves a different part each run, and no set of runs is sure to judge
+      # it: a shard cut that way is one to split again. How much a run judged
+      # is the line the callee's mutation_counts.py prints for each session in
+      # the "Write the reports" step.
       #
-      # The ceiling is the budget plus the environment. The bip32 budget is
-      # sized for a whole session. A run that cuts it logs a `cut at`
-      # notice, and its counts line says how many mutants it left. A whole
-      # descriptors session does not fit in the time GitHub allows a hosted
-      # job, so its budget cuts the session.
+      # A verdict can change between two runs that both judged a mutant with
+      # no check lost where a timeout fired (it is answered KILLED, and a
+      # loaded runner is slower) or a property test drew different examples.
+      # Where neither applies, a kill that a later run lets live is read
+      # against what changed in the tests and the code in between: it may be
+      # a test that stopped checking what it used to.
       #
-      # No run carries anything to the next, so where a budget cuts its
-      # session, no set of runs is sure to have judged every mutant of that
-      # profile. How much of a profile a run judged is the line the callee's
-      # mutation_counts.py prints for each session in the "Write the
-      # reports" step.
+      # A whole descriptors session does not fit in the six hours GitHub
+      # allows a hosted job
+      # (https://docs.github.com/en/actions/reference/limits), so that profile
+      # runs as shards, one job each; descriptors.toml's header says how they
+      # split it. Each shard is cut so that its whole session fits inside its
+      # budget, as a dispatched run measured it: the descriptors.py shards and
+      # descriptors.toml on
+      # https://github.com/btclib-org/bip32-descriptors/actions/runs/43436179539,
+      # the miniscript.py shards on
+      # https://github.com/btclib-org/bip32-descriptors/actions/runs/43491103845.
+      # The ceiling is the budget plus the environment, and stays under those
+      # six hours.
+      #
+      # The shards run at once, and each holds one of the jobs the
+      # organization may run at the same time (REPOSITORY.md's *Plan-gated
+      # settings*) for the hours its session takes.
       profiles: >-
         [{"profile": "extended keys", "slug": "keys", "ceiling": 100, "sessions":
         "bip32.toml 80m"},
-        {"profile": "output descriptors and miniscript", "slug": "descriptors",
-        "ceiling": 100, "sessions": "descriptors.toml 90m"}]
+        {"profile": "key expressions and the rest of the descriptors package",
+        "slug": "descriptors", "ceiling": 345, "sessions":
+        "descriptors.toml 330m"},
+        {"profile": "miniscript.py, shard 1", "slug": "miniscript-1",
+        "ceiling": 345, "sessions": "miniscript-1.toml 330m"},
+        {"profile": "miniscript.py, shard 2", "slug": "miniscript-2",
+        "ceiling": 345, "sessions": "miniscript-2.toml 330m"},
+        {"profile": "miniscript.py, shard 3", "slug": "miniscript-3",
+        "ceiling": 345, "sessions": "miniscript-3.toml 330m"},
+        {"profile": "miniscript.py, shard 4", "slug": "miniscript-4",
+        "ceiling": 345, "sessions": "miniscript-4.toml 330m"},
+        {"profile": "miniscript.py, shard 5", "slug": "miniscript-5",
+        "ceiling": 345, "sessions": "miniscript-5.toml 330m"},
+        {"profile": "miniscript.py, shard 6", "slug": "miniscript-6",
+        "ceiling": 345, "sessions": "miniscript-6.toml 330m"},
+        {"profile": "miniscript.py, shard 7", "slug": "miniscript-7",
+        "ceiling": 345, "sessions": "miniscript-7.toml 330m"},
+        {"profile": "miniscript.py, the rest", "slug": "miniscript-rest",
+        "ceiling": 345, "sessions": "miniscript-rest.toml 330m"},
+        {"profile": "descriptors.py, shard 1", "slug": "descriptors-py-1",
+        "ceiling": 345, "sessions": "descriptors-py-1.toml 330m"},
+        {"profile": "descriptors.py, shard 2", "slug": "descriptors-py-2",
+        "ceiling": 345, "sessions": "descriptors-py-2.toml 330m"},
+        {"profile": "descriptors.py, shard 3", "slug": "descriptors-py-3",
+        "ceiling": 345, "sessions": "descriptors-py-3.toml 330m"},
+        {"profile": "descriptors.py, shard 4", "slug": "descriptors-py-4",
+        "ceiling": 345, "sessions": "descriptors-py-4.toml 330m"},
+        {"profile": "descriptors.py, shard 5", "slug": "descriptors-py-5",
+        "ceiling": 345, "sessions": "descriptors-py-5.toml 330m"},
+        {"profile": "descriptors.py, shard 6", "slug": "descriptors-py-6",
+        "ceiling": 345, "sessions": "descriptors-py-6.toml 330m"},
+        {"profile": "descriptors.py, the rest", "slug": "descriptors-py-rest",
+        "ceiling": 345, "sessions": "descriptors-py-rest.toml 330m"}]
       # the dropdown above, forwarded. A schedule has no `inputs`, so this
       # arrives at the callee as an empty string, which its own `SELECTED`
       # expression reads as every profile
