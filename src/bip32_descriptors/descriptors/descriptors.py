@@ -2699,10 +2699,13 @@ class RawPkhDescriptor(Descriptor):
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         # refused again: unpickling builds one without `__post_init__`
-        _assert_key_hash_size(self.key_hash)
+        _assert_rawpkh_fields(self)
+        # the bytes it holds, which its text writes: `serialize` sizes a
+        # push by its `__len__`, and `bytes()` copies through `__bytes__`
+        key_hash = bytes.__getitem__(self.key_hash, slice(None))
         return [
             serialize(
-                ["OP_DUP", "OP_HASH160", self.key_hash, "OP_EQUALVERIFY", "OP_CHECKSIG"]
+                ["OP_DUP", "OP_HASH160", key_hash, "OP_EQUALVERIFY", "OP_CHECKSIG"]
             )
         ]
 
@@ -3929,10 +3932,15 @@ def _assert_raw_script(script: bytes) -> None:
 
 
 def _assert_raw_size(script: bytes, context: str) -> None:
-    """Refuse a ``raw()`` script over the limit of what embeds it."""
+    """Refuse a ``raw()`` script over the limit of what embeds it.
+
+    The size is that of the octets `ScriptPubKey` embeds, which no
+    subclass's `__len__` answers.
+    """
     limit = _EMBEDDED_SCRIPT_SIZE.get(context)
-    if limit is not None and len(script) > limit:
-        err_msg = f"raw() inside {context} is {len(script)} bytes"
+    size = len(bytes_from_octets(script))
+    if limit is not None and size > limit:
+        err_msg = f"raw() inside {context} is {size} bytes"
         raise BTClibValueError(f"{err_msg}, over the {limit}-byte limit")
 
 
@@ -3950,11 +3958,13 @@ def _assert_key_hash_size(key_hash: bytes) -> None:
     """Refuse a hash `parse` refuses, with its message.
 
     An empty one as `_hex_bytes` refuses empty hex, then a size other
-    than 20 bytes.
+    than 20 bytes. By the length of its bytes, which no subclass's
+    `__len__` or `__bool__` answers.
     """
-    if not key_hash:
+    size = bytes.__len__(key_hash)
+    if size == 0:
         raise BTClibValueError(_RAWPKH_NOT_HEX)
-    if len(key_hash) != _KEY_HASH_SIZE:
+    if size != _KEY_HASH_SIZE:
         raise BTClibValueError("160 bits digest expected")
 
 
@@ -4676,7 +4686,7 @@ def _sec_size(sec: bytes) -> int:
 
 def _multisig(script: bytes) -> tuple[int, list[bytes]] | None:
     """Return the threshold and keys of a bare multisig: `MatchMultisig`."""
-    if not script or script[-1] != _OP_CHECKMULTISIG:
+    if len(script) == 0 or script[-1] != _OP_CHECKMULTISIG:
         return None
     ops = _ops(script)
     if not ops:
@@ -4700,7 +4710,7 @@ def _multisig(script: bytes) -> tuple[int, list[bytes]] | None:
 
 def _multi_a(script: bytes) -> tuple[int, list[bytes]] | None:
     """Return a ``multi_a()``'s threshold and x-only keys: `MatchMultiA`."""
-    if not script or script[0] != _X_ONLY_SIZE or script[-1] != _OP_NUMEQUAL:
+    if len(script) == 0 or script[0] != _X_ONLY_SIZE or script[-1] != _OP_NUMEQUAL:
         return None
     keys: list[bytes] = []
     position = 0
@@ -4985,7 +4995,7 @@ def _inferred_leaf_or_raw(script: bytes, version: int, known: _Known) -> Descrip
     ``rawleaf()`` with no HEX does not parse, and the node commits to the
     same output key.
     """
-    if not script:
+    if len(script) == 0:
         return RawNode(leaf_hash(version, script))
     leaf = _inferred_leaf(script, known) if version == _TAPSCRIPT_LEAF_VERSION else None
     return RawLeaf(script, version) if leaf is None else leaf
@@ -5060,7 +5070,7 @@ def _taproot_tree(
     The records are read by script and then by control block, shortest
     first, which is the order of the map and the sets Core holds them in.
     """
-    if not merkle_root:
+    if len(merkle_root) == 0:
         return None
     by_leaf: dict[tuple[bytes, int], list[bytes]] = {}
     for control, leaf in leaf_scripts.items():

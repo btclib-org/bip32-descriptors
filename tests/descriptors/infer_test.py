@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from hashlib import sha256
 from typing import Any
@@ -658,6 +659,89 @@ def test_a_leaf_with_no_script_is_a_node_at_any_version() -> None:
     assert inferred == add_checksum(expected)
     script, _ = _tr([[(0xC0, PK_X1)], [(0xC2, [])]])
     assert parse(inferred, "regtest").script_pub_key().script == script
+
+
+class _TrueBytes(bytes):
+    """Bytes that are true, whatever they hold."""
+
+    def __bool__(self) -> bool:
+        return True
+
+
+class _FalseBytes(bytes):
+    """Bytes that are false, whatever they hold."""
+
+    def __bool__(self) -> bool:
+        return False
+
+
+def _parsed(text: str) -> tuple[bytes, Provider]:
+    """Return the script of a descriptor and its provider."""
+    descriptor = parse(text, "regtest")
+    return descriptor.script_pub_key().script, descriptor.provider()
+
+
+@pytest.mark.parametrize(
+    "spend,root_type,leaf_type",
+    [
+        (_parsed(f"tr({X1},{{pk({X1}),pk({X34})}})"), _FalseBytes, bytes),
+        (_parsed(f"tr({X1},{{pk({X1}),pk({X34})}})"), bytes, _FalseBytes),
+        (_parsed(f"tr({X1},multi_a(1,{X1},{X34}))"), bytes, _FalseBytes),
+        (_parsed(f"tr({X1})"), _TrueBytes, bytes),
+        (_tr([[(0xC0, PK_X1)], [(0xC0, [])]]), bytes, _TrueBytes),
+    ],
+    ids=[
+        "false-root",
+        "false-leaves",
+        "false-multi-a-leaf",
+        "true-empty-root",
+        "true-empty-leaf",
+    ],
+)
+def test_a_merkle_root_or_leaf_script_is_empty_by_its_length_not_its_truth(
+    spend: tuple[bytes, Provider], root_type: type[bytes], leaf_type: type[bytes]
+) -> None:
+    """A provider's bytes of a subclass infer what plain bytes infer."""
+    assert not _FalseBytes(b"\x51")
+    assert _TrueBytes()
+    script, provider = spend
+    expected = infer_descriptor(script, provider, "regtest")
+    assert expected.startswith("tr(")
+    ((output_key, (internal, root, leaves)),) = provider.trees.items()
+    typed = {c: (leaf_type(s), v) for c, (s, v) in leaves.items()}
+    trees = {output_key: (internal, root_type(root), typed)}
+    typed_provider = replace(provider, trees=trees)
+    assert infer_descriptor(script, typed_provider, "regtest") == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"wsh(multi(2,{K1},{K34}))",
+        f"sh(multi(2,{K1},{K34}))",
+        f"sh(wsh(multi(2,{K1},{K34})))",
+    ],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+def test_a_false_known_script_is_read_by_its_length(text: str) -> None:
+    """A ``multi()`` whose script the provider gives as false bytes."""
+    script, provider = _parsed(text)
+    expected = infer_descriptor(script, provider, "regtest")
+    assert strip_checksum(expected).startswith(text.partition("multi")[0])
+    false = replace(provider, scripts=tuple(_FalseBytes(s) for s in provider.scripts))
+    assert infer_descriptor(script, false, "regtest") == expected
+
+
+@pytest.mark.parametrize("wrap", [ScriptPubKey.p2sh, ScriptPubKey.p2wsh])
+def test_a_true_empty_known_script_is_read_by_its_length(
+    wrap: Callable[[bytes], ScriptPubKey],
+) -> None:
+    """The address of the output, as for an empty script of plain bytes."""
+    script = wrap(b"").script
+    expected = _addr(script)
+    assert infer_descriptor(script, Provider(scripts=(b"",)), "regtest") == expected
+    true = Provider(scripts=(_TrueBytes(),))
+    assert infer_descriptor(script, true, "regtest") == expected
 
 
 def test_records_that_contradict_each_other_infer_the_root(
