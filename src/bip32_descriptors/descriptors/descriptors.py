@@ -4784,7 +4784,7 @@ class _Known:
     def of(cls, provider: Provider) -> _Known:
         """Index a provider `_assert_provider` passed, as plain bytes.
 
-        Each entry is copied as the bytes it holds, with `_plain`: a
+        Each entry is read as the bytes it holds, with `_plain`: a
         subclass of bytes can answer any truth, length or copy, and the
         inference then reads none of them.
         """
