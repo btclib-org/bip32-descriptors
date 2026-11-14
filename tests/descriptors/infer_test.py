@@ -610,6 +610,32 @@ def test_a_pkh_leaf_of_a_provider_key_of_no_compressed_prefix_is_a_rawleaf() -> 
     assert infer_descriptor(script, known, "regtest") == unknown
 
 
+class _FalseBytes(bytes):
+    """Bytes that are false, whatever they hold."""
+
+    def __bool__(self) -> bool:
+        return False
+
+
+@pytest.mark.parametrize("text", [f"pkh({K1})", f"wpkh({K1})", f"tr({X34},pkh({K1}))"])
+def test_a_provider_key_that_is_false_infers_as_its_bytes(text: str) -> None:
+    """A key is read by its bytes, not by its truth.
+
+    Issue btclib-org/bip32-descriptors#345.
+    """
+    descriptor = parse(text, "regtest")
+    provider = descriptor.provider()
+    script = descriptor.script_pub_key().script
+    keys: dict[bytes, BIP32KeyOrigin | None] = {
+        _FalseBytes(k): v for k, v in provider.keys.items()
+    }
+    false = replace(provider, keys=keys)
+    assert not any(false.keys)
+    expected = infer_descriptor(script, provider, "regtest")
+    assert "pkh(" in expected
+    assert infer_descriptor(script, false, "regtest") == expected
+
+
 def test_a_leaf_that_infers_to_nothing_else_is_a_rawleaf() -> None:
     """A tree of a ``pk()`` and an ``OP_1`` keeps its key and its ``pk()``."""
     assert _inferred([[(0xC0, PK_X1)], [(0xC0, ["OP_1"])]]) == add_checksum(

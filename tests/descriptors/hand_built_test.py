@@ -221,6 +221,10 @@ does a `Miniscript` node, built or unpickled, for its number, with the
 message `miniscript.parse` gives its text, before that text is written.
 Neither quotes a number longer than `parse` quotes: it may be a private
 key.
+
+A `pub_key` that is a `bytes` subclass whose truth is False builds and
+is written, with its WIF or without, as its plain bytes are. Issue
+btclib-org/bip32-descriptors#345.
 """
 
 from __future__ import annotations
@@ -248,6 +252,7 @@ from bip32_descriptors.descriptors import (
     miniscript,
     normalized,
     parse,
+    private_string,
 )
 from bip32_descriptors.descriptors import descriptors as descriptors_module
 from bip32_descriptors.descriptors.descriptors import (
@@ -3698,6 +3703,24 @@ def test_a_raw_script_is_empty_by_its_bytes_not_its_methods(
         wrap(_unpickled_raw(empty, RawDescriptor))
     built = wrap(_unpickled_raw(one, RawDescriptor))
     assert parse(str(built)).script_pub_key() == built.script_pub_key()
+
+
+@pytest.mark.parametrize("text,name", [("pkh({})", "key"), ("tr({})", "internal_key")])
+def test_a_false_pub_key_is_a_key_by_its_bytes(text: str, name: str) -> None:
+    """Built, and written with and without its WIF, as its plain bytes are.
+
+    Issue btclib-org/bip32-descriptors#345.
+    """
+    wif = b58.wif_from_prv_key(1, "regtest", compressed=True)
+    wifs: dict[str, str] = {}
+    parsed = parse(text.format(wif), "regtest", wifs=wifs)
+    key = getattr(parsed, name)
+    false = _FalseBytes(key.pub_key)
+    assert not false
+    built = replace(parsed, **{name: replace(key, pub_key=false)})
+    assert built == parsed
+    assert str(built) == str(parsed)
+    assert private_string(built, None, None, wifs) == text.format(wif)
 
 
 @dataclass(frozen=True)

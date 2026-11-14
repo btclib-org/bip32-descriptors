@@ -4671,7 +4671,7 @@ def _number(op_code: int, data: bytes, low: int, high: int) -> int | None:
 
 def _sec_size(sec: bytes) -> int:
     """Return the size Core's `CPubKey::GetLen` gives the key's first byte."""
-    return {2: 33, 3: 33, 4: 65, 6: 65, 7: 65}.get(sec[0], -1) if sec else -1
+    return {2: 33, 3: 33, 4: 65, 6: 65, 7: 65}.get(sec[0], -1) if len(sec) > 0 else -1
 
 
 def _multisig(script: bytes) -> tuple[int, list[bytes]] | None:
