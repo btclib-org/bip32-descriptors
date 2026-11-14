@@ -1,7 +1,7 @@
 # A shard of the descriptors profile: descriptors.py, a `|` turned into `/`,
-# `//` or `<<`, and the numbers changed. descriptors.toml is the profile: what
-# it mutates and why, the shards, the test command and the timeout copied here,
-# and the triage of the survivors.
+# `//` or `<<`. descriptors.toml is the profile: what it mutates and why, the
+# shards, the test command and the timeout copied here, and the triage of the
+# survivors.
 
 [cosmic-ray]
 module-path = "src/bip32_descriptors/descriptors/descriptors.py"
@@ -12,7 +12,7 @@ excluded-modules = []
 # skips every operator but those the lookahead names: see descriptors.toml
 [cosmic-ray.filters.operators-filter]
 exclude-operators = [
-    '(?!core/ReplaceBinaryOperator_BitOr_(Div|FloorDiv|LShift)$|core/NumberReplacer$)',
+    '(?!core/ReplaceBinaryOperator_BitOr_(Div|FloorDiv|LShift)$)',
 ]
 
 # one mutant at a time, in this working tree: see btclib's sig_hash.toml

@@ -104,14 +104,14 @@ jobs:
       # allows a hosted job
       # (https://docs.github.com/en/actions/reference/limits), so that profile
       # runs as shards, one job each; descriptors.toml's header says how they
-      # split it. Each shard is cut so that the per-mutant times of the
-      # scheduled run
-      # https://github.com/btclib-org/bip32-descriptors/actions/runs/42634535109
-      # and the shard times of the run
-      # https://github.com/btclib-org/bip32-descriptors/actions/runs/43436179539
-      # put its whole session well inside its budget, with room for the suite
-      # to grow. The ceiling is the budget plus the environment, and stays
-      # under those six hours.
+      # split it. Each shard is cut so that its whole session fits inside its
+      # budget, as a dispatched run measured it: the descriptors.py shards and
+      # descriptors.toml on
+      # https://github.com/btclib-org/bip32-descriptors/actions/runs/43436179539,
+      # the miniscript.py shards on
+      # https://github.com/btclib-org/bip32-descriptors/actions/runs/43491103845.
+      # The ceiling is the budget plus the environment, and stays under those
+      # six hours.
       #
       # The shards run at once, and each holds one of the jobs the
       # organization may run at the same time (REPOSITORY.md's *Plan-gated
