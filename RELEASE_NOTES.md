@@ -48,26 +48,14 @@ number of ten digits or fewer still reads that way. None of the
 messages above quotes a number of the size of a private key, which
 v2026.11.13's quoted whole.
 
-`tr()` and `rawtr()` refuse an unpickled `musig()` key whose own path,
-wildcard, hardening or xkey its build refuses, or holding a participant
-whose key is no point, uncompressed or x-only, or that is a `musig()` or
-no `KeyExpression`. Beyond these, of a participant's own fields, only
-what a path on the `musig()` needs is checked, where it has one: that
-the participant is extended and not ranged. Its own path, for one, is
-not checked. `tr()` refuses an unpickled `multi_a()` leaf whose k or
-number of keys `parse` refuses. v2026.11.13 built such descriptors:
-some wrote text `parse` refuses, such as `tr(K,multi_a(0,K))`, and
-others were refused only once written. The checks run when the
-descriptor is built around the unpickled value.
-
-A bare miniscript descriptor refuses an unpickled `multi()` of no key
-beside an uncompressed key, which v2026.11.13 built, writing
-`and_v(v:multi(1,),older(2))`. It refuses a node of forged type or
-bounds above a `multi()` of too many keys beside an uncompressed key,
-as `and_v holds a type or bounds its build does not compute`, where
-v2026.11.13 raised the built-in `AttributeError` for some. `tr()` names
-an uncompressed leaf key before it asks a forged node beside it its type
-and bounds, as `wsh()` does.
+This breaks the API. `tr()`, `rawtr()`, `sh()`, `wsh()` and a bare
+miniscript descriptor refuse more of what their build or `parse`
+refuses in a hand-built or unpickled descriptor, key, leaf or node,
+such as an unpickled `multi_a(0,K)` leaf, which v2026.11.13 built;
+`tests/descriptors/hand_built_test.py` holds the cases. A key's own
+fields are not all checked: a path step past 2**32-1 still builds, in a
+plain key, a `multi_a()` leaf's key or a `musig()` participant
+(issue #334).
 
 ## v2026.11.13
 

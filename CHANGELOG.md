@@ -46,7 +46,7 @@ Unpickled, and a forged node above a multisig of too many keys there
 
 Is refused, built or unpickled, a `MultiA`'s k included.
 Another node refuses one past ten digits unquoted, and no refusal quotes
-a number of the size of a private key (#325).
+a number of the size of a private key (issue #313).
 
 ### Mutation testing
 
