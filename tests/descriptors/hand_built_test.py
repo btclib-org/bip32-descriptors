@@ -160,8 +160,8 @@ two of ``raw()``, ``rawpkh()`` and ``multi()`` is refused for what
 `_OWN_CHECKS` checks of each, in the order its own build checks it: the
 types of their fields, an empty script and the size of a hash. The
 threshold and the keys of a ``multi()`` are refused in `parse`'s order,
-as `WshDescriptor` says. The size of a ``raw()`` script is asked only
-where the argument writes it as ``raw()`` text or embeds it. Issue
+as `WshDescriptor` says. `_assert_embedded` says which scripts of a
+``raw()`` argument are refused for their size. Issue
 btclib-org/bip32-descriptors#282.
 
 A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
