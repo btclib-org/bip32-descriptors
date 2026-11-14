@@ -3257,9 +3257,10 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     whatever its position, with the message `_assert_key_types` gives:
     an unpickled argument skips that check of its own too.
 
-    The size of a ``raw()`` script is asked only where the argument's
-    scripts are `RawDescriptor`'s: one that derives from another fragment
-    too may embed that fragment's script, and write its text.
+    The size of a ``raw()`` script is asked only where the argument
+    writes its text with `RawDescriptor`'s `str`, as `parse` refuses the
+    text: one that derives from another fragment too may write that
+    fragment's text.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
@@ -3276,7 +3277,7 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
         _assert_keys(inner.key_expressions, check)
     if (
         isinstance(inner, RawDescriptor)
-        and type(inner)._scripts is RawDescriptor._scripts
+        and type(inner).__str__ is RawDescriptor.__str__
     ):
         _assert_raw_size(inner.script, context)
 

@@ -161,8 +161,8 @@ two of ``raw()``, ``rawpkh()`` and ``multi()`` is refused for what
 types of their fields, an empty script and the size of a hash. The
 threshold and the keys of a ``multi()`` are refused in `parse`'s order,
 as `WshDescriptor` says. The size of a ``raw()`` script is asked only
-where the argument embeds that script. Issue
-btclib-org/bip32-descriptors#282.
+where the argument writes it as ``raw()`` text, the text `parse` reads.
+Issue btclib-org/bip32-descriptors#282.
 
 A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
 point, which `miniscript.from_script` reads, with `parse`'s message, the
@@ -263,7 +263,7 @@ from bip32_descriptors.descriptors.descriptors import (
     WpkhDescriptor,
     WshDescriptor,
 )
-from bip32_descriptors.descriptors.key_expression import KeyExpression
+from bip32_descriptors.descriptors.key_expression import KeyExpression, PrvKeys
 from tests.descriptors import MINISCRIPT_OUTSIDE
 from tests.secret_free import assert_secret_free
 
@@ -3621,7 +3621,7 @@ def test_an_unpickled_argument_of_two_fragments_is_refused_for_each_ones_fields(
 
 @dataclass(frozen=True)
 class _RawThenMulti(RawDescriptor, MultiDescriptor):
-    """A ``raw()`` and a ``multi()``: it embeds the ``raw()`` script."""
+    """A ``raw()`` and a ``multi()``: it writes the ``raw()`` text."""
 
     script: bytes = field(kw_only=True)
 
@@ -3630,7 +3630,7 @@ class _RawThenMulti(RawDescriptor, MultiDescriptor):
 def test_a_multi_that_is_a_raw_is_not_asked_its_raw_script_size(
     wrap: Callable[[Descriptor], Descriptor],
 ) -> None:
-    """It embeds the ``multi()`` script, and writes the text `parse` reads.
+    """It writes the ``multi()`` text, which `parse` reads.
 
     Issue btclib-org/bip32-descriptors#282.
     """
@@ -3646,7 +3646,7 @@ def test_a_multi_that_is_a_raw_is_not_asked_its_raw_script_size(
 def test_a_raw_that_is_a_multi_is_refused_for_its_script_size(
     wrap: Callable[[Descriptor], Descriptor],
 ) -> None:
-    """It embeds the ``raw()`` script, as a ``raw()`` does.
+    """It writes the ``raw()`` text, as a ``raw()`` does.
 
     Issue btclib-org/bip32-descriptors#282.
     """
@@ -3655,6 +3655,29 @@ def test_a_raw_that_is_a_multi_is_refused_for_its_script_size(
     err_msg = rf"^raw\(\) inside w?sh\(\) is {len(over)} bytes, over the "
     with pytest.raises(BTClibValueError, match=err_msg):
         wrap(inner)
+
+
+class _OtherScripts(RawDescriptor):
+    """A ``raw()`` whose scripts are not the bytes it writes."""
+
+    @override
+    def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
+        return [b"\x51"]
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_raw_of_other_scripts_is_refused_for_the_size_it_writes(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """`parse` refuses the text, whatever script the argument embeds.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    assert _OtherScripts(b"\x52").redeem_script() == b"\x51"
+    over = bytes(MAX_SCRIPT_SIZE + 1)
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {len(over)} bytes, over the "
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_OtherScripts(over))
 
 
 _TAPSCRIPT = miniscript.TAPSCRIPT
