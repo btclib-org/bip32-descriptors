@@ -21,7 +21,8 @@
 # its `-rest` shard skips exactly the operators they run, so each mutant of the
 # package is judged by one shard, those of an operator a cosmic-ray release
 # adds included. In a shard's counts line, skipped counts the mutants of its
-# module that another shard judges.
+# module that another shard judges. tests/mutation_shards_test.py checks the
+# copied settings and that each mutant has one shard.
 
 [cosmic-ray]
 # the package, `__init__.py` included, and naming the directory is what keeps
