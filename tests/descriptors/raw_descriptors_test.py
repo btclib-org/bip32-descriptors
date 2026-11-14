@@ -639,29 +639,46 @@ def test_a_leaf_version_of_50_is_read() -> None:
 
 
 @pytest.mark.parametrize(
-    "version,text,fault",
+    "script,version,bare,text,fault",
     [
-        (0x51, "51", "invalid"),
-        (0xC1, "c1", "invalid"),
-        (-2, None, "invalid"),
-        (0x100, "0100", "too large"),
-        (0x101, "0101", "too large"),
+        (b"\x51", 0x51, False, "rawleaf(51,51)", "Leaf Version is invalid"),
+        (b"\x51", 0xC1, False, "rawleaf(51,c1)", "Leaf Version is invalid"),
+        (b"\x51", -2, False, None, "Leaf Version is invalid"),
+        (b"\x51", 0x100, False, "rawleaf(51,0100)", "Leaf Version is too large"),
+        (b"\x51", 0x101, False, "rawleaf(51,0101)", "Leaf Version is too large"),
+        (b"", 0x01, False, "rawleaf(,01)", "Leaf Script is not hex"),
+        (b"", 0x100, False, "rawleaf(,0100)", "Leaf Script is not hex"),
+        (b"", 0x01, True, "raw()", "Raw script is not hex"),
+        (b"", 0x06, True, "raw()", "Raw script is not hex"),
+    ],
+    ids=[
+        "odd",
+        "odd-c1",
+        "negative",
+        "two-bytes",
+        "two-bytes-odd",
+        "empty-odd",
+        "empty-two-bytes",
+        "raw-empty-odd",
+        "raw-empty-06",
     ],
 )
 def test_a_leaf_built_directly_refuses_what_parse_refuses(
-    version: int, text: str | None, fault: str
+    script: bytes, version: int, bare: bool, text: str | None, fault: str
 ) -> None:
-    """With `parse`'s message for the version's text, where one writes it.
+    """With `parse`'s message for its text, where one writes it.
 
     A version over one byte is too large, and an odd one is invalid. A
-    negative one, which no text writes, is invalid too.
+    negative one, which no text writes, is invalid too. An empty script
+    is refused before the version, as `parse` reads them, and before a
+    ``raw()`` leaf's version.
     """
-    err_msg = f"^Leaf Version is {fault}$"
+    err_msg = f"^{fault}$"
     with pytest.raises(BTClibValueError, match=err_msg):
-        RawLeaf(b"\x51", version)
+        RawLeaf(script, version, bare=bare)
     if text is not None:
         with pytest.raises(BTClibValueError, match=err_msg):
-            parse(f"tr({XONLY},rawleaf(51,{text}))")
+            parse(f"tr({XONLY},{text})")
 
 
 def test_a_bare_leaf_has_no_other_version() -> None:

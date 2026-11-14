@@ -500,6 +500,41 @@ def test_a_node_hash_of_33_bytes_is_refused_without_its_bytes() -> None:
     assert_secret_free(e.value, [secret])
 
 
+@pytest.mark.parametrize("bare", [False, True], ids=["rawleaf", "raw"])
+def test_a_raw_tree_node_is_sized_by_its_bytes_not_its_length(bare: bool) -> None:
+    """Built, and unpickled inside ``tr()``, as `parse` reads its hex.
+
+    The subclass answers its length against its bytes, and the output a
+    ``tr()`` holding it gives is the one its text parses back to.
+    """
+    empty, short_leaf, short_node = (
+        _LongEmpty(),
+        _ShortBytes(b"\x51"),
+        _ShortBytes(bytes(32)),
+    )
+    assert (len(empty), len(short_leaf), len(short_node)) == (1, 0, 0)
+    fault = "^Raw script is not hex$" if bare else "^Leaf Script is not hex$"
+    with pytest.raises(BTClibValueError, match=fault):
+        RawLeaf(empty, bare=bare)
+    with pytest.raises(BTClibValueError, match="^Rawnode hash is not hex$"):
+        RawNode(empty)
+    unpickled_leaf = _unpickled_raw_tree_node(RawLeaf(b"\x51", bare=bare), script=empty)
+    with pytest.raises(BTClibValueError, match=fault):
+        TrDescriptor(_KEY, unpickled_leaf)
+    unpickled_node = _unpickled_raw_tree_node(RawNode(bytes(32)), digest=empty)
+    with pytest.raises(BTClibValueError, match="^Rawnode hash is not hex$"):
+        TrDescriptor(_KEY, unpickled_node)
+    for tree in (
+        (RawLeaf(short_leaf, bare=bare), RawNode(short_node)),
+        (
+            _unpickled_raw_tree_node(RawLeaf(b"\x51", bare=bare), script=short_leaf),
+            _unpickled_raw_tree_node(RawNode(bytes(32)), digest=short_node),
+        ),
+    ):
+        built = TrDescriptor(_KEY, tree)
+        assert parse(str(built)).script_pub_key() == built.script_pub_key()
+
+
 def test_a_tr_miniscript_leaf_of_another_context_is_refused() -> None:
     """A leaf of the p2wsh context would commit to a 33-byte key.
 
