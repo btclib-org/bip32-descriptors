@@ -42,7 +42,7 @@ Its k and its number of keys are refused where `parse` refuses them
 Unpickled, and a forged node above a multisig of too many keys there
 (closes #302) (closes #305).
 
-### A number parse cannot read in older(), after(), thresh() or a multisig
+### A number parse cannot read in a miniscript older, after, thresh or multisig
 
 Gets `parse`'s refusal, built or unpickled, a `MultiA`'s k included.
 Another node refuses one past ten digits unquoted, and no refusal quotes
