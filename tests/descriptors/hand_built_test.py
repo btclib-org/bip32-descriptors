@@ -483,23 +483,61 @@ def test_an_unpickled_raw_tree_node_field_of_another_type_is_refused_by_tr(
         TrDescriptor(_KEY, node)
 
 
+# a tree of a raw leaf and a raw node, and one of a lone `MultiA` leaf
+_RAW_PAIR = (RawLeaf(b"\x51"), RawNode(bytes(32)))
+_MULTI_A_TREE = MultiA(2, (_KEY, _KEY2))
+
+
 @pytest.mark.parametrize(
-    "position,changes,error,refusal",
+    "tree,position,changes,error,refusal",
     [
-        (0, {"script": b""}, BTClibValueError, "Leaf Script is not hex"),
-        (0, {"script": b"", "bare": True}, BTClibValueError, "Raw script is not hex"),
-        (0, {"version": 0x01}, BTClibValueError, "Leaf Version is invalid"),
-        (0, {"version": 0x100}, BTClibValueError, "Leaf Version is too large"),
+        (_RAW_PAIR, 0, {"script": b""}, BTClibValueError, "Leaf Script is not hex"),
         (
+            _RAW_PAIR,
+            0,
+            {"script": b"", "bare": True},
+            BTClibValueError,
+            "Raw script is not hex",
+        ),
+        (_RAW_PAIR, 0, {"version": 0x01}, BTClibValueError, "Leaf Version is invalid"),
+        (
+            _RAW_PAIR,
+            0,
+            {"version": 0x100},
+            BTClibValueError,
+            "Leaf Version is too large",
+        ),
+        (
+            _RAW_PAIR,
             0,
             {"bare": True, "version": 0x06},
             BTClibValueError,
             "a raw() leaf has the leaf version c0",
         ),
-        (0, {"script": "51"}, BTClibTypeError, "invalid leaf script type: str"),
-        (0, {"version": "c0"}, BTClibTypeError, "invalid leaf version type: str"),
-        (0, {"bare": 1}, BTClibTypeError, "invalid bare type: int"),
-        (1, {"digest": b""}, BTClibValueError, "Rawnode hash is not hex"),
+        (
+            _RAW_PAIR,
+            0,
+            {"script": "51"},
+            BTClibTypeError,
+            "invalid leaf script type: str",
+        ),
+        (
+            _RAW_PAIR,
+            0,
+            {"version": "c0"},
+            BTClibTypeError,
+            "invalid leaf version type: str",
+        ),
+        (_RAW_PAIR, 0, {"bare": 1}, BTClibTypeError, "invalid bare type: int"),
+        (_RAW_PAIR, 1, {"digest": b""}, BTClibValueError, "Rawnode hash is not hex"),
+        (
+            _MULTI_A_TREE,
+            None,
+            {"threshold": 0},
+            BTClibValueError,
+            "invalid k in k-of-n multi_a: 0",
+        ),
+        (_MULTI_A_TREE, None, {"keys": (5,)}, BTClibTypeError, "invalid key type: int"),
     ],
     ids=[
         "empty",
@@ -511,22 +549,31 @@ def test_an_unpickled_raw_tree_node_field_of_another_type_is_refused_by_tr(
         "version-type",
         "bare-type",
         "node-empty",
+        "multi-a-k-0",
+        "multi-a-key-type",
     ],
 )
-def test_an_unpickled_tr_holding_a_raw_node_its_build_refuses_gives_no_script(
-    position: int, changes: dict[str, Any], error: type[Exception], refusal: str
+def test_an_unpickled_tr_holding_a_tree_node_its_build_refuses_gives_no_script(
+    tree: Any,
+    position: int | None,
+    changes: dict[str, Any],
+    error: type[Exception],
+    refusal: str,
 ) -> None:
     """The whole ``tr()`` unpickled skips its build, so its script refuses.
 
     With its own build's message, as a leaf or node unpickled alone
-    inside a ``tr()`` being built is refused. The control is the same
+    inside a ``tr()`` being built is refused. The node is the tree's
+    subtree at `position`, or the tree itself. The control is the same
     ``tr()`` unpickled unchanged, which gives the script its build gives.
     """
-    built = TrDescriptor(_KEY, (RawLeaf(b"\x51"), RawNode(bytes(32))))
+    built = TrDescriptor(_KEY, tree)
     unchanged: TrDescriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
     assert unchanged.script_pub_key() == built.script_pub_key()
     unpickled: TrDescriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
-    node = cast("tuple[RawLeaf, RawNode]", unpickled.tree)[position]
+    node: object = unpickled.tree
+    if position is not None:
+        node = cast("tuple[object, object]", node)[position]
     for name, value in changes.items():
         object.__setattr__(node, name, value)
     with pytest.raises(error, match=f"^{re.escape(refusal)}$"):
