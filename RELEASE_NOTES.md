@@ -27,9 +27,10 @@ and `wsh(raw())`.
 
 This breaks the API. A `MultiA`'s k, and the number of a `Miniscript`
 node of `older()`, `after()`, `thresh()`, `multi()` or `multi_a()`,
-built or changed with `replace`, are refused with the message `parse`
-gives their text where they are negative or past the bounds `parse`
-reads, still as `BTClibValueError`. A negative one reads, for example,
+built, changed with `replace`, or unpickled into a descriptor whose
+context takes the fragment, are refused with the message `parse` gives
+their text where they are negative or past the bounds `parse` reads,
+still as `BTClibValueError`. A negative one reads, for example,
 as `invalid multi_a() threshold: digits expected`, where v2026.11.13
 read `invalid k in k-of-n multi_a: -1`, and as
 `invalid older() number: digits expected`, where it read
