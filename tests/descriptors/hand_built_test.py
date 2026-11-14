@@ -155,7 +155,10 @@ order `_assert_inner` gives. Issue btclib-org/bip32-descriptors#281.
 `RawDescriptor` refuses an empty script with `parse`'s message. So do
 `WshDescriptor`, and `ShDescriptor` for its argument and for one inside
 a ``wsh()`` argument, for an unpickled ``raw()``, in the order
-`_assert_inner` gives. Issue btclib-org/bip32-descriptors#282.
+`_assert_inner` gives. An unpickled argument of a class deriving from
+two of ``raw()``, ``rawpkh()`` and ``multi()`` is refused for the fields
+of each, in the order its own build refuses them. Issue
+btclib-org/bip32-descriptors#282.
 
 A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
 point, which `miniscript.from_script` reads, with `parse`'s message, the
@@ -215,7 +218,7 @@ from __future__ import annotations
 import pickle
 import re
 from collections.abc import Callable
-from dataclasses import fields, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any, cast
 
 import pytest
@@ -3506,6 +3509,124 @@ def test_an_unpickled_empty_raw_script_is_refused_inside(
         wrap(_unpickled_raw(b"\x51", _TrNamedRaw))
     built = wrap(_unpickled_raw(b"\x51", RawDescriptor))
     assert parse(str(built)) == built
+
+
+@dataclass(frozen=True)
+class _RawThenRawPkh(RawDescriptor, RawPkhDescriptor):
+    """A ``raw()`` and a ``rawpkh()``: its build checks the hash first."""
+
+
+@dataclass(frozen=True)
+class _RawPkhThenRaw(RawPkhDescriptor, RawDescriptor):
+    """A ``rawpkh()`` and a ``raw()``: its build checks the script first."""
+
+
+@dataclass(frozen=True)
+class _MultiThenRaw(MultiDescriptor, RawDescriptor):
+    """A ``multi()`` and a ``raw()``: its build checks the script first."""
+
+
+# fields each of the classes above builds with
+_BOTH_FIELDS: dict[type[Descriptor], dict[str, Any]] = {
+    _RawThenRawPkh: {"script": b"\x51", "key_hash": bytes(20)},
+    _RawPkhThenRaw: {"script": b"\x51", "key_hash": bytes(20)},
+    _MultiThenRaw: {"script": b"\x51", "threshold": 1, "keys": (_KEYS[0],)},
+}
+_EMPTY = "Raw script is not hex"
+_HASH_SIZE = "160 bits digest expected"
+_NETWORK = "invalid network type: int"
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+@pytest.mark.parametrize(
+    "cls,faults,error,refusal",
+    [
+        (_RawThenRawPkh, {"script": b""}, BTClibValueError, _EMPTY),
+        (_RawThenRawPkh, {"script": "51"}, BTClibTypeError, "invalid script type: str"),
+        (_RawThenRawPkh, {"key_hash": bytes(19)}, BTClibValueError, _HASH_SIZE),
+        (
+            _RawThenRawPkh,
+            {"key_hash": "ab" * 10},
+            BTClibTypeError,
+            "invalid key hash type: str",
+        ),
+        (
+            _RawThenRawPkh,
+            {"script": b"", "key_hash": bytes(19)},
+            BTClibValueError,
+            _HASH_SIZE,
+        ),
+        (_RawThenRawPkh, {"script": b"", "network": 5}, BTClibTypeError, _NETWORK),
+        (_RawPkhThenRaw, {"script": b""}, BTClibValueError, _EMPTY),
+        (
+            _RawPkhThenRaw,
+            {"key_hash": "ab" * 10},
+            BTClibTypeError,
+            "invalid key hash type: str",
+        ),
+        (
+            _RawPkhThenRaw,
+            {"script": b"", "key_hash": bytes(19)},
+            BTClibValueError,
+            _EMPTY,
+        ),
+        (_RawPkhThenRaw, {"script": b"", "network": 5}, BTClibTypeError, _NETWORK),
+        (_MultiThenRaw, {"script": b""}, BTClibValueError, _EMPTY),
+        (_MultiThenRaw, {"script": b"", "threshold": "1"}, BTClibValueError, _EMPTY),
+        (_MultiThenRaw, {"script": b"", "network": 5}, BTClibTypeError, _NETWORK),
+    ],
+    ids=[
+        "raw-rawpkh-empty",
+        "raw-rawpkh-script-type",
+        "raw-rawpkh-hash-size",
+        "raw-rawpkh-hash-type",
+        "raw-rawpkh-hash-first",
+        "raw-rawpkh-network-first",
+        "rawpkh-raw-empty",
+        "rawpkh-raw-hash-type",
+        "rawpkh-raw-script-first",
+        "rawpkh-raw-network-first",
+        "multi-raw-empty",
+        "multi-raw-script-first",
+        "multi-raw-network-first",
+    ],
+)
+def test_an_unpickled_argument_of_two_fragments_is_refused_as_its_build_refuses(
+    cls: type[Descriptor],
+    faults: dict[str, Any],
+    error: type[Exception],
+    refusal: str,
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """Each fragment's fields, in the order the argument's build checks them.
+
+    The build of a class deriving from two fragments runs the check of
+    the one later in its method resolution order first. An unpickled one
+    skips both, and the wrapper runs them in that order, after its
+    network. Issue btclib-org/bip32-descriptors#282.
+    """
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(error, match=err_msg):
+        cls(**{**_BOTH_FIELDS[cls], **faults})
+    unpickled = pickle.loads(pickle.dumps(cls(**_BOTH_FIELDS[cls])))  # noqa: S301
+    for name, value in faults.items():
+        object.__setattr__(unpickled, name, value)
+    with pytest.raises(error, match=err_msg):
+        wrap(unpickled)
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_an_unpickled_multi_that_is_a_raw_is_refused_for_its_script_size(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """As a ``raw()`` is, inside either: being a ``multi()`` skips no check.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    over = _MultiThenRaw(script=bytes(MAX_SCRIPT_SIZE + 1), threshold=1, keys=_KEYS[:1])
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {MAX_SCRIPT_SIZE + 1} bytes, over the "
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(pickle.loads(pickle.dumps(over)))  # noqa: S301
 
 
 _TAPSCRIPT = miniscript.TAPSCRIPT
