@@ -44,7 +44,7 @@ Unpickled, and a forged node above a multisig of too many keys there
 
 ### A number parse cannot read in a miniscript older, after, thresh or multisig
 
-Gets `parse`'s refusal, built or unpickled, a `MultiA`'s k included.
+Is refused, built or unpickled, a `MultiA`'s k included.
 Another node refuses one past ten digits unquoted, and no refusal quotes
 a number of the size of a private key (#325).
 
