@@ -2600,7 +2600,9 @@ class AddrDescriptor(Descriptor):
 class RawDescriptor(Descriptor):
     """``raw(HEX)``: the script those bytes are, BIP385.
 
-    An empty script is refused when built, with `parse`'s message.
+    An empty script is refused when built, with `parse`'s message. An
+    unpickled one skips that check, so `str` and its scripts refuse what
+    its build refuses, a script that is no bytes included.
     """
 
     script: bytes
@@ -2612,6 +2614,8 @@ class RawDescriptor(Descriptor):
 
     @override
     def __str__(self) -> str:
+        # refused again: unpickling builds one without `__post_init__`
+        _assert_raw_fields(self)
         return _expression("raw", self.script.hex())
 
     @property
@@ -2622,6 +2626,8 @@ class RawDescriptor(Descriptor):
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
+        # refused again: unpickling builds one without `__post_init__`
+        _assert_raw_fields(self)
         return [self.script]
 
     @override
@@ -2676,7 +2682,9 @@ class RawPkhDescriptor(Descriptor):
     that of the 32-byte x-only key, as it is in the ``pkh()`` leaf.
 
     An empty hash and one of other than 20 bytes are refused when built,
-    with `parse`'s message.
+    with `parse`'s message. An unpickled one skips that check, so `str` and
+    its scripts refuse what its build refuses, a hash that is no bytes
+    included.
     """
 
     key_hash: bytes
@@ -2688,6 +2696,8 @@ class RawPkhDescriptor(Descriptor):
 
     @override
     def __str__(self) -> str:
+        # refused again: unpickling builds one without `__post_init__`
+        _assert_rawpkh_fields(self)
         return _expression("rawpkh", self.key_hash.hex())
 
     @property
@@ -2699,7 +2709,7 @@ class RawPkhDescriptor(Descriptor):
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         # refused again: unpickling builds one without `__post_init__`
-        _assert_key_hash_size(self.key_hash)
+        _assert_rawpkh_fields(self)
         return [
             serialize(
                 ["OP_DUP", "OP_HASH160", self.key_hash, "OP_EQUALVERIFY", "OP_CHECKSIG"]

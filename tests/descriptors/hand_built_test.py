@@ -144,7 +144,9 @@ btclib-org/bip32-descriptors#269.
 `WshDescriptor`, and `ShDescriptor` for its argument and for one inside
 a ``wsh()`` argument, refuse an unpickled ``raw()`` whose script, or
 ``rawpkh()`` whose key hash, is no bytes, as its own build refuses it.
-Issue btclib-org/bip32-descriptors#271.
+Issue btclib-org/bip32-descriptors#271. So do `str` and the script of
+that ``raw()`` or ``rawpkh()`` itself. Issue
+btclib-org/bip32-descriptors#349.
 
 `WshDescriptor`, and `ShDescriptor` for its argument and for the argument
 of a ``wsh()`` argument, refuse an unpickled argument whose network is no
@@ -5023,6 +5025,37 @@ def test_an_unpickled_raw_argument_holding_no_bytes_is_refused(
         inner = _unpickled_wsh(inner)
     with pytest.raises(BTClibTypeError, match=err_msg):
         (WshDescriptor if wrapped == "wsh" else ShDescriptor)(inner)
+
+
+@pytest.mark.parametrize("value", [None, 5, "51"], ids=["none", "int", "str"])
+@pytest.mark.parametrize(
+    "parsed_type,field,what",
+    [
+        (RawDescriptor, "script", "script"),
+        (RawPkhDescriptor, "key_hash", "key hash"),
+    ],
+    ids=["raw", "rawpkh"],
+)
+def test_an_unpickled_raw_holding_no_bytes_is_refused(
+    parsed_type: type[RawDescriptor | RawPkhDescriptor],
+    field: str,
+    what: str,
+    value: Any,
+) -> None:
+    """By its text and its script, with its own build's message.
+
+    An unpickled ``raw()`` or ``rawpkh()`` skips its own check of its
+    bytes' type. Issue btclib-org/bip32-descriptors#349.
+    """
+    err_msg = f"^invalid {what} type: {type(value).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        parsed_type(value)
+    unpickled = pickle.loads(pickle.dumps(_PARSED[parsed_type]))  # noqa: S301
+    object.__setattr__(unpickled, field, value)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        str(unpickled)
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        unpickled.script_pub_key()
 
 
 # a fragment of each number of subexpressions, in an expression with the
