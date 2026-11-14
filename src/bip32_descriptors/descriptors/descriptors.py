@@ -964,15 +964,20 @@ def _assert_tree_leaf(node: object) -> None:
     own builds refuse them. A KEY expression leaf is asked its type alone
     here.
 
+    A node of a class deriving from several of these is refused for the
+    fields of each, a `RawLeaf`'s, then a `RawNode`'s, then a `MultiA`'s:
+    its build may run one base's checks alone, and `_leaf_script` may
+    read it as another.
+
     `_tree_walk` calls it again, for an unpickled ``tr()``, which skips
     its own build.
     """
     assert_type(node, _TREE_NODE_TYPES, "script tree node")
     if isinstance(node, RawLeaf):
         _assert_raw_leaf_fields(node)
-    elif isinstance(node, RawNode):
+    if isinstance(node, RawNode):
         _assert_raw_node_fields(node)
-    elif isinstance(node, MultiA):
+    if isinstance(node, MultiA):
         _assert_key_types(node)
         _assert_threshold_type(node.threshold)
         _assert_multi_a_threshold(node)

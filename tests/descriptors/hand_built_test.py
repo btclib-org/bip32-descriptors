@@ -580,6 +580,62 @@ def test_an_unpickled_tr_holding_a_tree_node_its_build_refuses_gives_no_script(
         unpickled.script_pub_key()
 
 
+class _RawLeafMultiA(RawLeaf, MultiA):
+    """A ``rawleaf()`` and a ``multi_a()``: its build checks the leaf alone."""
+
+
+class _MultiARawLeaf(MultiA, RawLeaf):
+    """A ``multi_a()`` and a ``rawleaf()``: its build checks the keys alone."""
+
+
+def _hybrid_leaf(cls: type[Any]) -> Any:
+    """Return a leaf of `cls` whose fields of both classes pass their builds."""
+    fields_of = {
+        "script": b"\x51",
+        "version": 0xC0,
+        "bare": False,
+        "threshold": 2,
+        "keys": (_KEY, _KEY2),
+        "sort": False,
+    }
+    leaf = cls(b"\x51") if cls is _RawLeafMultiA else cls(2, (_KEY, _KEY2))
+    for name, value in fields_of.items():
+        object.__setattr__(leaf, name, value)
+    return leaf
+
+
+@pytest.mark.parametrize(
+    "cls,changes,refusal",
+    [
+        (_RawLeafMultiA, {"threshold": 0}, "invalid k in k-of-n multi_a: 0"),
+        (_MultiARawLeaf, {"threshold": 0}, "invalid k in k-of-n multi_a: 0"),
+        (_MultiARawLeaf, {"script": b""}, "Leaf Script is not hex"),
+        (_RawLeafMultiA, {"script": b"", "threshold": 0}, "Leaf Script is not hex"),
+    ],
+    ids=["rawleaf-multi-a-k-0", "multi-a-rawleaf-k-0", "multi-a-rawleaf-empty", "both"],
+)
+def test_a_tr_leaf_of_raw_leaf_and_multi_a_is_refused_for_the_fields_of_each(
+    cls: type[RawLeaf | MultiA], changes: dict[str, Any], refusal: str
+) -> None:
+    """When the ``tr()`` is built, and when an unpickled one gives its script.
+
+    The ``rawleaf()``'s fields first, then the ``multi_a()``'s. The control
+    is the same leaf with fields that pass both classes' builds.
+    """
+    err_msg = f"^{re.escape(refusal)}$"
+    built = TrDescriptor(_KEY, _hybrid_leaf(cls))
+    leaf = _hybrid_leaf(cls)
+    for name, value in changes.items():
+        object.__setattr__(leaf, name, value)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        TrDescriptor(_KEY, leaf)
+    unpickled: TrDescriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
+    for name, value in changes.items():
+        object.__setattr__(unpickled.tree, name, value)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        unpickled.script_pub_key()
+
+
 def test_a_node_hash_of_33_bytes_is_refused_without_its_bytes() -> None:
     """Built, and unpickled inside ``tr()``.
 
