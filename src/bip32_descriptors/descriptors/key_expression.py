@@ -198,7 +198,7 @@ def _wifs_filed_in(wifs: MutableMapping[str, str]) -> Iterator[None]:
 
 def _pub_key_text(key: KeyExpression) -> str:
     """Return the hex `KeyExpression.__str__` writes for a fixed key."""
-    pub_key = key.pub_key or b""
+    pub_key = b"" if key.pub_key is None else key.pub_key
     return (pub_key[1:] if key.x_only else pub_key).hex()
 
 
@@ -280,7 +280,7 @@ def _printed_pub_key(key: KeyExpression) -> str:
     wifs, network = _PRINTED_WIFS.get() or (None, "")
     if not wifs:
         return text
-    pub_key = key.pub_key or b""
+    pub_key = b"" if key.pub_key is None else key.pub_key
     keys = (b"\x02" + pub_key[1:], b"\x03" + pub_key[1:]) if key.x_only else (pub_key,)
     found: dict[bytes, str] = {}
     for spelling in dict.fromkeys(s for k in keys for s in _spellings(k)):
@@ -421,7 +421,7 @@ class KeyExpression:
         if not isinstance(self.xkey, str):
             err_msg = f"invalid xkey type: {type(self.xkey).__name__}"  # type: ignore[unreachable]
             raise BTClibTypeError(err_msg)
-        if not (self.pub_key or self.xkey or self.participants):
+        if self.pub_key is None and not (self.xkey or self.participants):
             raise BTClibValueError(_NO_KEY)
         if not self.xkey or _PLACEHOLDER.fullmatch(self.xkey):
             return
