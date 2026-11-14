@@ -3257,10 +3257,22 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     whatever its position, with the message `_assert_key_types` gives:
     an unpickled argument skips that check of its own too.
 
-    The size of a ``raw()`` script is asked only where the argument
-    writes ``raw()`` text or embeds the ``raw()`` script, its class taking
-    `RawDescriptor`'s `str` or its scripts: one that derives from another
-    fragment too may write and embed that fragment's instead.
+    A `RawDescriptor` argument has a script over the limit of `context`
+    refused by three rules, in this order, each with `parse`'s message:
+
+    - where it writes ``raw()`` text, the script that text holds, read
+      as `parse` reads it;
+    - where it holds no key expression, each script its `_scripts` gives
+      at index 0 with no private key: the call `redeem_script` makes
+      before `ScriptPubKey` reads the network, which need not be one a
+      hand-built descriptor names;
+    - where it is no `MultiDescriptor`, its `script` field.
+
+    The first two are not asked of a miniscript, whose text and scripts
+    are not computed before its nodes pass, as `_assert_wsh_argument`
+    says. One that holds a key expression may need a private key for its
+    scripts, and a ``multi()`` that is a ``raw()`` too writes and embeds
+    the ``multi()`` script, which the checks above bound.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
@@ -3275,11 +3287,21 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
         _assert_multi_embedded(inner, context, check)
     else:
         _assert_keys(inner.key_expressions, check)
-    if isinstance(inner, RawDescriptor) and (
-        type(inner).__str__ is RawDescriptor.__str__
-        or type(inner)._scripts is RawDescriptor._scripts
-    ):
-        _assert_raw_size(inner.script, context)
+    if isinstance(inner, RawDescriptor):
+        _assert_raw_embedded(inner, context)
+
+
+def _assert_raw_embedded(raw: RawDescriptor, context: str) -> None:
+    """Refuse a ``raw()`` script by the rules `_assert_embedded` gives."""
+    if not isinstance(raw, MiniscriptDescriptor):
+        text = str(raw)
+        if text.partition("(")[0] == "raw":
+            _parse_expression(text, context, raw.network, {})
+        if not raw.key_expressions:
+            for script in raw._scripts(0, None):
+                _assert_raw_size(script, context)
+    if not isinstance(raw, MultiDescriptor):
+        _assert_raw_size(raw.script, context)
 
 
 def _assert_multi_embedded(
