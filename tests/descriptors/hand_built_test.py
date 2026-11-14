@@ -156,8 +156,12 @@ order `_assert_inner` gives. Issue btclib-org/bip32-descriptors#281.
 `WshDescriptor`, and `ShDescriptor` for its argument and for one inside
 a ``wsh()`` argument, for an unpickled ``raw()``, in the order
 `_assert_inner` gives. An unpickled argument of a class deriving from
-two of ``raw()``, ``rawpkh()`` and ``multi()`` is refused for the fields
-of each, in the order its own build refuses them. Issue
+two of ``raw()``, ``rawpkh()`` and ``multi()`` is refused for what
+`_OWN_CHECKS` checks of each, in the order its own build checks it: the
+types of their fields, an empty script and the size of a hash. The
+threshold and the keys of a ``multi()`` are refused in `parse`'s order,
+as `WshDescriptor` says. The size of a ``raw()`` script is asked only
+where the argument embeds that script. Issue
 btclib-org/bip32-descriptors#282.
 
 A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
@@ -218,7 +222,7 @@ from __future__ import annotations
 import pickle
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any, cast
 
 import pytest
@@ -3591,14 +3595,14 @@ _NETWORK = "invalid network type: int"
         "multi-raw-network-first",
     ],
 )
-def test_an_unpickled_argument_of_two_fragments_is_refused_as_its_build_refuses(
+def test_an_unpickled_argument_of_two_fragments_is_refused_for_each_ones_fields(
     cls: type[Descriptor],
     faults: dict[str, Any],
     error: type[Exception],
     refusal: str,
     wrap: Callable[[Descriptor], Descriptor],
 ) -> None:
-    """Each fragment's fields, in the order the argument's build checks them.
+    """What `_OWN_CHECKS` checks of each, in the order the build checks it.
 
     The build of a class deriving from two fragments runs the check of
     the one later in its method resolution order first. An unpickled one
@@ -3615,18 +3619,42 @@ def test_an_unpickled_argument_of_two_fragments_is_refused_as_its_build_refuses(
         wrap(unpickled)
 
 
+@dataclass(frozen=True)
+class _RawThenMulti(RawDescriptor, MultiDescriptor):
+    """A ``raw()`` and a ``multi()``: it embeds the ``raw()`` script."""
+
+    script: bytes = field(kw_only=True)
+
+
 @pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
-def test_an_unpickled_multi_that_is_a_raw_is_refused_for_its_script_size(
+def test_a_multi_that_is_a_raw_is_not_asked_its_raw_script_size(
     wrap: Callable[[Descriptor], Descriptor],
 ) -> None:
-    """As a ``raw()`` is, inside either: being a ``multi()`` skips no check.
+    """It embeds the ``multi()`` script, and writes the text `parse` reads.
 
     Issue btclib-org/bip32-descriptors#282.
     """
-    over = _MultiThenRaw(script=bytes(MAX_SCRIPT_SIZE + 1), threshold=1, keys=_KEYS[:1])
-    err_msg = rf"^raw\(\) inside w?sh\(\) is {MAX_SCRIPT_SIZE + 1} bytes, over the "
+    inner = _MultiThenRaw(
+        script=bytes(MAX_SCRIPT_SIZE + 1), threshold=1, keys=_KEYS[:1]
+    )
+    built = wrap(inner)
+    parsed = parse(str(built))
+    assert parsed.script_pub_key() == built.script_pub_key()
+
+
+@pytest.mark.parametrize("wrap", [WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_raw_that_is_a_multi_is_refused_for_its_script_size(
+    wrap: Callable[[Descriptor], Descriptor],
+) -> None:
+    """It embeds the ``raw()`` script, as a ``raw()`` does.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    over = bytes(MAX_SCRIPT_SIZE + 1)
+    inner = _RawThenMulti(threshold=1, keys=_KEYS[:1], script=over)
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {len(over)} bytes, over the "
     with pytest.raises(BTClibValueError, match=err_msg):
-        wrap(pickle.loads(pickle.dumps(over)))  # noqa: S301
+        wrap(inner)
 
 
 _TAPSCRIPT = miniscript.TAPSCRIPT

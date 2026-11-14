@@ -3197,12 +3197,12 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     A network that is no `str` is refused first, with `Descriptor`'s
     message: an unpickled argument skips that check of its own, and the
     scripts of the ``sh()`` or ``wsh()`` are made with it. Each fragment
-    the argument is an instance of then has its fields refused by the
-    check `_OWN_CHECKS` names for it, which that fragment's build runs
-    too, before the argument's position: the base class first, as each
-    build calls its parent's before its own checks. This is the order of
-    the argument's own build, which checks its network before its
-    fields; an unpickled argument skips all of it.
+    `_OWN_CHECKS` names that the argument is an instance of then has its
+    fields refused by the check named for it, which that fragment's build
+    runs too, before the argument's position: the base class first, as
+    each build calls its parent's before its own checks. This is the
+    order of the argument's own build, which checks its network before
+    its fields; an unpickled argument skips all of it.
 
     A `ShDescriptor` or a `WshDescriptor` whose class writes its text
     with that class's own `str` is named without writing that text: an
@@ -3256,6 +3256,10 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     A key that is no `KeyExpression` is refused before any of these,
     whatever its position, with the message `_assert_key_types` gives:
     an unpickled argument skips that check of its own too.
+
+    The size of a ``raw()`` script is asked only where the argument's
+    scripts are `RawDescriptor`'s: one that derives from another fragment
+    too may embed that fragment's script, and write its text.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
@@ -3270,7 +3274,10 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
         _assert_multi_embedded(inner, context, check)
     else:
         _assert_keys(inner.key_expressions, check)
-    if isinstance(inner, RawDescriptor):
+    if (
+        isinstance(inner, RawDescriptor)
+        and type(inner)._scripts is RawDescriptor._scripts
+    ):
         _assert_raw_size(inner.script, context)
 
 
