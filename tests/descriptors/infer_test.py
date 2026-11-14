@@ -453,6 +453,49 @@ def _addr(script: bytes) -> str:
     return infer_descriptor(script, Provider(), "regtest")
 
 
+class _TrueBytes(bytes):
+    """Bytes that are true, whatever they hold."""
+
+    def __bool__(self) -> bool:
+        return True
+
+
+class _FalseBytes(bytes):
+    """Bytes that are false, whatever they hold."""
+
+    def __bool__(self) -> bool:
+        return False
+
+
+@pytest.mark.parametrize(
+    "expression,wrap_root,wrap_leaf",
+    [
+        ("tr({},{{pk({}),pk({})}})", _FalseBytes, bytes),
+        ("tr({},{{pk({}),pk({})}})", bytes, _FalseBytes),
+        ("tr({})", _TrueBytes, bytes),
+    ],
+    ids=["false-root", "false-leaf-scripts", "true-empty-root"],
+)
+def test_a_provider_of_bytes_subclasses_is_read_by_their_length(
+    expression: str, wrap_root: type[bytes], wrap_leaf: type[bytes]
+) -> None:
+    """A merkle root or a leaf script is empty by its length, not its truth.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    assert not _FalseBytes(b"\x51")
+    assert _TrueBytes()
+    keys = [PrvKeyData(prv_key).pub.sec.hex() for prv_key in range(1, 4)]
+    descriptor = parse(expression.format(*keys))
+    script = descriptor.script_pub_key().script
+    provider = descriptor.provider()
+    ((output_key, (internal, root, leaves)),) = provider.trees.items()
+    wrapped = {c: (wrap_leaf(s), v) for c, (s, v) in leaves.items()}
+    trees = {output_key: (internal, wrap_root(root), wrapped)}
+    expected = infer_descriptor(script, provider)
+    assert infer_descriptor(script, replace(provider, trees=trees)) == expected
+
+
 def test_an_empty_script_is_a_raw_that_parse_refuses() -> None:
     """Core answers ``raw()``, and `parse` refuses it as Core's parser does."""
     inferred = infer_descriptor(b"", Provider(), "regtest")

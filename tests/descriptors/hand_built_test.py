@@ -3552,6 +3552,27 @@ def test_a_raw_script_is_empty_by_its_length_not_its_truth(
     assert parse(str(built)).script_pub_key() == built.script_pub_key()
 
 
+@pytest.mark.parametrize("wrap", [None, WshDescriptor, ShDescriptor, _sh_wsh])
+def test_a_rawpkh_hash_is_empty_by_its_length_not_its_truth(
+    wrap: Callable[[Descriptor], Descriptor] | None,
+) -> None:
+    """Built, or unpickled inside a wrapper, as `parse` reads its hex.
+
+    Issue btclib-org/bip32-descriptors#282.
+    """
+    empty, full = _TrueEmpty(), _FalseBytes(bytes(20))
+    err_msg = "^Rawpkh hash is not hex$"
+    if wrap is None:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            RawPkhDescriptor(empty)
+        assert str(RawPkhDescriptor(full)) == f"rawpkh({bytes(20).hex()})"
+        return
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_rawpkh(empty, RawPkhDescriptor))
+    built = wrap(_unpickled_rawpkh(full, RawPkhDescriptor))
+    assert parse(str(built)).script_pub_key() == built.script_pub_key()
+
+
 @dataclass(frozen=True)
 class _RawThenRawPkh(RawDescriptor, RawPkhDescriptor):
     """A ``raw()`` and a ``rawpkh()``: its build checks the hash first."""

@@ -3897,9 +3897,10 @@ def _assert_key_hash_size(key_hash: bytes) -> None:
     """Refuse a hash `parse` refuses, with its message.
 
     An empty one as `_hex_bytes` refuses empty hex, then a size other
-    than 20 bytes.
+    than 20 bytes. Its length decides both: a bytes subclass can answer
+    any truth.
     """
-    if not key_hash:
+    if len(key_hash) == 0:
         raise BTClibValueError(_RAWPKH_NOT_HEX)
     if len(key_hash) != _KEY_HASH_SIZE:
         raise BTClibValueError("160 bits digest expected")
@@ -4932,7 +4933,7 @@ def _inferred_leaf_or_raw(script: bytes, version: int, known: _Known) -> Descrip
     ``rawleaf()`` with no HEX does not parse, and the node commits to the
     same output key.
     """
-    if not script:
+    if len(script) == 0:
         return RawNode(leaf_hash(version, script))
     leaf = _inferred_leaf(script, known) if version == _TAPSCRIPT_LEAF_VERSION else None
     return RawLeaf(script, version) if leaf is None else leaf
@@ -5007,7 +5008,7 @@ def _taproot_tree(
     The records are read by script and then by control block, shortest
     first, which is the order of the map and the sets Core holds them in.
     """
-    if not merkle_root:
+    if len(merkle_root) == 0:
         return None
     by_leaf: dict[tuple[bytes, int], list[bytes]] = {}
     for control, leaf in leaf_scripts.items():
