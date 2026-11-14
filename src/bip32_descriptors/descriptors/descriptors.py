@@ -3293,6 +3293,11 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     A key that is no `KeyExpression` is refused before any of these,
     whatever its position, with the message `_assert_key_types` gives:
     an unpickled argument skips that check of its own too.
+
+    The checks of a ``multi()`` are run on an argument whose class writes
+    its text and makes its script with `MultiDescriptor`'s own `str` and
+    scripts. A class deriving from `RawDescriptor` before `MultiDescriptor`
+    writes and embeds a ``raw()``, and is refused as one.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
@@ -3303,7 +3308,11 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
 
     for key in inner.key_expressions:
         assert_type(key, KeyExpression, "key")
-    if isinstance(inner, MultiDescriptor):
+    if (
+        isinstance(inner, MultiDescriptor)
+        and type(inner).__str__ is MultiDescriptor.__str__
+        and type(inner)._scripts is MultiDescriptor._scripts
+    ):
         _assert_multi_embedded(inner, context, check)
         return
     _assert_keys(inner.key_expressions, check)

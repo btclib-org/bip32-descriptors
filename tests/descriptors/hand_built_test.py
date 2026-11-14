@@ -216,7 +216,7 @@ from __future__ import annotations
 import pickle
 import re
 from collections.abc import Callable
-from dataclasses import fields, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any, cast
 
 import pytest
@@ -2329,6 +2329,57 @@ def test_the_keys_of_a_multi_are_refused_before_its_function(
     object.__setattr__(multi, "keys", None)
     with pytest.raises(BTClibTypeError, match="^invalid keys type: NoneType$"):
         wrap(multi)
+
+
+# keyword-only: `script` would follow the default of `sort`
+@dataclass(frozen=True, kw_only=True)
+class _RawThenMulti(RawDescriptor, MultiDescriptor):
+    """A ``raw()`` that holds the fields of a ``multi()`` too."""
+
+    script: bytes
+
+
+@dataclass(frozen=True, kw_only=True)
+class _MultiThenRaw(MultiDescriptor, RawDescriptor):
+    """A ``multi()`` that holds the field of a ``raw()`` too."""
+
+    script: bytes
+
+
+@pytest.mark.parametrize(
+    "wrapper,keys,refusal",
+    [
+        (
+            ShDescriptor,
+            _KEYS[:16],
+            (
+                "multi() inside sh() is a 547-byte redeem script,"
+                " over the 520-byte push limit"
+            ),
+        ),
+        (WshDescriptor, (_U_KEY,), f"key 0: {_UNCOMPRESSED_HERE}"),
+    ],
+    ids=["sh", "wsh"],
+)
+def test_a_raw_holding_multi_fields_is_wrapped_as_the_raw_it_writes(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    keys: tuple[KeyExpression, ...],
+    refusal: str,
+) -> None:
+    """Its ``multi()`` fields are not refused, only a real ``multi()``'s.
+
+    Issue btclib-org/bip32-descriptors#337.
+    """
+    raw = _RawThenMulti(1, keys, script=b"\x51")
+    assert str(raw) == "raw(51)"
+    wrapped = wrapper(raw)
+    expected = wrapper(RawDescriptor(b"\x51"))
+    assert str(wrapped) == str(expected)
+    assert wrapped.script_pub_key().script == expected.script_pub_key().script
+    multi = _MultiThenRaw(1, keys, script=b"\x51")
+    assert str(multi) == str(MultiDescriptor(1, keys))
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(refusal)}$"):
+        wrapper(multi)
 
 
 def _with_network(inner: Descriptor, network: object) -> Descriptor:
