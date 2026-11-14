@@ -44,6 +44,7 @@ from btclib.script.taproot import (
 )
 from ecc.exceptions import EccValueError
 from ecc.hashes import tagged_hash
+from typing_extensions import override
 
 from bip32_descriptors.bip32 import derive, xpub_from_xprv
 from bip32_descriptors.bip32.bip32 import rootxprv_from_seed
@@ -675,35 +676,80 @@ class _FalseBytes(bytes):
         return False
 
 
+class _LongEmpty(bytes):
+    """Bytes whose length says one more than they hold."""
+
+    @override
+    def __len__(self) -> int:
+        return bytes.__len__(self) + 1
+
+
+class _ShortBytes(bytes):
+    """Bytes whose length says none, whatever they hold."""
+
+    @override
+    def __len__(self) -> int:
+        return 0
+
+
+class _ZeroCopy(bytes):
+    """Bytes whose copy by `bytes()` is zeros, whatever they hold."""
+
+    @override
+    def __bytes__(self) -> bytes:
+        return bytes(bytes.__len__(self))
+
+
 def _parsed(text: str) -> tuple[bytes, Provider]:
     """Return the script of a descriptor and its provider."""
     descriptor = parse(text, "regtest")
     return descriptor.script_pub_key().script, descriptor.provider()
 
 
+_TWO_LEAVES = _parsed(f"tr({X1},{{pk({X1}),pk({X34})}})")
+_MULTI_A_LEAF = _parsed(f"tr({X1},multi_a(1,{X1},{X34}))")
+_NO_TREE = _parsed(f"tr({X1})")
+_EMPTY_LEAF = _tr([[(0xC0, PK_X1)], [(0xC0, [])]])
+
+
 @pytest.mark.parametrize(
     "spend,root_type,leaf_type",
     [
-        (_parsed(f"tr({X1},{{pk({X1}),pk({X34})}})"), _FalseBytes, bytes),
-        (_parsed(f"tr({X1},{{pk({X1}),pk({X34})}})"), bytes, _FalseBytes),
-        (_parsed(f"tr({X1},multi_a(1,{X1},{X34}))"), bytes, _FalseBytes),
-        (_parsed(f"tr({X1})"), _TrueBytes, bytes),
-        (_tr([[(0xC0, PK_X1)], [(0xC0, [])]]), bytes, _TrueBytes),
+        (_TWO_LEAVES, _FalseBytes, bytes),
+        (_TWO_LEAVES, _ShortBytes, bytes),
+        (_TWO_LEAVES, bytes, _FalseBytes),
+        (_TWO_LEAVES, bytes, _ShortBytes),
+        (_MULTI_A_LEAF, bytes, _FalseBytes),
+        (_MULTI_A_LEAF, bytes, _ShortBytes),
+        (_NO_TREE, _TrueBytes, bytes),
+        (_NO_TREE, _LongEmpty, bytes),
+        (_EMPTY_LEAF, bytes, _TrueBytes),
+        (_EMPTY_LEAF, bytes, _LongEmpty),
     ],
     ids=[
         "false-root",
+        "short-root",
         "false-leaves",
+        "short-leaves",
         "false-multi-a-leaf",
+        "short-multi-a-leaf",
         "true-empty-root",
+        "long-empty-root",
         "true-empty-leaf",
+        "long-empty-leaf",
     ],
 )
-def test_a_merkle_root_or_leaf_script_is_empty_by_its_length_not_its_truth(
+def test_a_merkle_root_or_leaf_script_is_read_by_its_bytes(
     spend: tuple[bytes, Provider], root_type: type[bytes], leaf_type: type[bytes]
 ) -> None:
-    """A provider's bytes of a subclass infer what plain bytes infer."""
+    """A provider's bytes of a subclass infer what plain bytes infer.
+
+    The subclass answers its truth or its length against its bytes.
+    """
     assert not _FalseBytes(b"\x51")
     assert _TrueBytes()
+    assert len(_ShortBytes(b"\x51")) == 0
+    assert len(_LongEmpty()) == 1
     script, provider = spend
     expected = infer_descriptor(script, provider, "regtest")
     assert expected.startswith("tr(")
@@ -715,6 +761,26 @@ def test_a_merkle_root_or_leaf_script_is_empty_by_its_length_not_its_truth(
 
 
 @pytest.mark.parametrize(
+    "entry_type", [_FalseBytes, _TrueBytes, _ShortBytes, _LongEmpty, _ZeroCopy]
+)
+@pytest.mark.parametrize(
+    "spend", [_TWO_LEAVES, _NO_TREE, _EMPTY_LEAF], ids=["two", "none", "empty"]
+)
+def test_a_tree_whose_every_entry_is_a_subclass_is_read_by_its_bytes(
+    spend: tuple[bytes, Provider], entry_type: type[bytes]
+) -> None:
+    """Its keys, root, control blocks and leaf scripts, as plain bytes."""
+    script, provider = spend
+    expected = infer_descriptor(script, provider, "regtest")
+    ((output_key, (internal, root, leaves)),) = provider.trees.items()
+    typed_leaves = {entry_type(c): (entry_type(s), v) for c, (s, v) in leaves.items()}
+    spend_data = (entry_type(internal), entry_type(root), typed_leaves)
+    typed = replace(provider, trees={entry_type(output_key): spend_data})
+    assert infer_descriptor(script, typed, "regtest") == expected
+
+
+@pytest.mark.parametrize("script_type", [_FalseBytes, _ShortBytes])
+@pytest.mark.parametrize(
     "text",
     [
         f"wsh(multi(2,{K1},{K34}))",
@@ -723,25 +789,46 @@ def test_a_merkle_root_or_leaf_script_is_empty_by_its_length_not_its_truth(
     ],
     ids=["wsh", "sh", "sh-wsh"],
 )
-def test_a_false_known_script_is_read_by_its_length(text: str) -> None:
-    """A ``multi()`` whose script the provider gives as false bytes."""
+def test_a_known_script_is_read_by_its_bytes(
+    text: str, script_type: type[bytes]
+) -> None:
+    """A ``multi()`` whose script the provider gives as false or short bytes."""
     script, provider = _parsed(text)
     expected = infer_descriptor(script, provider, "regtest")
     assert strip_checksum(expected).startswith(text.partition("multi")[0])
-    false = replace(provider, scripts=tuple(_FalseBytes(s) for s in provider.scripts))
-    assert infer_descriptor(script, false, "regtest") == expected
+    scripts = tuple(script_type(s) for s in provider.scripts)
+    typed = replace(provider, scripts=scripts)
+    assert infer_descriptor(script, typed, "regtest") == expected
 
 
+@pytest.mark.parametrize("script_type", [_TrueBytes, _LongEmpty])
 @pytest.mark.parametrize("wrap", [ScriptPubKey.p2sh, ScriptPubKey.p2wsh])
-def test_a_true_empty_known_script_is_read_by_its_length(
-    wrap: Callable[[bytes], ScriptPubKey],
+def test_an_empty_known_script_is_read_by_its_bytes(
+    wrap: Callable[[bytes], ScriptPubKey], script_type: type[bytes]
 ) -> None:
     """The address of the output, as for an empty script of plain bytes."""
     script = wrap(b"").script
     expected = _addr(script)
     assert infer_descriptor(script, Provider(scripts=(b"",)), "regtest") == expected
-    true = Provider(scripts=(_TrueBytes(),))
-    assert infer_descriptor(script, true, "regtest") == expected
+    typed = Provider(scripts=(script_type(),))
+    assert infer_descriptor(script, typed, "regtest") == expected
+
+
+@pytest.mark.parametrize("key_type", [_FalseBytes, _ShortBytes, _ZeroCopy])
+@pytest.mark.parametrize(
+    "text",
+    [f"pkh({K1})", f"wpkh({K1})", f"wsh(pkh({K1}))", f"tr({X1},pkh({K34}))"],
+    ids=["pkh", "wpkh", "wsh-pkh", "tr-pkh"],
+)
+def test_a_known_key_is_read_by_its_bytes(text: str, key_type: type[bytes]) -> None:
+    """A key the provider gives as a subclass keeps its origin."""
+    assert bytes(_ZeroCopy(b"\x11")) == b"\x00"
+    script, provider = _parsed(text)
+    expected = infer_descriptor(script, provider, "regtest")
+    assert "[" in expected
+    keys = {key_type(sec): origin for sec, origin in provider.keys.items()}
+    typed = replace(provider, keys=keys)
+    assert infer_descriptor(script, typed, "regtest") == expected
 
 
 def test_records_that_contradict_each_other_infer_the_root(

@@ -2702,7 +2702,7 @@ class RawPkhDescriptor(Descriptor):
         _assert_rawpkh_fields(self)
         # the bytes it holds, which its text writes: `serialize` sizes a
         # push by its `__len__`, and `bytes()` copies through `__bytes__`
-        key_hash = bytes.__getitem__(self.key_hash, slice(None))
+        key_hash = _plain(self.key_hash)
         return [
             serialize(
                 ["OP_DUP", "OP_HASH160", key_hash, "OP_EQUALVERIFY", "OP_CHECKSIG"]
@@ -4686,7 +4686,7 @@ def _sec_size(sec: bytes) -> int:
 
 def _multisig(script: bytes) -> tuple[int, list[bytes]] | None:
     """Return the threshold and keys of a bare multisig: `MatchMultisig`."""
-    if len(script) == 0 or script[-1] != _OP_CHECKMULTISIG:
+    if not script or script[-1] != _OP_CHECKMULTISIG:
         return None
     ops = _ops(script)
     if not ops:
@@ -4710,7 +4710,7 @@ def _multisig(script: bytes) -> tuple[int, list[bytes]] | None:
 
 def _multi_a(script: bytes) -> tuple[int, list[bytes]] | None:
     """Return a ``multi_a()``'s threshold and x-only keys: `MatchMultiA`."""
-    if len(script) == 0 or script[0] != _X_ONLY_SIZE or script[-1] != _OP_NUMEQUAL:
+    if not script or script[0] != _X_ONLY_SIZE or script[-1] != _OP_NUMEQUAL:
         return None
     keys: list[bytes] = []
     position = 0
@@ -4782,19 +4782,45 @@ class _Known:
 
     @classmethod
     def of(cls, provider: Provider) -> _Known:
+        """Index a provider `_assert_provider` passed, as plain bytes.
+
+        Each entry is copied as the bytes it holds, with `_plain`: a
+        subclass of bytes can answer any truth, length or copy, and the
+        inference then reads none of them.
+        """
+        keys = {_plain(sec): origin for sec, origin in provider.keys.items()}
         by_hash: dict[bytes, bytes] = {}
         by_x_only_hash: dict[bytes, bytes] = {}
-        for sec in provider.keys:
+        for sec in keys:
             by_hash.setdefault(hash160(sec), sec)
             if len(sec) == 33:
                 by_x_only_hash.setdefault(hash160(sec[1:]), sec)
+        scripts = [_plain(script) for script in reversed(provider.scripts)]
+        trees = {
+            _plain(output_key): (
+                _plain(internal_key),
+                _plain(merkle_root),
+                {
+                    _plain(control): (_plain(script), version)
+                    for control, (script, version) in leaf_scripts.items()
+                },
+            )
+            for output_key, (internal_key, merkle_root, leaf_scripts) in (
+                provider.trees.items()
+            )
+        }
         return cls(
-            provider.keys,
-            {hash160(script): script for script in reversed(provider.scripts)},
+            keys,
+            {hash160(script): script for script in scripts},
             by_hash,
             by_x_only_hash,
-            provider.trees,
+            trees,
         )
+
+
+def _plain(octets: bytes) -> bytes:
+    """Return the bytes a bytes object holds, through none of its methods."""
+    return bytes.__getitem__(octets, slice(None))
 
 
 def _inferred_key(sec: bytes, context: str, known: _Known) -> KeyExpression | None:
@@ -4995,7 +5021,7 @@ def _inferred_leaf_or_raw(script: bytes, version: int, known: _Known) -> Descrip
     ``rawleaf()`` with no HEX does not parse, and the node commits to the
     same output key.
     """
-    if len(script) == 0:
+    if not script:
         return RawNode(leaf_hash(version, script))
     leaf = _inferred_leaf(script, known) if version == _TAPSCRIPT_LEAF_VERSION else None
     return RawLeaf(script, version) if leaf is None else leaf
@@ -5070,7 +5096,7 @@ def _taproot_tree(
     The records are read by script and then by control block, shortest
     first, which is the order of the map and the sets Core holds them in.
     """
-    if len(merkle_root) == 0:
+    if not merkle_root:
         return None
     by_leaf: dict[tuple[bytes, int], list[bytes]] = {}
     for control, leaf in leaf_scripts.items():
@@ -5242,7 +5268,12 @@ def _assert_provider(provider: Provider) -> None:
         assert_type(internal_key, bytes, "taproot internal key")
         assert_type(merkle_root, bytes, "taproot merkle root")
         assert_type(leaf_scripts, Mapping, "taproot leaf scripts")
-        sizes = (len(output_key), len(internal_key), len(merkle_root) or 32)
+        # the size of the bytes held, which `_Known.of` copies
+        sizes = (
+            bytes.__len__(output_key),
+            bytes.__len__(internal_key),
+            bytes.__len__(merkle_root) or 32,
+        )
         if sizes != (_X_ONLY_SIZE,) * 3:
             raise BTClibValueError("invalid taproot key or merkle root size")
         for control, leaf in leaf_scripts.items():
