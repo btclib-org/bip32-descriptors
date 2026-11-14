@@ -3925,6 +3925,26 @@ def test_an_unpickled_rawpkh_of_20_bytes_is_refused_for_its_position(
     assert parse(str(built)) == built
 
 
+@pytest.mark.parametrize(
+    "key_hash",
+    [None, 5, "00" * 10, bytearray(20), memoryview(bytes(20))],
+    ids=["none", "int", "hex-str", "bytearray", "memoryview"],
+)
+def test_an_unpickled_rawpkh_hash_that_is_no_bytes_is_refused_for_its_script(
+    key_hash: object,
+) -> None:
+    """As its build refuses it, with that build's message.
+
+    Issue btclib-org/bip32-descriptors#339.
+    """
+    unpickled = _unpickled_rawpkh(cast("bytes", key_hash), RawPkhDescriptor)
+    err_msg = f"^invalid key hash type: {type(key_hash).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        RawPkhDescriptor(cast("bytes", key_hash))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        unpickled.script_pub_key()
+
+
 class _TrNamedRaw(RawDescriptor):
     """A subclass writing ``tr()``, which ``sh()`` and ``wsh()`` refuse."""
 
@@ -4029,6 +4049,98 @@ def test_a_raw_script_is_empty_by_its_bytes_not_its_methods(
     with pytest.raises(BTClibValueError, match=err_msg):
         wrap(_unpickled_raw(empty, RawDescriptor))
     built = wrap(_unpickled_raw(one, RawDescriptor))
+    assert parse(str(built)).script_pub_key() == built.script_pub_key()
+
+
+@pytest.mark.parametrize("wrap", [None, WshDescriptor, ShDescriptor, _sh_wsh])
+@pytest.mark.parametrize(
+    "empty,twenty",
+    [
+        (_TrueEmpty(), _FalseBytes(bytes(20))),
+        (_LongEmpty(), _ShortBytes(bytes(20))),
+    ],
+    ids=["truth", "length"],
+)
+def test_a_rawpkh_hash_is_empty_by_its_bytes_not_its_methods(
+    empty: bytes, twenty: bytes, wrap: Callable[[Descriptor], Descriptor] | None
+) -> None:
+    """Built, or unpickled inside a wrapper, as `parse` reads its hex.
+
+    The subclass answers its truth or its length against its bytes.
+    Issue btclib-org/bip32-descriptors#339.
+    """
+    assert (bool(empty), len(empty)) != (False, 0)
+    assert (bool(twenty), len(twenty)) != (True, 20)
+    err_msg = "^Rawpkh hash is not hex$"
+    built: Descriptor
+    if wrap is None:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            RawPkhDescriptor(empty)
+        built = RawPkhDescriptor(twenty)
+    else:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            wrap(_unpickled_rawpkh(empty, RawPkhDescriptor))
+        built = wrap(_unpickled_rawpkh(twenty, RawPkhDescriptor))
+    assert parse(str(built)).script_pub_key() == built.script_pub_key()
+
+
+class _TwentyLong(bytes):
+    """Bytes whose length says 20, whatever they hold."""
+
+    @override
+    def __len__(self) -> int:
+        return 20
+
+
+@pytest.mark.parametrize("wrap", [None, WshDescriptor, ShDescriptor, _sh_wsh])
+@pytest.mark.parametrize("size", [19, 21])
+def test_a_rawpkh_hash_is_sized_by_its_bytes_not_its_length(
+    size: int, wrap: Callable[[Descriptor], Descriptor] | None
+) -> None:
+    """Refused for the size of its bytes, whatever its length says.
+
+    Issue btclib-org/bip32-descriptors#339.
+    """
+    key_hash = _TwentyLong(bytes(size))
+    assert len(key_hash) == 20
+    err_msg = "^160 bits digest expected$"
+    if wrap is None:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            RawPkhDescriptor(key_hash)
+        return
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_unpickled_rawpkh(key_hash, RawPkhDescriptor))
+
+
+class _ZeroCopy(bytes):
+    """Bytes whose copy by `bytes()` is 20 zeros, whatever they hold."""
+
+    @override
+    def __bytes__(self) -> bytes:
+        return bytes(20)
+
+
+@pytest.mark.parametrize("wrap", [None, WshDescriptor])
+def test_a_rawpkh_hash_is_pushed_as_the_bytes_it_writes(
+    wrap: Callable[[Descriptor], Descriptor] | None,
+) -> None:
+    """Sized and pushed as its text writes it, whatever `bytes()` copies.
+
+    Built, or unpickled inside a wrapper. Issue
+    btclib-org/bip32-descriptors#339.
+    """
+    twenty, nineteen = _ZeroCopy(b"\x11" * 20), _ZeroCopy(b"\x11" * 19)
+    assert bytes(nineteen) == bytes(20)
+    err_msg = "^160 bits digest expected$"
+    built: Descriptor
+    if wrap is None:
+        built = RawPkhDescriptor(twenty)
+        with pytest.raises(BTClibValueError, match=err_msg):
+            RawPkhDescriptor(nineteen)
+    else:
+        built = wrap(_unpickled_rawpkh(twenty, RawPkhDescriptor))
+        with pytest.raises(BTClibValueError, match=err_msg):
+            wrap(_unpickled_rawpkh(nineteen, RawPkhDescriptor))
     assert parse(str(built)).script_pub_key() == built.script_pub_key()
 
 
@@ -4216,6 +4328,32 @@ def test_a_raw_of_other_text_is_refused_for_the_size_it_embeds(
     assert str(_OtherText(b"\x52")) == "raw(51)"
     over = bytes(MAX_SCRIPT_SIZE + 1)
     err_msg = rf"^raw\(\) inside w?sh\(\) is {len(over)} bytes, over the "
+    with pytest.raises(BTClibValueError, match=err_msg):
+        wrap(_OtherText(over))
+
+
+@pytest.mark.parametrize(
+    "wrap,limit",
+    [
+        (WshDescriptor, MAX_SCRIPT_SIZE),
+        (ShDescriptor, MAX_SCRIPT_ELEMENT_SIZE),
+        (_sh_wsh, MAX_SCRIPT_SIZE),
+    ],
+    ids=["wsh", "sh", "sh-wsh"],
+)
+def test_a_raw_script_is_sized_by_its_bytes_not_its_length(
+    wrap: Callable[[Descriptor], Descriptor], limit: int
+) -> None:
+    """At the limit it builds; past it it is refused, whatever its length says.
+
+    The text is short, so only the script's own size refuses it.
+    Issue btclib-org/bip32-descriptors#339.
+    """
+    at_limit, over = _ShortBytes(bytes(limit)), _ShortBytes(bytes(limit + 1))
+    assert len(over) == 0
+    plain = wrap(_OtherText(bytes(limit))).script_pub_key()
+    assert wrap(_OtherText(at_limit)).script_pub_key() == plain
+    err_msg = rf"^raw\(\) inside w?sh\(\) is {limit + 1} bytes, over the {limit}-"
     with pytest.raises(BTClibValueError, match=err_msg):
         wrap(_OtherText(over))
 

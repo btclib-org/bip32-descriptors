@@ -2751,10 +2751,13 @@ class RawPkhDescriptor(Descriptor):
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         # refused again: unpickling builds one without `__post_init__`
-        _assert_key_hash_size(self.key_hash)
+        _assert_rawpkh_fields(self)
+        # the bytes it holds, which its text writes: `serialize` sizes a
+        # push by its `__len__`, and `bytes()` copies through `__bytes__`
+        key_hash = _plain(self.key_hash)
         return [
             serialize(
-                ["OP_DUP", "OP_HASH160", self.key_hash, "OP_EQUALVERIFY", "OP_CHECKSIG"]
+                ["OP_DUP", "OP_HASH160", key_hash, "OP_EQUALVERIFY", "OP_CHECKSIG"]
             )
         ]
 
@@ -3981,10 +3984,15 @@ def _assert_raw_script(script: bytes) -> None:
 
 
 def _assert_raw_size(script: bytes, context: str) -> None:
-    """Refuse a ``raw()`` script over the limit of what embeds it."""
+    """Refuse a ``raw()`` script over the limit of what embeds it.
+
+    The size is that of the octets `ScriptPubKey` embeds, which no
+    subclass's `__len__` answers.
+    """
     limit = _EMBEDDED_SCRIPT_SIZE.get(context)
-    if limit is not None and len(script) > limit:
-        err_msg = f"raw() inside {context} is {len(script)} bytes"
+    size = len(bytes_from_octets(script))
+    if limit is not None and size > limit:
+        err_msg = f"raw() inside {context} is {size} bytes"
         raise BTClibValueError(f"{err_msg}, over the {limit}-byte limit")
 
 
@@ -4002,11 +4010,13 @@ def _assert_key_hash_size(key_hash: bytes) -> None:
     """Refuse a hash `parse` refuses, with its message.
 
     An empty one as `_hex_bytes` refuses empty hex, then a size other
-    than 20 bytes.
+    than 20 bytes. By the length of its bytes, which no subclass's
+    `__len__` or `__bool__` answers.
     """
-    if not key_hash:
+    size = bytes.__len__(key_hash)
+    if size == 0:
         raise BTClibValueError(_RAWPKH_NOT_HEX)
-    if len(key_hash) != _KEY_HASH_SIZE:
+    if size != _KEY_HASH_SIZE:
         raise BTClibValueError("160 bits digest expected")
 
 
@@ -4821,19 +4831,45 @@ class _Known:
 
     @classmethod
     def of(cls, provider: Provider) -> _Known:
+        """Index a provider `_assert_provider` passed, as plain bytes.
+
+        Each entry is read as the bytes it holds, with `_plain`: a
+        subclass of bytes can answer any truth, length or copy, and the
+        inference then reads none of them.
+        """
+        keys = {_plain(sec): origin for sec, origin in provider.keys.items()}
         by_hash: dict[bytes, bytes] = {}
         by_x_only_hash: dict[bytes, bytes] = {}
-        for sec in provider.keys:
+        for sec in keys:
             by_hash.setdefault(hash160(sec), sec)
             if len(sec) == 33:
                 by_x_only_hash.setdefault(hash160(sec[1:]), sec)
+        scripts = [_plain(script) for script in reversed(provider.scripts)]
+        trees = {
+            _plain(output_key): (
+                _plain(internal_key),
+                _plain(merkle_root),
+                {
+                    _plain(control): (_plain(script), version)
+                    for control, (script, version) in leaf_scripts.items()
+                },
+            )
+            for output_key, (internal_key, merkle_root, leaf_scripts) in (
+                provider.trees.items()
+            )
+        }
         return cls(
-            provider.keys,
-            {hash160(script): script for script in reversed(provider.scripts)},
+            keys,
+            {hash160(script): script for script in scripts},
             by_hash,
             by_x_only_hash,
-            provider.trees,
+            trees,
         )
+
+
+def _plain(octets: bytes) -> bytes:
+    """Return the bytes a bytes object holds, through none of its methods."""
+    return bytes.__getitem__(octets, slice(None))
 
 
 def _inferred_key(sec: bytes, context: str, known: _Known) -> KeyExpression | None:
@@ -5281,7 +5317,12 @@ def _assert_provider(provider: Provider) -> None:
         assert_type(internal_key, bytes, "taproot internal key")
         assert_type(merkle_root, bytes, "taproot merkle root")
         assert_type(leaf_scripts, Mapping, "taproot leaf scripts")
-        sizes = (len(output_key), len(internal_key), len(merkle_root) or 32)
+        # the size of the bytes held, which `_Known.of` copies
+        sizes = (
+            bytes.__len__(output_key),
+            bytes.__len__(internal_key),
+            bytes.__len__(merkle_root) or 32,
+        )
         if sizes != (_X_ONLY_SIZE,) * 3:
             raise BTClibValueError("invalid taproot key or merkle root size")
         for control, leaf in leaf_scripts.items():
