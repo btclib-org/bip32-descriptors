@@ -3258,9 +3258,9 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     an unpickled argument skips that check of its own too.
 
     The size of a ``raw()`` script is asked only where the argument
-    writes its text with `RawDescriptor`'s `str`, as `parse` refuses the
-    text: one that derives from another fragment too may write that
-    fragment's text.
+    writes ``raw()`` text or embeds the ``raw()`` script, its class taking
+    `RawDescriptor`'s `str` or its scripts: one that derives from another
+    fragment too may write and embed that fragment's instead.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
@@ -3275,9 +3275,9 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
         _assert_multi_embedded(inner, context, check)
     else:
         _assert_keys(inner.key_expressions, check)
-    if (
-        isinstance(inner, RawDescriptor)
-        and type(inner).__str__ is RawDescriptor.__str__
+    if isinstance(inner, RawDescriptor) and (
+        type(inner).__str__ is RawDescriptor.__str__
+        or type(inner)._scripts is RawDescriptor._scripts
     ):
         _assert_raw_size(inner.script, context)
 
