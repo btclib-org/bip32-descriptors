@@ -483,6 +483,56 @@ def test_an_unpickled_raw_tree_node_field_of_another_type_is_refused_by_tr(
         TrDescriptor(_KEY, node)
 
 
+@pytest.mark.parametrize(
+    "position,changes,error,refusal",
+    [
+        (0, {"script": b""}, BTClibValueError, "Leaf Script is not hex"),
+        (0, {"script": b"", "bare": True}, BTClibValueError, "Raw script is not hex"),
+        (0, {"version": 0x01}, BTClibValueError, "Leaf Version is invalid"),
+        (0, {"version": 0x100}, BTClibValueError, "Leaf Version is too large"),
+        (
+            0,
+            {"bare": True, "version": 0x06},
+            BTClibValueError,
+            "a raw() leaf has the leaf version c0",
+        ),
+        (0, {"script": "51"}, BTClibTypeError, "invalid leaf script type: str"),
+        (0, {"version": "c0"}, BTClibTypeError, "invalid leaf version type: str"),
+        (0, {"bare": 1}, BTClibTypeError, "invalid bare type: int"),
+        (1, {"digest": b""}, BTClibValueError, "Rawnode hash is not hex"),
+    ],
+    ids=[
+        "empty",
+        "raw-empty",
+        "odd",
+        "two-bytes",
+        "raw-06",
+        "script-type",
+        "version-type",
+        "bare-type",
+        "node-empty",
+    ],
+)
+def test_an_unpickled_tr_holding_a_raw_node_its_build_refuses_gives_no_script(
+    position: int, changes: dict[str, Any], error: type[Exception], refusal: str
+) -> None:
+    """The whole ``tr()`` unpickled skips its build, so its script refuses.
+
+    With its own build's message, as a leaf or node unpickled alone
+    inside a ``tr()`` being built is refused. The control is the same
+    ``tr()`` unpickled unchanged, which gives the script its build gives.
+    """
+    built = TrDescriptor(_KEY, (RawLeaf(b"\x51"), RawNode(bytes(32))))
+    unchanged: TrDescriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
+    assert unchanged.script_pub_key() == built.script_pub_key()
+    unpickled: TrDescriptor = pickle.loads(pickle.dumps(built))  # noqa: S301
+    node = cast("tuple[RawLeaf, RawNode]", unpickled.tree)[position]
+    for name, value in changes.items():
+        object.__setattr__(node, name, value)
+    with pytest.raises(error, match=f"^{re.escape(refusal)}$"):
+        unpickled.script_pub_key()
+
+
 def test_a_node_hash_of_33_bytes_is_refused_without_its_bytes() -> None:
     """Built, and unpickled inside ``tr()``.
 

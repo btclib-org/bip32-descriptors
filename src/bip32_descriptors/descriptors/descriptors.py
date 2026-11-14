@@ -704,8 +704,7 @@ def _assert_raw_node_fields(node: RawNode) -> None:
     hex, then a size other than 32 bytes, by the length of its bytes.
 
     `_assert_tree_leaf` calls it too, for the reason
-    `_assert_raw_leaf_fields` gives, and so does `_tree_walk`, for an
-    unpickled ``tr()``.
+    `_assert_raw_leaf_fields` gives.
     """
     assert_type(node.digest, bytes, "node hash")
     size = bytes.__len__(node.digest)
@@ -964,6 +963,9 @@ def _assert_tree_leaf(node: object) -> None:
     `TrDescriptor` says. A `RawLeaf` and a `RawNode` are refused as their
     own builds refuse them. A KEY expression leaf is asked its type alone
     here.
+
+    `_tree_walk` calls it again, for an unpickled ``tr()``, which skips
+    its own build.
     """
     assert_type(node, _TREE_NODE_TYPES, "script tree node")
     if isinstance(node, RawLeaf):
@@ -1099,9 +1101,9 @@ def _tree_walk(
         leaves += [replace(leaf, path=leaf.path + left_hash) for leaf in right]
         low, high = sorted((left_hash, right_hash))
         return leaves, tagged_hash(b"TapBranch", low + high)
+    # refused again: unpickling builds a tr() without `__post_init__`
+    _assert_tree_leaf(tree)
     if isinstance(tree, RawNode):
-        # refused again: unpickling builds a tr() without `__post_init__`
-        _assert_raw_node_fields(tree)
         return [], tree.digest
     script = _leaf_script(tree, index, network, prv_keys)
     version = _leaf_version(tree)
