@@ -2545,7 +2545,11 @@ class ComboDescriptor(Descriptor):
 
 @dataclass(frozen=True)
 class AddrDescriptor(Descriptor):
-    """``addr(ADDR)``: the script the address expands to, BIP385."""
+    """``addr(ADDR)``: the script the address expands to, BIP385.
+
+    An address that is not one is refused when built, with `parse`'s
+    message.
+    """
 
     addr: str
 
@@ -2553,6 +2557,8 @@ class AddrDescriptor(Descriptor):
     def __post_init__(self) -> None:
         super().__post_init__()
         assert_type(self.addr, str, "address")
+        # the decoder `parse` reads the address with
+        ScriptPubKey.from_address(self.addr)
 
     @override
     def __str__(self) -> str:
