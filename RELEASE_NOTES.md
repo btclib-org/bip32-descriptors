@@ -37,11 +37,16 @@ read `invalid k in k-of-n multi_a: -1`, and as
 refused as `more than 10 digits`, `past an int64_t` or
 `not in 0..2**32-1`, as `parse` refuses that fragment's text. A
 `thresh()` threshold of 0 reads as `invalid thresh() threshold: 0`,
-where it read `invalid thresh() threshold: 0 of 2`. A wrapper's number
-past ten digits reads as `invalid c: wrapper number: more than 10
-digits`, where it read `c: takes no number:` and the number.
-v2026.11.13's messages quoted a number of the size of a private key
-whole; these do not.
+where it read `invalid thresh() threshold: 0 of 2`.
+
+A node of any other fragment, a wrapper included, built, changed with
+`replace` or unpickled into a descriptor, refuses a number past ten
+digits as `invalid pk_k() number: more than 10 digits` or
+`invalid c: wrapper number: more than 10 digits`, where v2026.11.13 read
+`pk_k takes no number:` or `c: takes no number:` and the number. A
+number of ten digits or fewer still reads that way. None of the
+messages above quotes a number of the size of a private key, which
+v2026.11.13's quoted whole.
 
 `tr()` and `rawtr()` refuse an unpickled `musig()` key whose own path,
 wildcard, hardening or xkey its build refuses, or holding a participant

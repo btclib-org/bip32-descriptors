@@ -42,11 +42,11 @@ Its k and its number of keys are refused where `parse` refuses them
 Unpickled, and a forged node above a multisig of too many keys there
 (closes #302) (closes #305).
 
-### A MultiA k or miniscript number parse cannot read is refused as parse does
+### A number parse cannot read in older(), after(), thresh() or a multisig
 
-Negative or past `parse`'s bounds, in `older()`, `after()`, `thresh()`,
-`multi()` and `multi_a()`, built or unpickled, quoting none of a number
-of the size of a private key (#325).
+Gets `parse`'s refusal, built or unpickled, a `MultiA`'s k included.
+Another node refuses one past ten digits unquoted, and no refusal quotes
+a number of the size of a private key (#325).
 
 ### Mutation testing
 
