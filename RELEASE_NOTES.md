@@ -9,6 +9,55 @@ number says when a release was cut, and promises nothing about
 compatibility, so a breaking change is announced in this file — read it
 before upgrading, rather than a digit.
 
+## v2026.11.14
+
+This release needs btclib 2026.11.10, ecc 2026.11.8 and base58-bech32
+2026.10.23 or later, as v2026.11.13 does. The `secp256k1` extra installs
+`ecc[secp256k1]` 2026.11.8 or later.
+
+griffe and `api_gaps.py` find no break against v2026.11.13. The breaks
+below are in what is refused and with which message, which neither
+compares.
+
+This breaks the API. `RawDescriptor(b"")` raises `BTClibValueError`
+with `parse`'s message, `Raw script is not hex`. v2026.11.13 built it
+and wrote `raw()`, a text `parse` refuses. `sh()` and `wsh()` refuse an
+unpickled empty `raw()` the same way, where v2026.11.13 wrote `sh(raw())`
+and `wsh(raw())`.
+
+This breaks the API. A `MultiA`'s k, and the number of a `Miniscript`
+node of `older()`, `after()`, `thresh()`, `multi()` or `multi_a()`,
+built, changed with `replace`, or unpickled into a descriptor whose
+context takes the fragment, are refused with the message `parse` gives
+their text where they are negative or past the bounds `parse` reads,
+still as `BTClibValueError`. A negative one reads, for example,
+as `invalid multi_a() threshold: digits expected`, where v2026.11.13
+read `invalid k in k-of-n multi_a: -1`, and as
+`invalid older() number: digits expected`, where it read
+`invalid older() value: -1`. One past the bounds `parse` reads is
+refused as `more than 10 digits`, `past an int64_t` or
+`not in 0..2**32-1`, as `parse` refuses that fragment's text. A
+`thresh()` threshold of 0 reads as `invalid thresh() threshold: 0`,
+where it read `invalid thresh() threshold: 0 of 2`.
+
+A node of any other fragment, a wrapper included, built, changed with
+`replace` or unpickled into a descriptor, refuses a number past ten
+digits as `invalid pk_k() number: more than 10 digits` or
+`invalid c: wrapper number: more than 10 digits`, where v2026.11.13 read
+`pk_k takes no number:` or `c: takes no number:` and the number. A
+number of ten digits or fewer still reads that way. None of the
+messages above quotes a number of the size of a private key, which
+v2026.11.13's quoted whole.
+
+This breaks the API. `tr()`, `rawtr()`, `sh()`, `wsh()` and a bare
+miniscript descriptor refuse more of what their build or `parse`
+refuses in a hand-built or unpickled descriptor, key, leaf or node,
+such as an unpickled `multi_a(0,K)` leaf, which v2026.11.13 built;
+`tests/descriptors/hand_built_test.py` holds the cases. A key's own
+fields are not all checked: a path step past 2**32-1 set on an unpickled
+key still builds, in a plain key, a `multi_a()` leaf's key or a
+`musig()` participant (issue #334).
+
 ## v2026.11.13
 
 This release needs btclib 2026.11.10, ecc 2026.11.8 and base58-bech32
