@@ -638,11 +638,30 @@ def test_a_leaf_version_of_50_is_read() -> None:
     assert str(parsed) == f"tr({XONLY},rawleaf(51,50))"
 
 
-@pytest.mark.parametrize("version", [0x51, 0xC1, -2, 0x100])
-def test_a_leaf_built_directly_refuses_what_parse_refuses(version: int) -> None:
-    """An odd version, or one that is no byte, prints what `parse` refuses."""
-    with pytest.raises(BTClibValueError, match="^Leaf Version is invalid$"):
+@pytest.mark.parametrize(
+    "version,text,fault",
+    [
+        (0x51, "51", "invalid"),
+        (0xC1, "c1", "invalid"),
+        (-2, None, "invalid"),
+        (0x100, "0100", "too large"),
+        (0x101, "0101", "too large"),
+    ],
+)
+def test_a_leaf_built_directly_refuses_what_parse_refuses(
+    version: int, text: str | None, fault: str
+) -> None:
+    """With `parse`'s message for the version's text, where one writes it.
+
+    A version over one byte is too large, and an odd one is invalid. A
+    negative one, which no text writes, is invalid too.
+    """
+    err_msg = f"^Leaf Version is {fault}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
         RawLeaf(b"\x51", version)
+    if text is not None:
+        with pytest.raises(BTClibValueError, match=err_msg):
+            parse(f"tr({XONLY},rawleaf(51,{text}))")
 
 
 def test_a_bare_leaf_has_no_other_version() -> None:
@@ -1049,10 +1068,20 @@ def test_the_classes_a_caller_reads_off_a_parsed_descriptor() -> None:
 
 
 def test_a_hand_built_node_or_hash_of_the_wrong_size_is_refused() -> None:
-    """The parser refuses them, and a descriptor built by hand is held too."""
+    """The parser refuses them, and a descriptor built by hand is held too.
+
+    A node is refused when built, and in an unpickled ``tr()`` when its
+    script is asked.
+    """
     key = parse(f"tr({XONLY})").key_expressions[0]
     with pytest.raises(BTClibValueError, match="^256 bits digest expected$"):
-        TrDescriptor(key, RawNode(b"\x00")).script_pub_key()
+        RawNode(b"\x00")
+    unpickled: TrDescriptor = pickle.loads(  # noqa: S301
+        pickle.dumps(TrDescriptor(key, RawNode(bytes.fromhex(NODE))))
+    )
+    object.__setattr__(unpickled.tree, "digest", b"\x00")
+    with pytest.raises(BTClibValueError, match="^256 bits digest expected$"):
+        unpickled.script_pub_key()
     with pytest.raises(BTClibValueError, match="^160 bits digest expected$"):
         RawPkhDescriptor(b"\x00").script_pub_key()
 

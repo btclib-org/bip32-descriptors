@@ -629,20 +629,8 @@ class RawLeaf:
     bare: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
-        """Refuse a version `parse` refuses, and a ``raw()`` leaf not of c0.
-
-        A version is one byte, and an even one: the low bit of a control
-        block's first byte is the parity of the output key.
-        """
-        assert_type(self.script, bytes, "leaf script")
-        if not is_integer(self.version):
-            err_msg = f"invalid leaf version type: {type(self.version).__name__}"
-            raise BTClibTypeError(err_msg)
-        assert_type(self.bare, bool, "bare")
-        if not 0 <= self.version <= 0xFF or self.version & 1:
-            raise BTClibValueError("Leaf Version is invalid")
-        if self.bare and self.version != _TAPSCRIPT_LEAF_VERSION:
-            raise BTClibValueError("a raw() leaf has the leaf version c0")
+        """Refuse what `_assert_raw_leaf_fields` refuses."""
+        _assert_raw_leaf_fields(self)
 
     @override
     def __str__(self) -> str:
@@ -667,13 +655,64 @@ class RawNode:
     digest: bytes
 
     def __post_init__(self) -> None:
-        """Refuse a hash that is not bytes; `_tree_walk` refuses its size."""
-        assert_type(self.digest, bytes, "node hash")
+        """Refuse what `_assert_raw_node_fields` refuses."""
+        _assert_raw_node_fields(self)
 
     @override
     def __str__(self) -> str:
         """Return the node as ``rawnode(HEX)``."""
         return _expression("rawnode", self.digest.hex())
+
+
+_LEAF_NOT_HEX = "Leaf Script is not hex"
+_RAWNODE_NOT_HEX = "Rawnode hash is not hex"
+
+
+def _assert_raw_leaf_fields(leaf: RawLeaf) -> None:
+    """Refuse a field of the wrong type, then what `parse` refuses in a leaf.
+
+    With `parse`'s messages, an empty script, which `parse` reads as no
+    hex in ``raw()`` or in ``rawleaf()``, then a version over one byte,
+    then an odd one. A version is one byte, and an even one: the low bit
+    of a control block's first byte is the parity of the output key. A
+    negative version, which no text writes, is refused as an odd one is.
+    Last, a ``raw()`` leaf not of c0, whose text `parse` reads as a leaf
+    of c0. The script's length is that of its bytes, which no subclass's
+    `__len__` answers.
+
+    `_assert_tree_leaf` calls it too: an unpickled leaf skips its build.
+    """
+    assert_type(leaf.script, bytes, "leaf script")
+    if not is_integer(leaf.version):
+        err_msg = f"invalid leaf version type: {type(leaf.version).__name__}"
+        raise BTClibTypeError(err_msg)
+    assert_type(leaf.bare, bool, "bare")
+    if bytes.__len__(leaf.script) == 0:
+        raise BTClibValueError(_RAW_NOT_HEX if leaf.bare else _LEAF_NOT_HEX)
+    if leaf.version > 0xFF:
+        raise BTClibValueError("Leaf Version is too large")
+    if leaf.version < 0 or leaf.version & 1:
+        raise BTClibValueError("Leaf Version is invalid")
+    if leaf.bare and leaf.version != _TAPSCRIPT_LEAF_VERSION:
+        raise BTClibValueError("a raw() leaf has the leaf version c0")
+
+
+def _assert_raw_node_fields(node: RawNode) -> None:
+    """Refuse a hash of the wrong type, then one `parse` refuses.
+
+    With `parse`'s messages: an empty one, as `_hex_bytes` refuses empty
+    hex, then a size other than 32 bytes, by the length of its bytes.
+
+    `_assert_tree_leaf` calls it too, for the reason
+    `_assert_raw_leaf_fields` gives, and so does `_tree_walk`, for an
+    unpickled ``tr()``.
+    """
+    assert_type(node.digest, bytes, "node hash")
+    size = bytes.__len__(node.digest)
+    if size == 0:
+        raise BTClibValueError(_RAWNODE_NOT_HEX)
+    if size != _NODE_HASH_SIZE:
+        raise BTClibValueError("256 bits digest expected")
 
 
 def _tree_expression(tree: DescriptorTree) -> str:
@@ -915,17 +954,23 @@ def _assert_multi_a_numbers(leaf: MultiA) -> None:
 
 
 def _assert_tree_leaf(node: object) -> None:
-    """Refuse a tree node of the wrong type, and a `MultiA` leaf's keys and k.
+    """Refuse a tree node of the wrong type, then the fields some nodes hold.
 
     A `MultiA` leaf is refused where `_assert_key_types` refuses its keys,
     then for the type of its threshold, then as `_assert_multi_a_threshold`
     and `_assert_multi_a_numbers` say: an unpickled leaf skips its own
     build's checks. Its keys are
     refused for what `parse` refuses in them once the tree passes, as
-    `TrDescriptor` says.
+    `TrDescriptor` says. A `RawLeaf` and a `RawNode` are refused as their
+    own builds refuse them. A KEY expression leaf is asked its type alone
+    here.
     """
     assert_type(node, _TREE_NODE_TYPES, "script tree node")
-    if isinstance(node, MultiA):
+    if isinstance(node, RawLeaf):
+        _assert_raw_leaf_fields(node)
+    elif isinstance(node, RawNode):
+        _assert_raw_node_fields(node)
+    elif isinstance(node, MultiA):
         _assert_key_types(node)
         _assert_threshold_type(node.threshold)
         _assert_multi_a_threshold(node)
@@ -1055,8 +1100,8 @@ def _tree_walk(
         low, high = sorted((left_hash, right_hash))
         return leaves, tagged_hash(b"TapBranch", low + high)
     if isinstance(tree, RawNode):
-        if len(tree.digest) != _NODE_HASH_SIZE:
-            raise BTClibValueError("256 bits digest expected")
+        # refused again: unpickling builds a tr() without `__post_init__`
+        _assert_raw_node_fields(tree)
         return [], tree.digest
     script = _leaf_script(tree, index, network, prv_keys)
     version = _leaf_version(tree)
@@ -3965,11 +4010,8 @@ def _parse_bare_leaf(args: list[str]) -> RawLeaf:
 
 
 def _parse_rawnode(args: list[str]) -> RawNode:
-    """Return the node of a ``rawnode(HEX)``: 32 bytes."""
-    digest = _hex_bytes(_one_argument(args, "rawnode"), "Rawnode hash is not hex")
-    if len(digest) != _NODE_HASH_SIZE:
-        raise BTClibValueError("256 bits digest expected")
-    return RawNode(digest)
+    """Return the node of a ``rawnode(HEX)``, whose build refuses its size."""
+    return RawNode(_hex_bytes(_one_argument(args, "rawnode"), _RAWNODE_NOT_HEX))
 
 
 def _parse_rawleaf(args: list[str]) -> RawLeaf:
@@ -3986,7 +4028,7 @@ def _parse_rawleaf(args: list[str]) -> RawLeaf:
     starting with 51, or with 50 when an annex follows, and BIP341 rules it
     out of a script tree only in a footnote.
     """
-    script = _hex_bytes(args[0], "Leaf Script is not hex")
+    script = _hex_bytes(args[0], _LEAF_NOT_HEX)
     if len(args) == 1:
         return RawLeaf(script)
     text = args[1]

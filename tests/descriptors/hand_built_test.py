@@ -170,6 +170,11 @@ as `WshDescriptor` says. `_assert_embedded` says which scripts of a
 ``raw()`` argument are refused for their size. Issue
 btclib-org/bip32-descriptors#282.
 
+`RawLeaf` refuses an empty script, and `RawNode` a hash that is empty or
+of other than 32 bytes, with `parse`'s message. `TrDescriptor` refuses
+an unpickled one for what its own build refuses. Issue
+btclib-org/bip32-descriptors#331.
+
 A descriptor, a `MultiA` and a ``musig()`` refuse a key that is no
 point, which `miniscript.from_script` reads, with `parse`'s message, the
 last two lacking the key's position. Issue
@@ -261,6 +266,7 @@ from bip32_descriptors.descriptors.descriptors import (
     PkhDescriptor,
     RawDescriptor,
     RawLeaf,
+    RawNode,
     RawPkhDescriptor,
     RawTrDescriptor,
     ShDescriptor,
@@ -357,6 +363,141 @@ def test_a_tr_tree_too_deep_is_refused_when_built(right: bool) -> None:
         tree = _nested(levels, right=right)
         with pytest.raises(BTClibValueError, match="^script tree deeper than 128$"):
             TrDescriptor(_KEY, tree)  # type: ignore[arg-type]
+
+
+# a leaf or node `parse` reads, the fields that make it one `parse`
+# refuses, and the text of that one with `parse`'s message for it
+_RAW_TREE_FAULTS = pytest.mark.parametrize(
+    "valid,changes,text,refusal",
+    [
+        (
+            RawLeaf(b"\x51", bare=True),
+            {"script": b""},
+            "raw()",
+            "Raw script is not hex",
+        ),
+        (RawLeaf(b"\x51"), {"script": b""}, "rawleaf(,c0)", "Leaf Script is not hex"),
+        (
+            RawLeaf(b"\x51", 6),
+            {"script": b""},
+            "rawleaf(,06)",
+            "Leaf Script is not hex",
+        ),
+        (RawNode(bytes(32)), {"digest": b""}, "rawnode()", "Rawnode hash is not hex"),
+        (
+            RawNode(bytes(32)),
+            {"digest": bytes(31)},
+            f"rawnode({'00' * 31})",
+            "256 bits digest expected",
+        ),
+        (
+            RawNode(bytes(32)),
+            {"digest": bytes(33)},
+            f"rawnode({'00' * 33})",
+            "256 bits digest expected",
+        ),
+    ],
+    ids=["raw", "rawleaf", "rawleaf-06", "rawnode", "rawnode-31", "rawnode-33"],
+)
+
+
+def _unpickled_raw_tree_node(valid: RawLeaf | RawNode, **changes: Any) -> Any:
+    """Return `valid` unpickled with `changes`, skipping its own check."""
+    node = pickle.loads(pickle.dumps(valid))  # noqa: S301
+    for name, value in changes.items():
+        object.__setattr__(node, name, value)
+    return node
+
+
+@_RAW_TREE_FAULTS
+def test_a_raw_tree_node_parse_refuses_is_refused_when_built(
+    valid: RawLeaf | RawNode, changes: dict[str, Any], text: str, refusal: str
+) -> None:
+    """With `parse`'s message, so that no ``tr()`` writes its text.
+
+    The control is the node it is built from, which a ``tr()`` writes as
+    a text that parses back. Issue btclib-org/bip32-descriptors#331.
+    """
+    descriptor = TrDescriptor(_KEY, valid)
+    assert parse(str(descriptor)) == descriptor
+    err_msg = f"^{refusal}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        parse(f"tr({_X},{text})")
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(valid, **changes)
+
+
+@_RAW_TREE_FAULTS
+def test_an_unpickled_raw_tree_node_parse_refuses_is_refused_by_tr(
+    valid: RawLeaf | RawNode, changes: dict[str, Any], text: str, refusal: str
+) -> None:
+    """Alone or in a branch, as its own build refuses it.
+
+    The control is the unpickled node it is copied from, which a ``tr()``
+    takes.
+    """
+    assert TrDescriptor(_KEY, _unpickled_raw_tree_node(valid)).tree == valid
+    node = _unpickled_raw_tree_node(valid, **changes)
+    for tree in (node, (RawLeaf(b"\x51"), node)):
+        with pytest.raises(BTClibValueError, match=f"^{refusal}$"):
+            TrDescriptor(_KEY, tree)
+
+
+@pytest.mark.parametrize(
+    "changes,refusal",
+    [
+        ({"version": 0x01}, "Leaf Version is invalid"),
+        ({"version": 0x100}, "Leaf Version is too large"),
+        ({"bare": True, "version": 0x06}, "a raw() leaf has the leaf version c0"),
+    ],
+    ids=["odd", "two-bytes", "raw-06"],
+)
+def test_an_unpickled_raw_leaf_version_its_build_refuses_is_refused_by_tr(
+    changes: dict[str, Any], refusal: str
+) -> None:
+    """As its own build refuses it, before its text is written."""
+    err_msg = f"^{re.escape(refusal)}$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        replace(RawLeaf(b"\x51"), **changes)
+    node = _unpickled_raw_tree_node(RawLeaf(b"\x51"), **changes)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        TrDescriptor(_KEY, node)
+
+
+@pytest.mark.parametrize(
+    "valid,name,what",
+    [
+        (RawLeaf(b"\x51"), "script", "leaf script"),
+        (RawLeaf(b"\x51"), "version", "leaf version"),
+        (RawLeaf(b"\x51"), "bare", "bare"),
+        (RawNode(bytes(32)), "digest", "node hash"),
+    ],
+    ids=["script", "version", "bare", "digest"],
+)
+def test_an_unpickled_raw_tree_node_field_of_another_type_is_refused_by_tr(
+    valid: RawLeaf | RawNode, name: str, what: str
+) -> None:
+    """As its own build refuses it, before its text is written."""
+    node = _unpickled_raw_tree_node(valid, **{name: "51"})
+    with pytest.raises(BTClibTypeError, match=f"^invalid {what} type: str$"):
+        TrDescriptor(_KEY, node)
+
+
+def test_a_node_hash_of_33_bytes_is_refused_without_its_bytes() -> None:
+    """Built, and unpickled inside ``tr()``.
+
+    Thirty-three bytes may be an xprv's ``00 || k``, as section 7 of the
+    organization's standard says.
+    """
+    secret = b"\x00" + bytes.fromhex(_RANDOM_HEX)
+    err_msg = "^256 bits digest expected$"
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        RawNode(secret)
+    assert_secret_free(e.value, [secret])
+    node = _unpickled_raw_tree_node(RawNode(bytes(32)), digest=secret)
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
+        TrDescriptor(_KEY, node)
+    assert_secret_free(e.value, [secret])
 
 
 def test_a_tr_miniscript_leaf_of_another_context_is_refused() -> None:
