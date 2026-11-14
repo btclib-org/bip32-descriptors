@@ -3529,17 +3529,38 @@ class _FalseBytes(bytes):
         return False
 
 
+class _LongEmpty(bytes):
+    """No bytes, whose length says one."""
+
+    @override
+    def __len__(self) -> int:
+        return 1
+
+
+class _ShortBytes(bytes):
+    """Bytes whose length says none, whatever they hold."""
+
+    @override
+    def __len__(self) -> int:
+        return 0
+
+
 @pytest.mark.parametrize("wrap", [None, WshDescriptor, ShDescriptor, _sh_wsh])
-def test_a_raw_script_is_empty_by_its_length_not_its_truth(
-    wrap: Callable[[Descriptor], Descriptor] | None,
+@pytest.mark.parametrize(
+    "empty,one",
+    [(_TrueEmpty(), _FalseBytes(b"\x51")), (_LongEmpty(), _ShortBytes(b"\x51"))],
+    ids=["truth", "length"],
+)
+def test_a_raw_script_is_empty_by_its_bytes_not_its_methods(
+    empty: bytes, one: bytes, wrap: Callable[[Descriptor], Descriptor] | None
 ) -> None:
     """Built, or unpickled inside a wrapper, as `parse` reads its hex.
 
+    The subclass answers its truth or its length against its bytes.
     Issue btclib-org/bip32-descriptors#282.
     """
-    empty, one = _TrueEmpty(), _FalseBytes(b"\x51")
-    assert empty
-    assert not one
+    assert (bool(empty), len(empty)) != (False, 0)
+    assert (bool(one), len(one)) != (True, 1)
     err_msg = "^Raw script is not hex$"
     if wrap is None:
         with pytest.raises(BTClibValueError, match=err_msg):

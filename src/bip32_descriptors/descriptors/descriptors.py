@@ -3869,9 +3869,10 @@ _RAW_NOT_HEX = "Raw script is not hex"
 def _assert_raw_script(script: bytes) -> None:
     """Refuse an empty script, as `_hex_bytes` refuses empty hex.
 
-    By its length: a bytes subclass can answer any truth.
+    By the length of its bytes, which no subclass's `__len__` or
+    `__bool__` answers.
     """
-    if len(script) == 0:
+    if bytes.__len__(script) == 0:
         raise BTClibValueError(_RAW_NOT_HEX)
 
 
