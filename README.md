@@ -39,6 +39,12 @@ Python arithmetic answers instead.
   its threshold and its timelock (`descriptors.miniscript`)
 - `sha256(preimage(HEX))`, the private form of the hash fragments, which
   no BIP specifies (`descriptors.miniscript` says where it is proposed)
+- a compiler from a spending policy, such as
+  `or(pk(A),and(pk(B),older(144)))` with a KEY expression for each of
+  `A` and `B`, to a P2WSH miniscript that enforces it, the cheapest of
+  the candidates its search builds: a port of
+  [sipa/miniscript](https://github.com/sipa/miniscript)'s
+  (`descriptors.compiler`)
 
 [ARCHITECTURE.md](https://github.com/btclib-org/bip32-descriptors/blob/main/ARCHITECTURE.md)
 says how these modules layer and which may import which.
@@ -50,7 +56,7 @@ Signing, partially signed transactions and wallets are not here: they
 are [btclib-wallet](https://github.com/btclib-org/btclib-wallet)'s.
 
 The suite answers to vectors their authors publish -- the BIPs', Bitcoin
-Core's, bitcoin-s's and Liana's -- and
+Core's, bitcoin-s's, Liana's and rust-miniscript's -- and
 [tests/_data/README.md](https://github.com/btclib-org/bip32-descriptors/blob/main/tests/_data/README.md)
 pins each vendored file to the upstream commit it was copied from.
 
