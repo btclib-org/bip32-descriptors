@@ -8,7 +8,7 @@ import dataclasses
 import pickle
 import re
 import string
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from btclib.alias import Octets
@@ -56,23 +56,20 @@ def test_bip32_key_origin() -> None:
         BIP32KeyOrigin("deadbeef", [-1])
     # the upper boundary itself: `<= 0xffffffff` weakened to `<
     # 0xffffffff` or to `<= 0xfffffffe` would refuse it
-    assert BIP32KeyOrigin("deadbeef", [0xFFFFFFFF]).der_path == [0xFFFFFFFF]
+    assert BIP32KeyOrigin("deadbeef", [0xFFFFFFFF]).der_path == (0xFFFFFFFF,)
 
-    # and assert_valid still asks. The field is annotated Sequence[int]
-    # and holds the list `indexes_from_der_path` built, so the dataclass
-    # being frozen stops a rebinding and not an append: the constructor
-    # is not the only way an out-of-range index reaches the field, on
-    # either side of the range
+    # and assert_valid still asks, of steps `object.__setattr__` set after
+    # the build, on either side of the range
     for out_of_range in (0xFFFFFFFF + 1, -1):
         key_origin = BIP32KeyOrigin("deadbeef", [0])
-        cast("list[int]", key_origin.der_path).append(out_of_range)
+        object.__setattr__(key_origin, "der_path", (0, out_of_range))
         with pytest.raises(BTClibValueError, match="invalid der_path element"):
             key_origin.assert_valid()
     # nor an index of another type, nor a field of another type, whose
     # comparison or length would leave as a builtin's TypeError
     for not_an_index in ("1", None, 1.5, True, [1]):
         key_origin = BIP32KeyOrigin("deadbeef", [0])
-        cast("list[Any]", key_origin.der_path).append(not_an_index)
+        object.__setattr__(key_origin, "der_path", (0, not_an_index))
         err_msg = f"^invalid der_path element type: {type(not_an_index).__name__}$"
         with pytest.raises(BTClibTypeError, match=err_msg):
             key_origin.assert_valid()
@@ -110,13 +107,13 @@ def test_bip32_key_origin() -> None:
     assert key_origin == key_origin2
     assert key_origin.description == description
     assert key_origin.master_fingerprint == bytes.fromhex(master_fingerprint)
-    assert key_origin.der_path == [
+    assert key_origin.der_path == (
         44 + 0x80000000,
         0 + 0x80000000,
         1 + 0x80000000,
         0,
         10,
-    ]
+    )
     assert BIP32KeyOrigin.parse(key_origin.serialize()) == key_origin
     assert BIP32KeyOrigin.from_dict(key_origin.to_dict()) == key_origin
     assert len(key_origin) == 5
@@ -422,7 +419,7 @@ def test_from_description_reads_a_slash_after_the_fingerprint() -> None:
     empty = BIP32KeyOrigin("deadbeef", [])
     assert BIP32KeyOrigin.from_description("deadbeef") == empty
     assert BIP32KeyOrigin.from_description("deadbeef/") == empty
-    assert BIP32KeyOrigin.from_description("deadbeef/1").der_path == [1]
+    assert BIP32KeyOrigin.from_description("deadbeef/1").der_path == (1,)
     # the path is what follows the "/", read as `indexes_from_der_path`
     # reads a path, so a leading m is skipped there as well
     expected = BIP32KeyOrigin("deadbeef", "m/0h")
@@ -466,11 +463,11 @@ def test_a_key_origin_pickle_restores_what_its_build_stores() -> None:
             BTClibTypeError,
             "invalid master_fingerprint type: str",
         ),
-        ("der_path", (1, 2), BTClibTypeError, "invalid der_path type: tuple"),
-        ("der_path", ["1"], BTClibTypeError, "invalid derivation index type: str"),
-        ("der_path", [2**32], BTClibValueError, "invalid index: not in 0..2**32-1"),
+        ("der_path", [1, 2], BTClibTypeError, "invalid der_path type: list"),
+        ("der_path", ("1",), BTClibTypeError, "invalid derivation index type: str"),
+        ("der_path", (2**32,), BTClibValueError, "invalid index: not in 0..2**32-1"),
     ],
-    ids=["fingerprint-text", "path-tuple", "index-text", "index-too-large"],
+    ids=["fingerprint-text", "path-list", "index-text", "index-too-large"],
 )
 def test_a_key_origin_pickle_holding_a_field_its_build_refuses_is_refused(
     name: str, value: Any, error: type[Exception], refusal: str
