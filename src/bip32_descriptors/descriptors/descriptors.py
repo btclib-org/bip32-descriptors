@@ -776,8 +776,13 @@ def _is_unspendable(key: KeyExpression) -> bool:
     and a wallet-policy placeholder are neither.
     """
     if key.pub_key is not None:
+        # asked again: unpickling builds a key without `__post_init__`
+        assert_type(key.pub_key, bytes, "pub_key")
         return key.pub_key[1:33] == _UNSPENDABLE_X
-    if not key.xkey or _PLACEHOLDER.fullmatch(key.xkey):
+    if not key.xkey:
+        return False
+    assert_type(key.xkey, str, "xkey")
+    if _PLACEHOLDER.fullmatch(key.xkey):
         return False
     return BIP32KeyData.b58decode(key.xkey).key[1:] == _UNSPENDABLE_X
 
@@ -3415,6 +3420,8 @@ class UnusedDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
         return ()
 
     @override

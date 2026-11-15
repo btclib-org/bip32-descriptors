@@ -187,6 +187,16 @@ SHAPES = [
     # a thresh() of a key and a multisig needing both is one quorum, its keys
     # in the order the expression names them
     (f"thresh(2,pk({A}),a:multi(2,{B},{C}))", [(((3, "ABC"),), None, None, ())]),
+    # a merge that makes two paths share a rest merges them in turn
+    (
+        (
+            f"or_i(or_i(and_v(v:or_i(pk({A}),pk({B})),or_i(pk({C}),pk({D}))),"
+            f"and_v(v:or_i(pk({E}),pk({F})),or_i(pk({G}),pk({H})))),"
+            f"or_i(and_v(v:or_i(pk({A}),pk({B})),or_i(pk({G}),pk({H}))),"
+            f"and_v(v:or_i(pk({E}),pk({F})),or_i(pk({C}),pk({D})))))"
+        ),
+        [(((1, "ABEF"), (1, "CDGH")), None, None, ())],
+    ),
     # a thresh() branch with no path is no key, and adds none
     (f"thresh(1,pk({A}),a:0)", [(((1, "A"),), None, None, ())]),
     # the sugar for or_i() with a 0, and for and_v() with a 1
@@ -382,6 +392,38 @@ def test_a_branch_with_no_path_completes_no_choice() -> None:
     assert {len(path.hashes) for path in paths} == {12}
 
 
+def test_the_work_of_a_disjunction_is_its_paths_times_their_quorums(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A path of many quorums is read once for all its rests.
+
+    Paths of a hundred quorums of one key each, or a key: reading each
+    rest whole hashes the square of a path's quorums, where one pass
+    hashes their number.
+    """
+    keys = [PrvKeyData(i).pub.sec.hex()[2:] for i in range(1, 202)]
+    conjunction = f"or_i(pk({keys[198]}),pk({keys[199]}))"
+    for i in range(99):
+        conjunction = (
+            f"and_v(v:or_i(pk({keys[2 * i]}),pk({keys[2 * i + 1]})),{conjunction})"
+        )
+    node = parse_miniscript(
+        f"or_i(and_v(v:{_preimage_thresh(5, 12, 8)},{conjunction}),pk({keys[200]}))",
+        TAPSCRIPT,
+    )
+    hashed = [0]
+    quorum_hash = Quorum.__hash__
+
+    def counted(quorum: Quorum) -> int:
+        hashed[0] += 1
+        return quorum_hash(quorum)
+
+    monkeypatch.setattr(Quorum, "__hash__", counted)
+    paths = node.spending_paths
+    assert {len(path.quorums) for path in paths} == {100, 1}
+    assert hashed[0] <= 4 * len(paths) * 100
+
+
 def _preimage_thresh(threshold: int, count: int, salt: int) -> str:
     """Return a thresh() of `count` preimages, `salt` telling digests apart."""
     digests = [sha256(bytes([salt, i]) * 16).hex() for i in range(count)]
@@ -522,6 +564,10 @@ FORGED: list[tuple[str, Callable[[Any], Any], str, object, str]] = [
     (f"tr({A[2:]})", lambda d: d, "internal_key", "garbage", "internal key"),
     (f"tr({A[2:]},pk({B[2:]}))", lambda d: d, "tree", 5, "script tree node"),
     (f"rawtr({A[2:]})", lambda d: d, "key", "garbage", "key"),
+    (f"rawtr({A[2:]})", lambda d: d.key, "pub_key", 5, "pub_key"),
+    (f"tr({A[2:]})", lambda d: d.internal_key, "pub_key", 5, "pub_key"),
+    (f"tr({XPUB}/0/*)", lambda d: d.internal_key, "xkey", 5, "xkey"),
+    (f"unused({A})", lambda d: d, "key", "garbage", "key"),
     (f"pkh({A})", lambda d: d, "key", None, "key"),
     (f"wsh(pk({A}))", lambda d: d, "inner", "garbage", "inner descriptor"),
     (f"sh(wpkh({A}))", lambda d: d, "inner", 5, "inner descriptor"),
@@ -544,6 +590,15 @@ def test_an_unpickled_descriptor_is_asked_its_fields(
     object.__setattr__(part(forged), field, value)
     with pytest.raises(BTClibTypeError, match=message):
         _ = forged.spending_paths
+
+
+def test_an_unpickled_miniscript_is_asked_its_derived_fields() -> None:
+    """A fragment changed under its cached type is refused, not read."""
+    built = parse_miniscript(f"and_v(v:pk({A}),older(5))")
+    node = pickle.loads(pickle.dumps(built))  # noqa: S301
+    object.__setattr__(node, "fragment", "and_b")
+    with pytest.raises(BTClibValueError, match="its build does not compute"):
+        _ = node.spending_paths
 
 
 def test_an_unpickled_miniscript_is_asked_its_nodes() -> None:

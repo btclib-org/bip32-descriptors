@@ -75,7 +75,7 @@ BIP379: https://github.com/bitcoin/bips/blob/master/bip-0379.md
 from __future__ import annotations
 
 import re
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -1477,7 +1477,9 @@ class Miniscript:
         counted twice, which `has_duplicate_keys` answers for.
 
         Refused for a node its own build refuses, as an unpickled one can
-        hold, as `Miniscript._assert_shape` says; for an expression `script`
+        hold, as `Miniscript._assert_shape` says, or one holding a type or
+        bounds its build does not compute, as `_assert_derived` says; for
+        an expression `script`
         refuses, one built by hand without a type; for a ``rawpkh()``,
         which names its key by its hash alone; and past this library's
         bound on the number of paths, or on the pairs of paths a
@@ -1485,6 +1487,7 @@ class Miniscript:
         multiply them.
         """
         _assert_shapes(self)
+        _assert_derived(self)
         if not self.is_valid:
             raise BTClibValueError(f"invalid miniscript: {self}")
 
@@ -4356,23 +4359,93 @@ def _paths_and(
     return list(paths)
 
 
-def _rests(path: SpendingPath) -> list[tuple[int, object]]:
-    """Return each quorum of one key of the path, with the rest of the path.
+def _rest_keys(path: SpendingPath) -> dict[tuple[object, int], int]:
+    """Return a key for each rest of the path, with the place of its quorum.
 
-    The quorum by its place, the rest as what compares equal for two paths
-    that wait for the same, reveal the same and ask the same other quorums.
-    Two paths that share a rest are one, the quorum of one being one of
-    either's keys: either set of keys signs alone, which is how Liana reads
-    ``or_i(pk(A),pk(B))``.
+    A rest is the path but one quorum of one key: what two paths have to
+    share to be one, that quorum taking either's keys, as either set of
+    keys signs alone, which is how Liana reads ``or_i(pk(A),pk(B))``.
+
+    The key is the path's locks and the sum of the hashes of the quorums
+    but that one, so that one pass over the quorums gives every rest's. A
+    sum is a hash and not the rest: `_same_rest` compares the two paths
+    whole where their keys match.
     """
-    locks = (path.older, path.after, frozenset(path.hashes))
-    rests: list[tuple[int, object]] = []
-    for index, quorum in enumerate(path.quorums):
-        if quorum.threshold == 1:
-            rest = Counter(path.quorums)
-            rest[quorum] -= 1
-            rests.append((index, (locks, frozenset((+rest).items()))))
-    return rests
+    locks = (path.older, path.after, path.hashes)
+    hashes = [hash(quorum) for quorum in path.quorums]
+    total = sum(hashes)
+    return {
+        (locks, total - digest): index
+        for index, (quorum, digest) in enumerate(zip(path.quorums, hashes, strict=True))
+        if quorum.threshold == 1
+    }
+
+
+def _same_rest(one: SpendingPath, mine: int, other: SpendingPath, theirs: int) -> bool:
+    """Answer whether two paths but a quorum each are the same conditions."""
+    if (one.older, one.after, one.hashes) != (other.older, other.after, other.hashes):
+        return False
+    rest = Counter(one.quorums)
+    rest[one.quorums[mine]] -= 1
+    others = Counter(other.quorums)
+    others[other.quorums[theirs]] -= 1
+    return +rest == +others
+
+
+class _Union:
+    """The paths of a disjunction as they merge, each by its place.
+
+    `owners` is which paths each rest key was seen in, so that a path
+    asks only those for a partner.
+    """
+
+    def __init__(self, order: _Order) -> None:
+        self.order = order
+        self.live: dict[int, SpendingPath] = {}
+        self.places: dict[SpendingPath, int] = {}
+        self.keys: dict[int, dict[tuple[object, int], int]] = {}
+        self.owners: dict[tuple[object, int], set[int]] = {}
+
+    def add(self, place: int, path: SpendingPath) -> None:
+        """Hold the path at its place, under each of its rest keys."""
+        self.live[place] = path
+        self.places[path] = place
+        self.keys[place] = _rest_keys(path)
+        for key in self.keys[place]:
+            self.owners.setdefault(key, set()).add(place)
+
+    def drop(self, place: int) -> None:
+        """Let go of the path at the place, and of its rest keys."""
+        del self.places[self.live.pop(place)]
+        for key in self.keys.pop(place):
+            self.owners[key].discard(place)
+
+    def merge(self, place: int) -> int | None:
+        """Merge the path at the place with the first sharing a rest.
+
+        Return the place of the merged path, to be asked again, or None
+        where the path shares no rest, or where the merged path is one
+        held already.
+        """
+        path = self.live[place]
+        for key, mine in self.keys[place].items():
+            for other in sorted(self.owners[key] - {place}):
+                theirs = self.keys[other][key]
+                owned = self.live[other]
+                if _same_rest(path, mine, owned, theirs):
+                    quorums = list(owned.quorums)
+                    joined = quorums[theirs].keys + path.quorums[mine].keys
+                    quorums[theirs] = self.order.quorum(1, list(dict.fromkeys(joined)))
+                    merged = self.order.path(
+                        quorums, owned.older, owned.after, owned.hashes
+                    )
+                    self.drop(place)
+                    self.drop(other)
+                    if merged in self.places:
+                        return None
+                    self.add(min(place, other), merged)
+                    return min(place, other)
+        return None
 
 
 def _paths_or(
@@ -4380,47 +4453,34 @@ def _paths_or(
 ) -> list[SpendingPath]:
     """Return the paths of a disjunction: either's, two sharing a rest as one.
 
-    `owners` is which path each rest was seen in. A merge changes the
-    rests of the path merged into, so an owner is asked again for the rest
-    before a path is merged into it.
+    A merge can make two paths share a rest that did not, so a merged path
+    is asked again, until no two paths share one. A path keeps the place
+    of the first of the paths it was merged from. Which two merge, where a
+    path could join either of two others, follows that order, and either
+    reading lists the same spends.
 
     The bound is on the paths that come out, a path both branches have
-    being one. Each branch is within it already, so the paths read are at
-    most twice the bound: that is the work.
-
-    Which paths merge follows the order they come in: a path whose
-    quorums of one could each join another path joins the first of them,
-    and either reading lists the same spends.
+    being one. Each branch is within it already, so at most twice the
+    bound are read. A path is asked once as it comes in and once more
+    for each merge, and a merge leaves one path fewer, so the paths asked
+    are at most twice those read. Asking a path reads its quorums once,
+    as `_rest_keys` says, and compares two paths whole only where their
+    keys match: the work is the paths asked times their quorums.
     """
-    paths: list[SpendingPath] = []
-    seen: set[SpendingPath] = set()
-    owners: dict[object, int] = {}
+    union = _Union(order)
+    work: deque[int] = deque()
     for path in (*first, *second):
-        if path in seen:
-            continue
-        seen.add(path)
-        for index, rest in _rests(path):
-            owner = owners.get(rest)
-            if owner is None:
-                continue
-            mine = {r: i for i, r in _rests(paths[owner])}.get(rest)
-            if mine is None:
-                continue
-            owned = paths[owner]
-            quorums = list(owned.quorums)
-            keys = quorums[mine].keys + path.quorums[index].keys
-            quorums[mine] = order.quorum(1, keys)
-            path = order.path(quorums, owned.older, owned.after, owned.hashes)  # noqa: PLW2901
-            paths[owner] = path
-            seen.add(path)
-            break
-        else:
-            owner = len(paths)
-            paths.append(path)
-            _assert_path_count(len(paths))
-        for _, rest in _rests(path):
-            owners.setdefault(rest, owner)
-    return paths
+        if path not in union.places:
+            work.append(len(work))
+            union.add(work[-1], path)
+    while work:
+        place = work.popleft()
+        if place in union.live:
+            merged = union.merge(place)
+            if merged is not None:
+                work.append(merged)
+    _assert_path_count(len(union.live))
+    return [union.live[place] for place in sorted(union.live)]
 
 
 def _is_key(paths: list[SpendingPath]) -> bool:
