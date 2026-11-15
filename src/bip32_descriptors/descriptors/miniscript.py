@@ -3142,6 +3142,11 @@ class _Decoder:
                 err_msg = f"the key answered for the hash160 {key_hash.hex()}"
                 err_msg += f" hashes to {hash160(sec).hex()}"
                 raise BTClibValueError(err_msg)
+            # checked here as a pushed key is, before the even-y lift
+            # prefixes a byte the caller never wrote and the refusal names it
+            if self.context == TAPSCRIPT and len(sec) != 32:
+                err_msg = f"not a {self.context} public key: {len(sec)} bytes"
+                raise BTClibValueError(err_msg)
             self.pos += 5
             key = _key_from_sec(sec, self.context)
             return Miniscript("pk_h", self.context, keys=(key,))
