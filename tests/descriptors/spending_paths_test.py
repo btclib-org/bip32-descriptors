@@ -527,7 +527,7 @@ def test_a_quorum_is_its_keys_in_whatever_order_named() -> None:
     assert {shape(path)[0] for path in paths} == {((2, "AB"),)}
 
 
-# the refusal of a conjunction whose pairs would read too much
+# the refusal of a call whose paths would read too much
 WORK = "more than 2000000 keys and hashes"
 
 
