@@ -26,11 +26,11 @@ before the repository was created, so every other block carries its
 command and no answer, and an id the commands need — a ruleset's, a
 run's — stands as a placeholder.
 Section 16's step after creation runs each read-back and writes what it
-printed under it, as `#` lines with the date; the answers about a
-release are read again once the first one is out. Section 11 makes such
-an answer documentation, with a reader as its check: nothing re-runs
-these commands, so an answer that differs later is a change made since
-the date beside it.
+printed in a fence of its own below it, with the date; the answers
+about a release are read again once the first one is out. Section 11
+makes such an answer documentation, with a reader as its check: nothing
+re-runs these commands, so an answer that differs later is a change
+made since the date beside it.
 
 ## Creating the repository
 
@@ -195,18 +195,21 @@ gh api repos/btclib-org/bip32-descriptors/branches/main/protection \
          force_pushes: .allow_force_pushes.enabled,
          deletions: .allow_deletions.enabled,
          conversation: .required_conversation_resolution.enabled}'
-# {"checks":[["test: every job passed",15368],
-#   ["docs / Build the documentation",15368],
-#   ["lint / Lint and type-check",15368],
-#   ["lint / Dependency review",15368],
-#   ["lint / Sign-off",15368],
-#   ["regtest / Regtest against Bitcoin Core",15368],
-#   ["sourcery / Sourcery",15368]],
-#  "conversation":true,"deletions":false,"enforce_admins":false,
-#  "force_pushes":false,"linear":true,
-#  "reviews":{"dismiss_stale_reviews":true,
-#   "required_approving_review_count":1},
-#  "strict":false}
+```
+
+```json
+{"checks":[["test: every job passed",15368],
+  ["docs / Build the documentation",15368],
+  ["lint / Lint and type-check",15368],
+  ["lint / Dependency review",15368],
+  ["lint / Sign-off",15368],
+  ["regtest / Regtest against Bitcoin Core",15368],
+  ["sourcery / Sourcery",15368]],
+ "conversation":true,"deletions":false,"enforce_admins":false,
+ "force_pushes":false,"linear":true,
+ "reviews":{"dismiss_stale_reviews":true,
+  "required_approving_review_count":1},
+ "strict":false}
 ```
 
 Read on 2026-11-05T07:18Z, after a `PATCH` of `required_status_checks`
@@ -372,19 +375,23 @@ gh api repos/<owner>/<repo>/git/tags/<sha> --jq .verification
 ## Merge methods
 
 **Squash is the only method GitHub can be asked for**, and auto-merge is
-off, so no pull request can be armed and the merge is explicit; the call
-is the one under *Creating the repository*. Read back:
+off, [for the reason section 11
+gives](https://github.com/btclib-org/.github#merge-method); the call is
+the one under *Creating the repository*. Read back:
 
 ```shell
 gh api repos/btclib-org/bip32-descriptors \
   --jq '{allow_squash_merge, allow_merge_commit, allow_rebase_merge,
          allow_auto_merge, squash_merge_commit_title,
          squash_merge_commit_message, delete_branch_on_merge}'
-# {"allow_auto_merge":false,"allow_merge_commit":false,
-#  "allow_rebase_merge":false,"allow_squash_merge":true,
-#  "delete_branch_on_merge":true,
-#  "squash_merge_commit_message":"COMMIT_MESSAGES",
-#  "squash_merge_commit_title":"COMMIT_OR_PR_TITLE"}
+```
+
+```json
+{"allow_auto_merge":false,"allow_merge_commit":false,
+ "allow_rebase_merge":false,"allow_squash_merge":true,
+ "delete_branch_on_merge":true,
+ "squash_merge_commit_message":"COMMIT_MESSAGES",
+ "squash_merge_commit_title":"COMMIT_OR_PR_TITLE"}
 ```
 
 Read on 2026-11-14T16:30Z.
