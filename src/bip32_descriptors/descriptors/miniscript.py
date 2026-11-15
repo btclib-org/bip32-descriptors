@@ -1489,25 +1489,13 @@ class Miniscript:
         which names its key by its hash alone; and past this library's
         bounds, which the refusal states: on the number of paths, which
         conjoined disjunctions multiply; on the pairs of paths a
-        conjunction joins; and on the keys and hashes those pairs read, a
-        path holding every quorum and hash conjoined into it. A
-        conjunction counts its pairs, and what they read, before it joins
-        the first, so one past either bound is refused before its work.
+        conjunction joins; and on the keys and hashes the whole call
+        reads, a path holding every quorum and hash conjoined into it.
+        Each conjunction counts its pairs and what they read, and each
+        disjunction the paths it reads, before reading them, so a call
+        past a bound is refused before that work.
         """
-        _assert_shapes(self)
-        _assert_derived(self)
-        if not self.is_valid:
-            raise BTClibValueError(f"invalid miniscript: {self}")
-
-        order = _Order(self)
-
-        def up(
-            _state: None, node: Miniscript, subs: list[list[SpendingPath]]
-        ) -> list[SpendingPath]:
-            return _computed_paths(node, subs, order)
-
-        paths: list[SpendingPath] = _tree_eval(self, None, lambda *_: None, up)
-        return tuple(paths)
+        return _miniscript_paths(self, _Work())
 
     @property
     def max_ops(self) -> int | None:
@@ -4213,11 +4201,15 @@ _MAX_SPENDING_PATHS = 1000
 # give rather than a thousand
 _MAX_PATH_PAIRS = 100_000
 
-# the most a conjunction's pairs read, each pair at most its two paths,
-# as `_path_size` counts one: the work the bound on the pairs does not
-# cap, since a path grows with every quorum and hash conjoined into it.
-# It lets as many pairs as the bound on the paths join two paths of a
-# thousand each, a multi_a() of its most keys being one
+# the most one call of `Miniscript.spending_paths` reads, or a tr()'s
+# leaves together, as `_Work` counts it: the work the bounds on the paths
+# and on the pairs do not cap, since a path grows with every quorum and
+# hash conjoined into it, and the same paths can be joined again and
+# again. The value is what one conjunction alone reads where as many
+# pairs as the bound on the paths join two paths of a thousand each, a
+# multi_a() of its most keys being one. In a call, the paths a
+# conjunction joins were first read by what made them, so a call
+# reaches the bound sooner than that conjunction alone would
 _MAX_PATH_WORK = 2_000_000
 
 
@@ -4277,6 +4269,45 @@ def _joined_after(first: int | None, second: int | None) -> tuple[bool, int | No
     return True, max(first, second)
 
 
+class _Work:
+    """What one call reads of its spending paths, against `_MAX_PATH_WORK`.
+
+    In `_path_size`'s units. A conjunction adds what its pairs read, and a
+    disjunction the paths it asks, each before reading them. A ``tr()``'s
+    leaves share one, so that the bound is on the call and not on a leaf.
+    """
+
+    def __init__(self) -> None:
+        self.read = 0
+
+    def add(self, size: int) -> None:
+        """Count what is about to be read, refusing past the bound."""
+        self.read += size
+        if self.read > _MAX_PATH_WORK:
+            err_msg = (
+                f"more than {_MAX_PATH_WORK} keys and hashes of spending paths to read"
+            )
+            raise BTClibValueError(err_msg)
+
+
+def _miniscript_paths(root: Miniscript, work: _Work) -> tuple[SpendingPath, ...]:
+    """Return `Miniscript.spending_paths`, counting what it reads in `work`."""
+    _assert_shapes(root)
+    _assert_derived(root)
+    if not root.is_valid:
+        raise BTClibValueError(f"invalid miniscript: {root}")
+
+    order = _Order(root, work)
+
+    def up(
+        _state: None, node: Miniscript, subs: list[list[SpendingPath]]
+    ) -> list[SpendingPath]:
+        return _computed_paths(node, subs, order)
+
+    paths: list[SpendingPath] = _tree_eval(root, None, lambda *_: None, up)
+    return tuple(paths)
+
+
 class _Order:
     """Where each key and each hash of an expression first stands.
 
@@ -4286,13 +4317,22 @@ class _Order:
     hashes in the order the expression first names them. Two ways to one
     path are then one path, which the bounds count once, and the form is
     already the order a caller reads.
+
+    `work` is what the call has read, which every conjunction and
+    disjunction of the expression adds to, and `kept` the paths the call
+    has made, each with its hash, by their id.
     """
 
-    def __init__(self, root: Miniscript) -> None:
+    def __init__(self, root: Miniscript, work: _Work) -> None:
+        self.work = work
+        self.kept: dict[int, _Keyed] = {}
         self.keys: dict[KeyExpression, int] = {}
         for index, key in enumerate(root.key_expressions):
             self.keys.setdefault(key, index)
         self.hashes: dict[tuple[str, bytes], int] = {}
+        self.locks: dict[
+            tuple[int | None, int | None, tuple[tuple[str, bytes], ...]], int
+        ] = {}
         # depth first, left to right, as `key_expressions` reads the tree
         stack = [root]
         while stack:
@@ -4300,6 +4340,29 @@ class _Order:
             if node.fragment in _HASH_OP_CODES:
                 self.hashes.setdefault((node.fragment, node.data), len(self.hashes))
             stack.extend(reversed(node.subs))
+
+    def lock(self, path: SpendingPath) -> int:
+        """Return a number for the path's locks, the same for the same locks.
+
+        So that a key holding them reads one number, not every hash again.
+        """
+        return self.locks.setdefault(
+            (path.older, path.after, path.hashes), len(self.locks)
+        )
+
+    def key(self, path: SpendingPath) -> _Keyed:
+        """Return the path with its hash, taken once in the call."""
+        keyed = self.kept.get(id(path))
+        return self.keep(_Keyed(path)) if keyed is None else keyed
+
+    def keep(self, keyed: _Keyed) -> _Keyed:
+        """Hold the path and its hash until the call ends.
+
+        Held, the path is the only one with its id for as long as the
+        hash is kept.
+        """
+        self.kept[id(keyed.path)] = keyed
+        return keyed
 
     def quorum(self, threshold: int, keys: Sequence[KeyExpression]) -> Quorum:
         """Return the quorum, its keys where the expression names them."""
@@ -4379,49 +4442,74 @@ def _paths_and(
     The bound on the paths is on those that come out: a pair no
     transaction can take is none, and the same path reached twice is one.
     The work is bounded apart, before the first pair is joined: the
-    pairs, by `_MAX_PATH_PAIRS`, and what they read, by `_MAX_PATH_WORK`.
-    A pair joins the locks, the quorums and the hashes of its two paths,
-    and hashes the path they give, no bigger than the two together: its
-    work is at most in proportion to their `_path_size` together. Each
-    path of one side is in a pair with each path of the other, so the
-    work of the pairs is at most in proportion to each side's sizes times
-    the other side's paths, which is what is bounded.
+    pairs, by `_MAX_PATH_PAIRS`, and what they read, added to the call's
+    `_Work`. A pair joins the locks, the quorums and the hashes of its two
+    paths, and hashes the path they give, no bigger than the two
+    together: its work is at most in proportion to their `_path_size`
+    together. Each path of one side is in a pair with each path of the
+    other, so the work of the pairs is at most in proportion to each
+    side's sizes times the other side's paths, which is what is added.
+    A side with no path makes no pair, and neither side is read.
     """
+    if not (first and second):
+        return []
     if len(first) * len(second) > _MAX_PATH_PAIRS:
         err_msg = f"more than {_MAX_PATH_PAIRS} pairs of spending paths to join"
         raise BTClibValueError(err_msg)
-    work = len(second) * sum(map(_path_size, first))
-    work += len(first) * sum(map(_path_size, second))
-    if work > _MAX_PATH_WORK:
-        err_msg = (
-            f"more than {_MAX_PATH_WORK} keys and hashes of spending paths to join"
-        )
-        raise BTClibValueError(err_msg)
+    order.work.add(
+        len(second) * sum(map(_path_size, first))
+        + len(first) * sum(map(_path_size, second))
+    )
     # a dict for its order and its keys: the same path reached twice is
     # one path
-    paths: dict[SpendingPath, None] = {}
+    paths: dict[_Keyed, None] = {}
     for one in first:
         for other in second:
             path = _path_and(one, other, order)
             if path is not None:
-                paths[path] = None
+                paths[_Keyed(path)] = None
                 _assert_path_count(len(paths))
-    return list(paths)
+    return [order.keep(keyed).path for keyed in paths]
 
 
-def _rest_keys(path: SpendingPath) -> dict[tuple[object, int], int]:
+class _Keyed:
+    """A path as a key of a dict, with its hash taken once.
+
+    A path keeps no hash of its own: what it compares holds a key's
+    origin, whose steps are a list a caller can change once the call has
+    returned the path. Each path is hashed once, as it is first wrapped,
+    and `_Order.keep` holds the paths handed on until the expression's
+    paths are made, when the `_Order` goes with their hashes.
+    """
+
+    __slots__ = ("digest", "path")
+
+    def __init__(self, path: SpendingPath) -> None:
+        self.path = path
+        self.digest = hash(path)
+
+    @override
+    def __hash__(self) -> int:
+        return self.digest
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _Keyed) and self.path == other.path
+
+
+def _rest_keys(path: SpendingPath, locks: int) -> dict[tuple[int, int], int]:
     """Return a key for each rest of the path, with the place of its quorum.
 
     A rest is the path but one quorum of one key: what two paths have to
     share to be one, that quorum taking either's keys, as either set of
     keys signs alone, which is how Liana reads ``or_i(pk(A),pk(B))``.
 
-    The key is the path's locks and the sum of the hashes of the quorums
-    but that one, so that one pass over the quorums gives every rest's. A
-    sum is a hash and not the rest: `_same_rest` compares the quorums of
-    two paths whose keys match, the locks being in the key.
+    The key is the number `_Order.lock` gives the path's locks, and the
+    sum of the hashes of the quorums but that one, so that one pass over
+    the quorums gives every rest's. A sum is a hash and not the rest:
+    `_same_rest` compares the quorums of two paths whose keys match, the
+    locks being in the key.
     """
-    locks = (path.older, path.after, path.hashes)
     hashes = [hash(quorum) for quorum in path.quorums]
     total = sum(hashes)
     return {
@@ -4449,16 +4537,16 @@ class _Union:
 
     def __init__(self, order: _Order) -> None:
         self.order = order
-        self.live: dict[int, SpendingPath] = {}
-        self.places: dict[SpendingPath, int] = {}
-        self.keys: dict[int, dict[tuple[object, int], int]] = {}
-        self.owners: dict[tuple[object, int], set[int]] = {}
+        self.live: dict[int, _Keyed] = {}
+        self.places: dict[_Keyed, int] = {}
+        self.keys: dict[int, dict[tuple[int, int], int]] = {}
+        self.owners: dict[tuple[int, int], set[int]] = {}
 
-    def add(self, place: int, path: SpendingPath) -> None:
+    def add(self, place: int, keyed: _Keyed) -> None:
         """Hold the path at its place, under each of its rest keys."""
-        self.live[place] = path
-        self.places[path] = place
-        self.keys[place] = _rest_keys(path)
+        self.live[place] = self.order.keep(keyed)
+        self.places[keyed] = place
+        self.keys[place] = _rest_keys(keyed.path, self.order.lock(keyed.path))
         for key in self.keys[place]:
             self.owners.setdefault(key, set()).add(place)
 
@@ -4475,18 +4563,20 @@ class _Union:
         where the path shares no rest, or where the merged path is one
         held already.
         """
-        path = self.live[place]
+        path = self.live[place].path
         for key, mine in self.keys[place].items():
             for other in sorted(self.owners[key] - {place}):
                 theirs = self.keys[other][key]
-                owned = self.live[other]
+                owned = self.live[other].path
                 if _same_rest(path, mine, owned, theirs):
                     quorums = list(owned.quorums)
                     joined = quorums[theirs].keys + path.quorums[mine].keys
                     quorums[theirs] = self.order.quorum(1, list(dict.fromkeys(joined)))
-                    merged = self.order.path(
-                        quorums, owned.older, owned.after, owned.hashes
+                    merged = _Keyed(
+                        self.order.path(quorums, owned.older, owned.after, owned.hashes)
                     )
+                    # asked again, as each path read was
+                    self.order.work.add(_path_size(merged.path))
                     self.drop(place)
                     self.drop(other)
                     if merged in self.places:
@@ -4514,14 +4604,18 @@ def _paths_or(
     are at most twice those read. Asking a path reads its quorums once,
     as `_rest_keys` says, and compares two paths whole only where their
     keys match: the work is the paths asked times their quorums, each
-    read by its keys, as big as `_key_size` says.
+    read by its keys, as big as `_key_size` says. Each path is added to
+    the call's `_Work` before it is asked: those read as they come in,
+    and each merged path as it is made.
     """
+    order.work.add(sum(map(_path_size, first)) + sum(map(_path_size, second)))
     union = _Union(order)
     work: deque[int] = deque()
     for path in (*first, *second):
-        if path not in union.places:
+        keyed = order.key(path)
+        if keyed not in union.places:
             work.append(len(work))
-            union.add(work[-1], path)
+            union.add(work[-1], keyed)
     while work:
         place = work.popleft()
         if place in union.live:
@@ -4529,7 +4623,7 @@ def _paths_or(
             if merged is not None:
                 work.append(merged)
     _assert_path_count(len(union.live))
-    return [union.live[place] for place in sorted(union.live)]
+    return [union.live[place].path for place in sorted(union.live)]
 
 
 def _is_key(paths: list[SpendingPath]) -> bool:

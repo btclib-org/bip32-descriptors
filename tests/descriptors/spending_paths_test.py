@@ -25,6 +25,7 @@ from btclib.alias import Octets
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.hashes import hash160, hash256, ripemd160, sha256
 from btclib.key import PrvKeyData
+from typing_extensions import override
 
 from bip32_descriptors.bip32 import rootxprv_from_seed, xpub_from_xprv
 from bip32_descriptors.descriptors import (
@@ -424,9 +425,7 @@ def test_the_work_of_a_disjunction_is_its_paths_times_their_quorums(
 
     Paths of a hundred quorums of one key each, or a key: reading each
     rest whole hashes the square of a path's quorums, where one pass
-    hashes their number. Where an interpreter keeps no tuple's hash, as
-    3.11 does not, every hash of a path hashes its quorums again, so the
-    bound leaves room for that and stays far below the square.
+    hashes their number.
     """
     keys = [PrvKeyData(i).pub.sec.hex()[2:] for i in range(1, 202)]
     conjunction = f"or_i(pk({keys[198]}),pk({keys[199]}))"
@@ -448,7 +447,67 @@ def test_the_work_of_a_disjunction_is_its_paths_times_their_quorums(
     monkeypatch.setattr(Quorum, "__hash__", counted)
     paths = node.spending_paths
     assert {len(path.quorums) for path in paths} == {100, 1}
-    assert hashed[0] <= 8 * len(paths) * 100
+    assert hashed[0] <= 4 * len(paths) * 100
+
+
+class _CountedDigest(bytes):
+    """A digest that counts how often it is hashed."""
+
+    hashed = 0
+
+    @override
+    def __hash__(self) -> int:
+        _CountedDigest.hashed += 1
+        return bytes.__hash__(self)
+
+
+def test_a_path_s_locks_are_read_once_for_all_its_rests() -> None:
+    """A rest's key holds a number for the path's locks, not its hashes.
+
+    A path of fifty quorums of one of two keys and fifty hashes, under
+    fifty disjunctions with a lock alone. Where no hash of a tuple is
+    cached, a key holding the path's hashes would read each of them again
+    for every quorum of one key.
+    """
+    count = 50
+    keys = [PrvKeyData(i).pub.sec.hex()[2:] for i in range(1, 2 * count + 1)]
+    expression = f"sha256({sha256(b'0').hex()})"
+    for i in range(1, count):
+        expression = f"and_v(v:sha256({sha256(bytes([i])).hex()}),{expression})"
+    for i in range(count):
+        either = f"or_i(pk({keys[2 * i]}),pk({keys[2 * i + 1]}))"
+        expression = f"and_v(v:{either},{expression})"
+    for _ in range(count):
+        expression = f"or_i(older(1),{expression})"
+    node = parse_miniscript(expression, TAPSCRIPT)
+    stack = [node]
+    while stack:
+        sub = stack.pop()
+        if sub.fragment == "sha256":
+            object.__setattr__(sub, "data", _CountedDigest(sub.data))
+        stack.extend(sub.subs)
+    _CountedDigest.hashed = 0
+    assert len(node.spending_paths) == 2
+    assert _CountedDigest.hashed <= 8 * count * count
+
+
+def test_a_path_hashes_its_keys_as_they_are_now() -> None:
+    """A path keeps no hash of its own, which a key's origin could outgrow.
+
+    The steps of a key's origin are a list, which a caller can change in
+    place once the call has returned the path.
+    """
+    expression = f"and_v(v:pk([deadbeef/0]{A}),older(5))"
+    [path] = parse_miniscript(expression).spending_paths
+    origin = path.quorums[0].keys[0].origin
+    assert origin is not None
+    assert isinstance(origin.der_path, list)
+    origin.der_path[0] = 1
+    origin.assert_valid()
+    [fresh] = parse_miniscript(expression.replace("/0]", "/1]")).spending_paths
+    assert path == fresh
+    fields = (path.quorums, path.older, path.after, path.hashes, path.leaf)
+    assert hash(path) == hash(fields)
 
 
 def _preimage_thresh(threshold: int, count: int, salt: int) -> str:
@@ -492,7 +551,7 @@ def test_a_quorum_is_its_keys_in_whatever_order_named() -> None:
     assert {shape(path)[0] for path in paths} == {((2, "AB"),)}
 
 
-# the refusal of a conjunction whose pairs would read too much
+# the refusal of a call whose paths would read too much
 WORK = "more than 2000000 keys and hashes"
 
 
@@ -562,10 +621,11 @@ def test_a_key_is_as_big_as_what_its_hash_reads(spelling: int) -> None:
     its origin each time, and reads its path and its participants each
     time too where no hash of a tuple is cached. The pairs are those of
     the edge of `test_the_bounds_of_a_conjunction`, one key in place of
-    its quorums: thirteen parts are within the bound, fourteen past it.
+    its quorums' twelve: twelve parts are within the bound, thirteen past
+    it.
     """
     seconds = _any_older(4194305, 126)
-    for size, refused in ((13, False), (14, True)):
+    for size, refused in ((12, False), (13, True)):
         key = _key_of_size(size, spelling)
         blocks = f"and_v(v:{_preimage_thresh(5, 12, 8)},and_v(v:pk({key}),older(10)))"
         node = parse_miniscript(f"and_v(v:{blocks},{seconds})", TAPSCRIPT)
@@ -603,6 +663,104 @@ def test_the_work_of_a_conjunction_is_its_pairs_times_their_paths(
     with pytest.raises(BTClibValueError, match=WORK):
         _ = node.spending_paths
     assert read[0] < 792 * 126
+
+
+def _joined(paths: str, links: int) -> str:
+    """Return the paths joined `links` times in turn with 126 older().
+
+    Which give the paths again where theirs is an older() of 126 or more.
+    """
+    for _ in range(links):
+        paths = f"and_v(v:{paths},{_any_older(1, 126)})"
+    return paths
+
+
+def test_a_side_of_no_path_is_not_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A conjunction with a side of no path reads neither side.
+
+    thresh(50) of a hundred branches, the last a choice of preimages beside
+    five quorums of one of two keys: read first, its paths are joined with
+    each count no branch has reached yet, none of them a path. The keys
+    the call reads are no more than its work counts.
+    """
+    keys = [PrvKeyData(i).pub.sec.hex()[2:] for i in range(1, 11)]
+    branch = _preimage_thresh(5, 12, 9)
+    for i in range(5):
+        branch = f"and_b({branch},a:or_i(pk({keys[2 * i]}),pk({keys[2 * i + 1]})))"
+    digests = [sha256(i.to_bytes(4, "big")).hex() for i in range(99)]
+    rest = ",".join(f"a:sha256({digest})" for digest in digests[1:])
+    node = parse_miniscript(
+        f"thresh(50,sha256({digests[0]}),{rest},a:{branch})", TAPSCRIPT
+    )
+    read = [0]
+    key_size = miniscript._key_size
+    works: list[miniscript._Work] = []
+
+    def counted(key: KeyExpression) -> int:
+        read[0] += 1
+        return key_size(key)
+
+    class Kept(miniscript._Work):
+        def __init__(self) -> None:
+            super().__init__()
+            works.append(self)
+
+    monkeypatch.setattr(miniscript, "_key_size", counted)
+    monkeypatch.setattr(miniscript, "_Work", Kept)
+    with pytest.raises(BTClibValueError, match="more than 1000 spending paths"):
+        _ = node.spending_paths
+    [work] = works
+    assert read[0] <= work.read
+
+
+@pytest.mark.parametrize("quorums", [0, 6])
+def test_the_work_of_a_call_is_bounded_however_often_its_paths_are_joined(
+    monkeypatch: pytest.MonkeyPatch, quorums: int
+) -> None:
+    """The same paths joined again and again add up to one bound.
+
+    Issue btclib-org/bip32-descriptors#367: the choices of five of twelve
+    preimages, with no quorum or with six, joined forty times in turn
+    with lock times that give the same paths again. Each conjunction is
+    within every bound of its own. The call is refused once they add up
+    past the bound, having joined at most half as many pairs, each pair
+    reading two paths at least.
+    """
+    paths = f"and_v(v:{_preimage_thresh(5, 12, 11)},{_either_key(quorums, 1000)})"
+    node = parse_miniscript(_joined(paths, 40), TAPSCRIPT)
+    joined = [0]
+    path_and = miniscript._path_and
+
+    def counted(*args: Any) -> SpendingPath | None:
+        joined[0] += 1
+        return path_and(*args)
+
+    monkeypatch.setattr(miniscript, "_path_and", counted)
+    with pytest.raises(BTClibValueError, match=WORK):
+        _ = node.spending_paths
+    assert joined[0] <= 2000000 // 2
+
+
+def test_the_leaves_of_a_tr_share_the_bound_on_the_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two leaves each within the bound are past it together.
+
+    A leaf of a tr() is sane, and the shapes above are not, so the bound
+    is set to what one leaf reads.
+    """
+    leaves = [
+        f"or_d(pk({one[2:]}),and_v(v:pk({other[2:]}),older(144)))"
+        for one, other in ((B, C), (D, E))
+    ]
+    work = miniscript._Work()
+    _ = miniscript._miniscript_paths(parse_miniscript(leaves[0], TAPSCRIPT), work)
+    monkeypatch.setattr(miniscript, "_MAX_PATH_WORK", work.read)
+    for leaf in leaves:
+        assert len(parse(f"tr({A[2:]},{leaf})").spending_paths) == 3
+    descriptor = parse(f"tr({A[2:]},{{{leaves[0]},{leaves[1]}}})")
+    with pytest.raises(BTClibValueError, match=f"more than {work.read} keys"):
+        _ = descriptor.spending_paths
 
 
 # (descriptor, its paths): the fragments that are not a miniscript
