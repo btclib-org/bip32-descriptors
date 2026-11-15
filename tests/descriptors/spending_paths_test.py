@@ -510,6 +510,45 @@ def test_the_bounds_of_a_conjunction() -> None:
             assert node.spending_paths == ()
 
 
+def _key_of_size(size: int, spelling: int) -> str:
+    """Return a KEY expression whose hash reads `size` parts, spelled four ways.
+
+    A ``musig()`` of its participants, a key with the steps of its origin,
+    an xpub with the steps of its path, and a ``musig()`` whose first
+    participant has an origin.
+    """
+    secs = [PrvKeyData(i).pub.sec.hex() for i in range(1, size)]
+    steps = "/0" * (size - 1)
+    return [
+        f"musig({','.join(secs)})",
+        f"[deadbeef{steps}]{secs[0][2:]}",
+        f"{XPUB}{steps}",
+        f"musig([deadbeef{'/0' * (size - 3)}]{secs[0]},{secs[1]})",
+    ][spelling]
+
+
+@pytest.mark.parametrize("spelling", range(4))
+def test_a_key_is_as_big_as_what_its_hash_reads(spelling: int) -> None:
+    """A key counts each participant and each step of its origin and path.
+
+    Ordering and joining paths hashes their keys, and where no hash of a
+    tuple is cached the hash reads each of them every time. The pairs are
+    those of the edge of `test_the_bounds_of_a_conjunction`, one key in
+    place of its quorums: thirteen parts are within the bound, fourteen
+    past it.
+    """
+    seconds = _any_older(4194305, 126)
+    for size, refused in ((13, False), (14, True)):
+        key = _key_of_size(size, spelling)
+        blocks = f"and_v(v:{_preimage_thresh(5, 12, 8)},and_v(v:pk({key}),older(10)))"
+        node = parse_miniscript(f"and_v(v:{blocks},{seconds})", TAPSCRIPT)
+        if refused:
+            with pytest.raises(BTClibValueError, match=WORK):
+                _ = node.spending_paths
+        else:
+            assert node.spending_paths == ()
+
+
 def test_the_work_of_a_conjunction_is_its_pairs_times_their_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

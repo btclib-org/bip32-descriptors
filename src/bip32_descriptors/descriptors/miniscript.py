@@ -4345,12 +4345,25 @@ def _path_and(
     return order.path(quorums, older, after, first.hashes + second.hashes)
 
 
+def _key_size(key: KeyExpression) -> int:
+    """Return what hashing the key reads: itself, its paths, its participants.
+
+    A key's hash reads the steps of its origin and of its path, and each
+    participant of a ``musig()`` whole, every time: an interpreter that
+    caches no hash of a tuple reads them all again.
+    """
+    steps = len(key.der_path) + (0 if key.origin is None else len(key.origin))
+    return 1 + steps + sum(map(_key_size, key.participants))
+
+
 def _path_size(path: SpendingPath) -> int:
     """Return what joining the path reads: its keys, its hashes, and itself.
 
-    A quorum is read by its keys, which order it, check it and hash it.
+    A quorum is read by its keys, which order it, check it and hash it,
+    each as big as `_key_size` says.
     """
-    return 1 + len(path.hashes) + sum(len(quorum.keys) for quorum in path.quorums)
+    keys = sum(_key_size(key) for quorum in path.quorums for key in quorum.keys)
+    return 1 + len(path.hashes) + keys
 
 
 def _paths_and(
@@ -4495,7 +4508,8 @@ def _paths_or(
     for each merge, and a merge leaves one path fewer, so the paths asked
     are at most twice those read. Asking a path reads its quorums once,
     as `_rest_keys` says, and compares two paths whole only where their
-    keys match: the work is the paths asked times their quorums.
+    keys match: the work is the paths asked times their quorums, each
+    read by its keys, as big as `_key_size` says.
     """
     union = _Union(order)
     work: deque[int] = deque()
