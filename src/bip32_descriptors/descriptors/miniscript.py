@@ -4618,8 +4618,8 @@ def _paths_or(
     the call's `_Work` before it is asked: those read as they come in,
     and each merged path as it is made.
 
-    A key keeps more than one place of a path where two of its quorums
-    of one key have one hash. Each pair of places past the first is
+    A rest key keeps more than one place of a path where two of its
+    one-of quorums have one hash. Each pair of places past the first is
     added too, as `_Union.merge` says.
     """
     order.work.add(sum(map(_path_size, first)) + sum(map(_path_size, second)))
