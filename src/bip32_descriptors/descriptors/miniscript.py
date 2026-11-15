@@ -79,7 +79,7 @@ from collections import Counter, deque
 from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from itertools import accumulate
+from itertools import accumulate, product
 from typing import SupportsIndex, TypeVar
 
 from btclib.alias import Octets, ScriptList
@@ -4497,8 +4497,8 @@ class _Keyed:
         return isinstance(other, _Keyed) and self.path == other.path
 
 
-def _rest_keys(path: SpendingPath, locks: int) -> dict[tuple[int, int], int]:
-    """Return a key for each rest of the path, with the place of its quorum.
+def _rest_keys(path: SpendingPath, locks: int) -> dict[tuple[int, int], list[int]]:
+    """Return a key for each rest of the path, with the places of its quorums.
 
     A rest is the path but one quorum of one key: what two paths have to
     share to be one, that quorum taking either's keys, as either set of
@@ -4508,15 +4508,16 @@ def _rest_keys(path: SpendingPath, locks: int) -> dict[tuple[int, int], int]:
     sum of the hashes of the quorums but that one, so that one pass over
     the quorums gives every rest's. A sum is a hash and not the rest:
     `_same_rest` compares the quorums of two paths whose keys match, the
-    locks being in the key.
+    locks being in the key. Two quorums of one hash leave rests of one
+    key, which keeps the place of each, for `_Union.merge` to try.
     """
     hashes = [hash(quorum) for quorum in path.quorums]
     total = sum(hashes)
-    return {
-        (locks, total - digest): index
-        for index, (quorum, digest) in enumerate(zip(path.quorums, hashes, strict=True))
-        if quorum.threshold == 1
-    }
+    keys: dict[tuple[int, int], list[int]] = {}
+    for index, (quorum, digest) in enumerate(zip(path.quorums, hashes, strict=True)):
+        if quorum.threshold == 1:
+            keys.setdefault((locks, total - digest), []).append(index)
+    return keys
 
 
 def _same_rest(one: SpendingPath, mine: int, other: SpendingPath, theirs: int) -> bool:
@@ -4539,7 +4540,7 @@ class _Union:
         self.order = order
         self.live: dict[int, _Keyed] = {}
         self.places: dict[_Keyed, int] = {}
-        self.keys: dict[int, dict[tuple[int, int], int]] = {}
+        self.keys: dict[int, dict[tuple[int, int], list[int]]] = {}
         self.owners: dict[tuple[int, int], set[int]] = {}
 
     def add(self, place: int, keyed: _Keyed) -> None:
@@ -4562,13 +4563,22 @@ class _Union:
         Return the place of the merged path, to be asked again, or None
         where the path shares no rest, or where the merged path is one
         held already.
+
+        The path is tried at each place the key keeps of it, against each
+        place the key keeps of the other path. Each pair past the first
+        compares the two paths whole again, and is added to the call's
+        `_Work` before it is compared.
         """
         path = self.live[place].path
-        for key, mine in self.keys[place].items():
+        for key, places in self.keys[place].items():
             for other in sorted(self.owners[key] - {place}):
-                theirs = self.keys[other][key]
                 owned = self.live[other].path
-                if _same_rest(path, mine, owned, theirs):
+                pairs = product(places, self.keys[other][key])
+                for tried, (mine, theirs) in enumerate(pairs):
+                    if tried:
+                        self.order.work.add(_path_size(path) + _path_size(owned))
+                    if not _same_rest(path, mine, owned, theirs):
+                        continue
                     quorums = list(owned.quorums)
                     joined = quorums[theirs].keys + path.quorums[mine].keys
                     quorums[theirs] = self.order.quorum(1, list(dict.fromkeys(joined)))
@@ -4607,6 +4617,10 @@ def _paths_or(
     read by its keys, as big as `_key_size` says. Each path is added to
     the call's `_Work` before it is asked: those read as they come in,
     and each merged path as it is made.
+
+    A rest key keeps more than one place of a path where two of its
+    one-of quorums have one hash. Each pair of places past the first is
+    added too, as `_Union.merge` says.
     """
     order.work.add(sum(map(_path_size, first)) + sum(map(_path_size, second)))
     union = _Union(order)
