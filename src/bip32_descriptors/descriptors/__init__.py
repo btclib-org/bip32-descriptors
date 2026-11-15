@@ -24,6 +24,11 @@ descriptor one -- while `key_expression` is not: `KeyExpression`,
 a parsed descriptor. So are `miniscript`'s `Preimages`, and its
 `Quorum` and `SpendingPath`, which `Descriptor.spending_paths` answers in,
 for the same reason.
+
+A forged object, in the docstrings of these modules, is one a field of
+which `object.__setattr__` set after its build: CONTRIBUTING.md's *The
+public surface* puts it outside what a public function validates. Some
+readers ask such a field again, as their docstrings say.
 """
 
 from bip32_descriptors.descriptors import miniscript

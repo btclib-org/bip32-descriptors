@@ -846,7 +846,7 @@ def test_a_rawtr_nobody_can_sign_for_has_no_path(key: str) -> None:
     assert parse(f"rawtr({key})").spending_paths == ()
 
 
-# each: a descriptor, the field of it or of a part of it an unpickled one
+# each: a descriptor, the field of it or of a part of it a forged one
 # holds, the value, and the refusal's field
 FORGED: list[tuple[str, Callable[[Any], Any], str, object, str]] = [
     (f"tr({A[2:]})", lambda d: d, "internal_key", "garbage", "internal key"),
@@ -873,7 +873,7 @@ def test_an_unpickled_descriptor_is_asked_its_fields(
     value: object,
     message: str,
 ) -> None:
-    """Unpickling skips the build, so the paths ask its fields again."""
+    """`object.__setattr__` skips the build, so the paths ask again."""
     forged = pickle.loads(pickle.dumps(parse(descriptor)))  # noqa: S301
     object.__setattr__(part(forged), field, value)
     with pytest.raises(BTClibTypeError, match=message):
