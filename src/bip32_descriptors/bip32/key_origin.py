@@ -46,13 +46,14 @@ class BIP32KeyOrigin:
     """Where a key comes from: master fingerprint and derivation path.
 
     What BIP174's bip32_derivs and a descriptor's [fingerprint/path]
-    prefix carry; the path is held as indexes, hardened ones offset
-    by 0x80000000. The wire form is serialize and parse, the bracketed
-    text form description and from_description.
+    prefix carry; the path is held as a tuple of indexes, hardened ones
+    offset by 0x80000000, so that it cannot change once hashed. The wire
+    form is serialize and parse, the bracketed text form description and
+    from_description.
     """
 
     master_fingerprint: bytes
-    der_path: Sequence[int]
+    der_path: tuple[int, ...]
 
     @property
     def description(self) -> str:
@@ -69,7 +70,7 @@ class BIP32KeyOrigin:
         object.__setattr__(
             self, "master_fingerprint", bytes_from_octets(master_fingerprint)
         )
-        object.__setattr__(self, "der_path", indexes_from_der_path(der_path))
+        object.__setattr__(self, "der_path", tuple(indexes_from_der_path(der_path)))
 
         if check_validity:
             self.assert_valid()
@@ -77,7 +78,7 @@ class BIP32KeyOrigin:
     def __setstate__(self, state: object) -> None:
         """Refuse a pickle whose fields the build would not store as they are.
 
-        The fields are the bytes and the list of indexes `__init__`
+        The fields are the bytes and the tuple of indexes `__init__`
         stores, and are built again as `__init__` builds them with
         `check_validity=False`: a value it refuses is refused, and one
         `assert_valid` refuses is taken, as that build takes it. A second
@@ -94,7 +95,7 @@ class BIP32KeyOrigin:
         if vars(self):
             raise BTClibValueError("invalid pickle state: an object restored already")
         assert_type(state["master_fingerprint"], bytes, "master_fingerprint")
-        assert_type(state["der_path"], list, "der_path")
+        assert_type(state["der_path"], tuple, "der_path")
         self.__init__(  # type: ignore[misc]
             state["master_fingerprint"], state["der_path"], check_validity=False
         )
@@ -107,11 +108,10 @@ class BIP32KeyOrigin:
 
         Btclib bounds a BIP32 path at 255 indexes; each serialized index
         occupies 4 bytes. The types `__init__` stores are asked first,
-        each index among them, as the list can change in place after the
-        build; a refusal of a type names it alone.
+        each index among them; a refusal of a type names it alone.
         """
         assert_type(self.master_fingerprint, bytes, "master_fingerprint")
-        assert_type(self.der_path, list, "der_path")
+        assert_type(self.der_path, tuple, "der_path")
         for index in self.der_path:
             if not is_integer(index):
                 err_msg = f"invalid der_path element type: {type(index).__name__}"

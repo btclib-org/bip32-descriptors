@@ -18,7 +18,7 @@ from __future__ import annotations
 import itertools
 import pickle
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from btclib.alias import Octets
@@ -491,21 +491,24 @@ def test_a_path_s_locks_are_read_once_for_all_its_rests() -> None:
     assert _CountedDigest.hashed <= 8 * count * count
 
 
-def test_a_path_hashes_its_keys_as_they_are_now() -> None:
-    """A path keeps no hash of its own, which a key's origin could outgrow.
+def test_a_hashed_path_and_a_fresh_equal_one_are_one_member_of_a_set() -> None:
+    """A path keeps no hash of its own, and its keys' hashes cannot go stale.
 
-    The steps of a key's origin are a list, which a caller can change in
-    place once the call has returned the path.
+    The steps of a key's origin are a tuple, so a caller cannot change
+    them in place once the path is hashed, as a set hashes it. Issue
+    btclib-org/bip32-descriptors#378.
     """
     expression = f"and_v(v:pk([deadbeef/0]{A}),older(5))"
     [path] = parse_miniscript(expression).spending_paths
+    paths = {path}
     origin = path.quorums[0].keys[0].origin
     assert origin is not None
-    assert isinstance(origin.der_path, list)
-    origin.der_path[0] = 1
-    origin.assert_valid()
-    [fresh] = parse_miniscript(expression.replace("/0]", "/1]")).spending_paths
-    assert path == fresh
+    with pytest.raises(TypeError):
+        cast("list[int]", origin.der_path)[0] = 1
+    [fresh] = parse_miniscript(expression).spending_paths
+    assert fresh is not path
+    assert fresh in paths
+    assert len({*paths, fresh}) == 1
     fields = (path.quorums, path.older, path.after, path.hashes, path.leaf)
     assert hash(path) == hash(fields)
 

@@ -2067,9 +2067,9 @@ def test_an_uncompressed_x_only_key_is_refused_as_parse_refuses_it() -> None:
 
 
 def _origin_holding(index: object) -> BIP32KeyOrigin:
-    """Return an origin whose list of indexes was changed to hold `index`."""
+    """Return an origin whose first step `object.__setattr__` set to `index`."""
     origin = BIP32KeyOrigin("deadbeef", "m/1h/2")
-    cast("list[Any]", origin.der_path)[0] = index
+    object.__setattr__(origin, "der_path", (index, *origin.der_path[1:]))
     return origin
 
 
@@ -2097,8 +2097,8 @@ def test_a_key_is_refused_for_an_origin_parse_never_builds(
     """With the refusal of `BIP32KeyOrigin.assert_valid`, naming no index.
 
     One of another type, one of a fingerprint not of four bytes, and one
-    whose list of indexes was changed in place to hold no integer. The
-    control is the same key with an origin `parse` builds.
+    whose steps `object.__setattr__` set to hold no integer. The control
+    is the same key with an origin `parse` builds.
     """
     built = BIP32KeyOrigin("deadbeef", "m/1h/2")
     assert KeyExpression(origin=built, xkey=_RANGED_KEY.xkey).origin == built
