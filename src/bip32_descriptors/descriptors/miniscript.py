@@ -1489,7 +1489,23 @@ class Miniscript:
             return _computed_paths(node, subs)
 
         paths: list[SpendingPath] = _tree_eval(self, None, lambda *_: None, up)
-        return tuple(paths)
+        place: dict[KeyExpression, int] = {}
+        for index, key in enumerate(self.key_expressions):
+            place.setdefault(key, index)
+        ordered = (
+            replace(
+                path,
+                quorums=tuple(
+                    Quorum(
+                        quorum.threshold,
+                        tuple(sorted(quorum.keys, key=place.__getitem__)),
+                    )
+                    for quorum in path.quorums
+                ),
+            )
+            for path in paths
+        )
+        return tuple(dict.fromkeys(ordered))
 
     @property
     def max_ops(self) -> int | None:
@@ -4298,8 +4314,10 @@ def _paths_or(
     `owners` is which path each rest was seen in. A merge changes the
     rests of the path merged into, so an owner is asked again for the rest
     before a path is merged into it.
+
+    The bound is on the paths that come out, a path both branches have
+    being one: each branch is within it already, so the work is too.
     """
-    _assert_path_count(len(first) + len(second))
     paths: list[SpendingPath] = []
     seen: set[SpendingPath] = set()
     owners: dict[object, int] = {}
@@ -4325,6 +4343,7 @@ def _paths_or(
             paths.append(path)
         for _, rest in _rests(path):
             owners.setdefault(rest, owner)
+    _assert_path_count(len(paths))
     return paths
 
 

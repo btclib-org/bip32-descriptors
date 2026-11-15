@@ -178,6 +178,9 @@ SHAPES = [
             (((1, "AB"), (1, "F")), None, None, ()),
         ],
     ),
+    # a thresh() of a key and a multisig needing both is one quorum, its keys
+    # in the order the expression names them
+    (f"thresh(2,pk({A}),a:multi(2,{B},{C}))", [(((3, "ABC"),), None, None, ())]),
     # a thresh() branch with no path is no key, and adds none
     (f"thresh(1,pk({A}),a:0)", [(((1, "A"),), None, None, ())]),
     # the sugar for or_i() with a 0, and for and_v() with a 1
@@ -334,6 +337,12 @@ def _thresh_of_preimages(threshold: int, count: int) -> Miniscript:
 def test_the_bound_on_the_paths() -> None:
     """Five of fifteen preimages are too many choices to list; of twelve not."""
     assert len(_thresh_of_preimages(5, 12).spending_paths) == 792
+    # the bound is on the paths a disjunction has, a path of both branches
+    # being one
+    twice = parse_miniscript(
+        f"or_i({_thresh_of_preimages(5, 12)},{_thresh_of_preimages(5, 12)})"
+    )
+    assert len(twice.spending_paths) == 792
     with pytest.raises(BTClibValueError, match="more than 1000 spending paths"):
         _ = _thresh_of_preimages(5, 15).spending_paths
 
@@ -342,8 +351,7 @@ def test_a_choice_that_can_no_longer_complete_counts_toward_no_bound() -> None:
     """All of thirteen branches is one path, though fewer of them are many.
 
     Five of thirteen branches can be chosen in more ways than the bound
-    allows, and a reading that kept such choices until the last branch
-    refused this thresh() before reaching its one path.
+    allows, and none of those choices can still reach the threshold.
     """
     keys = [PrvKeyData(i).pub.sec.hex() for i in range(1, 40)]
     multis = [f"multi(2,{','.join(keys[3 * b : 3 * b + 3])})" for b in range(13)]
