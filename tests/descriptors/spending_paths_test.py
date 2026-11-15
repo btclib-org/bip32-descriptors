@@ -895,6 +895,35 @@ def test_paths_whose_rest_keys_collide_are_compared_whole(
     ]
 
 
+def test_each_quorum_of_one_hash_in_a_path_is_tried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rest key keeps the place of each quorum of one hash in a path.
+
+    Issue btclib-org/bip32-descriptors#366. Every quorum hashing alike,
+    (AB | CD) and (CD | EF) each leave one rest key, and merge only where
+    AB is tried against EF, the second pair of places. That pair reads
+    both paths again, as the work counts.
+    """
+    branches = [
+        f"and_v(v:or_i(pk({A}),pk({B})),or_i(pk({C}),pk({D})))",
+        f"and_v(v:or_i(pk({C}),pk({D})),or_i(pk({E}),pk({F})))",
+    ]
+    both = sum(
+        miniscript._path_size(path)
+        for branch in branches
+        for path in parse_miniscript(branch).spending_paths
+    )
+    node = parse_miniscript(f"or_i({branches[0]},{branches[1]})")
+    work = miniscript._Work()
+    _ = miniscript._miniscript_paths(node, work)
+    monkeypatch.setattr(Quorum, "__hash__", lambda _: 0)
+    collided = miniscript._Work()
+    paths = miniscript._miniscript_paths(node, collided)
+    assert shapes(paths) == [(((1, "ABEF"), (1, "CD")), None, None, (), None)]
+    assert collided.read == work.read + both
+
+
 def test_a_merge_into_a_path_held_already_lists_it_once() -> None:
     """Two paths whose merge another merge gave first are that path.
 
