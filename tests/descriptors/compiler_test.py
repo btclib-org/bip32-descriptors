@@ -784,7 +784,8 @@ def test_a_policy_that_is_no_str_is_refused() -> None:
 def test_a_weight_past_the_cap_is_read_as_the_cap() -> None:
     """A weight past 65535 is read as 65535, as sipa reads it."""
     capped = compile_policy(f"or(65535@pk({_A}),pk({_B}))")
-    assert compile_policy(f"or(70000@pk({_A}),pk({_B}))") == capped
+    for weight in ("70000", "10000000000", "9" * 5000):
+        assert compile_policy(f"or({weight}@pk({_A}),pk({_B}))") == capped
 
 
 def test_the_answer_is_the_search_s_and_another_can_cost_less() -> None:

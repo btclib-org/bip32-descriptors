@@ -143,7 +143,7 @@ def _weighted(argument: str) -> tuple[int, str]:
     """Return the weight of an or() branch and the branch.
 
     sipa's ``ParseProb``: digits not starting with 0, then ``@``; a weight
-    past `_MAX_PROBABILITY` is read as that.
+    past `_MAX_PROBABILITY` is read as that, however many its digits.
     """
     at = argument.find("@")
     digits = argument[:at] if at > 0 else ""
@@ -151,8 +151,11 @@ def _weighted(argument: str) -> tuple[int, str]:
         return 1, argument
     if digits[0] == "0":
         raise BTClibValueError("invalid or() weight: it starts with 0")
-    weight = _int_from_digits(digits, "or() weight")
-    return min(weight, _MAX_PROBABILITY), argument[at + 1 :]
+    # sipa caps the weight digit by digit; more digits than the cap's are
+    # past it, and are not handed to int()
+    if len(digits) > len(str(_MAX_PROBABILITY)):
+        return _MAX_PROBABILITY, argument[at + 1 :]
+    return min(int(digits), _MAX_PROBABILITY), argument[at + 1 :]
 
 
 def _parse(text: str) -> _Policy:
