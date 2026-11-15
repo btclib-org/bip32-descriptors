@@ -431,7 +431,7 @@ def _preimage_thresh(threshold: int, count: int, salt: int) -> str:
     return f"thresh({threshold},sha256({digests[0]}),{rest})"
 
 
-def test_a_pair_no_transaction_takes_counts_toward_no_bound() -> None:
+def test_a_pair_no_transaction_takes_is_no_path() -> None:
     """Paths in blocks against paths in time give no path, not too many."""
     blocks = f"and_v(v:{_preimage_thresh(3, 7, 1)},older(10))"
     seconds = f"and_v(v:{_preimage_thresh(3, 7, 2)},older(4194305))"
@@ -465,14 +465,78 @@ def test_a_quorum_is_its_keys_in_whatever_order_named() -> None:
     assert {shape(path)[0] for path in paths} == {((2, "AB"),)}
 
 
+# the refusal of a conjunction whose pairs would read too much
+WORK = "more than 2000000 keys and hashes"
+
+
+def _either_key(count: int, blocks: int) -> str:
+    """Return `count` quorums of one of two keys, conjoined, then older()."""
+    keys = [PrvKeyData(i).pub.sec.hex()[2:] for i in range(1, 2 * count + 1)]
+    conjunction = f"older({blocks})"
+    for i in range(count):
+        either = f"or_i(pk({keys[2 * i]}),pk({keys[2 * i + 1]}))"
+        conjunction = f"and_v(v:{either},{conjunction})"
+    return conjunction
+
+
+def _any_older(first: int, count: int) -> str:
+    """Return a disjunction of `count` older(), from `first` up."""
+    disjunction = f"older({first + count - 1})"
+    for value in range(first + count - 2, first - 1, -1):
+        disjunction = f"or_i(older({value}),{disjunction})"
+    return disjunction
+
+
 def test_the_bounds_of_a_conjunction() -> None:
-    """The paths that come out are bounded, and so are the pairs read."""
+    """Bounded: the paths that come out, the pairs, and what they read."""
     many = f"and_v(v:{_preimage_thresh(1, 33, 4)},{_preimage_thresh(1, 33, 5)})"
     with pytest.raises(BTClibValueError, match="more than 1000 spending paths"):
         _ = parse_miniscript(many).spending_paths
     pairs = f"and_v(v:{_preimage_thresh(5, 12, 6)},{_preimage_thresh(5, 12, 7)})"
     with pytest.raises(BTClibValueError, match="more than 100000 pairs"):
         _ = parse_miniscript(pairs).spending_paths
+    # pairs whose locks never meet join nothing, and count what they may
+    # read all the same. Each of 792 paths of six quorums of two keys and
+    # five hashes meets each of 126 paths of a lock alone, under the
+    # bound; one more quorum each takes them past it
+    seconds = _any_older(4194305, 126)
+    for count, refused in ((6, False), (7, True)):
+        blocks = f"and_v(v:{_preimage_thresh(5, 12, 8)},{_either_key(count, 10)})"
+        node = parse_miniscript(f"and_v(v:{blocks},{seconds})", TAPSCRIPT)
+        if refused:
+            with pytest.raises(BTClibValueError, match=WORK):
+                _ = node.spending_paths
+        else:
+            assert node.spending_paths == ()
+
+
+def test_the_work_of_a_conjunction_is_its_pairs_times_their_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A conjunction whose pairs would read too many keys reads none of them.
+
+    Issue btclib-org/bip32-descriptors#365: the choices of five of twelve
+    preimages, each with quorums of one of two keys, then with lock times
+    that give the same paths again. The pairs are within their bound, and
+    each would read every key of its path: the conjunction is refused
+    before its first pair, fewer keys read than it has pairs.
+    """
+    node = parse_miniscript(
+        f"and_v(v:and_v(v:{_preimage_thresh(5, 12, 9)},{_either_key(25, 1000)}),"
+        f"{_any_older(1, 126)})",
+        TAPSCRIPT,
+    )
+    read = [0]
+    key_hash = KeyExpression.__hash__
+
+    def counted(key: KeyExpression) -> int:
+        read[0] += 1
+        return key_hash(key)
+
+    monkeypatch.setattr(KeyExpression, "__hash__", counted)
+    with pytest.raises(BTClibValueError, match=WORK):
+        _ = node.spending_paths
+    assert read[0] < 792 * 126
 
 
 # (descriptor, its paths): the fragments that are not a miniscript
