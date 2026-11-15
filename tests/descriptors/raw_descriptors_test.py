@@ -1192,7 +1192,7 @@ def test_a_hand_built_raw_over_the_limit_is_refused(
 def _forged(text: str, inner: Descriptor) -> Descriptor:
     """Return the ``sh()`` or ``wsh()`` of `text` holding `inner`.
 
-    As an unpickled one can: unpickling skips the refusal of a
+    As a forged one can: `object.__setattr__` skips the refusal of a
     ``raw()`` over the limit that building one makes.
     """
     forged: Descriptor = pickle.loads(pickle.dumps(parse(text)))  # noqa: S301

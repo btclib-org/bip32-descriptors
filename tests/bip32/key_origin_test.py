@@ -5,12 +5,14 @@
 """Tests for the `bip32_descriptors.bip32.key_origin` module."""
 
 import dataclasses
+import pickle
+import re
 import string
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from btclib.alias import Octets
-from btclib.exceptions import BTClibValueError
+from btclib.exceptions import BTClibTypeError, BTClibValueError
 from ecc.curves import secp256k1
 from ecc.curves.sec_point import bytes_from_point
 
@@ -65,6 +67,20 @@ def test_bip32_key_origin() -> None:
         key_origin = BIP32KeyOrigin("deadbeef", [0])
         cast("list[int]", key_origin.der_path).append(out_of_range)
         with pytest.raises(BTClibValueError, match="invalid der_path element"):
+            key_origin.assert_valid()
+    # nor an index of another type, nor a field of another type, whose
+    # comparison or length would leave as a builtin's TypeError
+    for not_an_index in ("1", None, 1.5, True, [1]):
+        key_origin = BIP32KeyOrigin("deadbeef", [0])
+        cast("list[Any]", key_origin.der_path).append(not_an_index)
+        err_msg = f"^invalid der_path element type: {type(not_an_index).__name__}$"
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            key_origin.assert_valid()
+    for name, value in (("master_fingerprint", "dead"), ("der_path", None)):
+        key_origin = BIP32KeyOrigin("deadbeef", [0])
+        object.__setattr__(key_origin, name, value)
+        err_msg = f"^invalid {name} type: {type(value).__name__}$"
+        with pytest.raises(BTClibTypeError, match=err_msg):
             key_origin.assert_valid()
 
     description = master_fingerprint = "deadbeef"
@@ -425,3 +441,76 @@ def test_from_description_refuses_padding_after_the_path() -> None:
             BIP32KeyOrigin.from_description(f"deadbeef/0h/{pad}1")
     ws = string.whitespace
     assert BIP32KeyOrigin.from_description(f"deadbeef/{ws}0h{ws}/1{ws}") == expected
+
+
+def test_a_key_origin_pickle_restores_what_its_build_stores() -> None:
+    """At every protocol, one `assert_valid` refuses included.
+
+    `check_validity=False` builds that one, and its pickle is its own.
+    Issue btclib-org/bip32-descriptors#363.
+    """
+    valid = BIP32KeyOrigin("deadbeef", "m/1h/2")
+    unchecked = BIP32KeyOrigin("dead", [0] * 256, check_validity=False)
+    for origin in (valid, unchecked):
+        for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+            restored = pickle.loads(pickle.dumps(origin, protocol))  # noqa: S301
+            assert vars(restored) == vars(origin)
+
+
+@pytest.mark.parametrize(
+    "name,value,error,refusal",
+    [
+        (
+            "master_fingerprint",
+            "deadbeef",
+            BTClibTypeError,
+            "invalid master_fingerprint type: str",
+        ),
+        ("der_path", (1, 2), BTClibTypeError, "invalid der_path type: tuple"),
+        ("der_path", ["1"], BTClibTypeError, "invalid derivation index type: str"),
+        ("der_path", [2**32], BTClibValueError, "invalid index: not in 0..2**32-1"),
+    ],
+    ids=["fingerprint-text", "path-tuple", "index-text", "index-too-large"],
+)
+def test_a_key_origin_pickle_holding_a_field_its_build_refuses_is_refused(
+    name: str, value: Any, error: type[Exception], refusal: str
+) -> None:
+    """Or would store as another value, at every protocol.
+
+    The control is the same origin unforged.
+    """
+    origin = BIP32KeyOrigin("deadbeef", "m/1h/2")
+    assert pickle.loads(pickle.dumps(origin)) == origin  # noqa: S301
+    object.__setattr__(origin, name, value)
+    for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+        forged = pickle.dumps(origin, protocol)
+        with pytest.raises(error, match=f"^{re.escape(refusal)}$"):
+            pickle.loads(forged)  # noqa: S301
+
+
+def test_a_key_origin_pickle_state_of_another_shape_is_refused() -> None:
+    """As `pickle.loads` hands it to `__setstate__`, the method under test.
+
+    One that is no dictionary, one without a field or with another, and
+    a second state for an origin restored already. The control is the
+    origin's own state.
+    """
+    origin = BIP32KeyOrigin("deadbeef", "m/1h/2")
+    restored = object.__new__(BIP32KeyOrigin)
+    restored.__setstate__(dict(vars(origin)))
+    assert restored == origin
+    second = {**vars(origin), "master_fingerprint": bytes(4)}
+    with pytest.raises(
+        BTClibValueError, match="^invalid pickle state: an object restored already$"
+    ):
+        restored.__setstate__(second)
+    assert restored == origin
+    with pytest.raises(BTClibTypeError, match="^invalid pickle state type: list$"):
+        object.__new__(BIP32KeyOrigin).__setstate__(list(vars(origin)))
+    err_msg = "^invalid pickle state: not the fields of BIP32KeyOrigin$"
+    for state in (
+        {"master_fingerprint": origin.master_fingerprint},
+        {**vars(origin), "path": []},
+    ):
+        with pytest.raises(BTClibValueError, match=err_msg):
+            object.__new__(BIP32KeyOrigin).__setstate__(state)

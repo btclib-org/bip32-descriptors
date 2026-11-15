@@ -226,6 +226,12 @@ does a `Miniscript` node, built or unpickled, for its number, with the
 message `miniscript.parse` gives its text, before that text is written.
 Neither quotes a number longer than `parse` quotes: it may be a private
 key.
+
+An unpickled object, in the cases below, is a copy `pickle.loads`
+restored and `object.__setattr__` then changed: `pickle.loads` refuses a
+pickle holding a field `__init__` takes that the build refuses, and
+computes again a field the build computes, as
+`tests/descriptors/pickle_test.py` says.
 """
 
 from __future__ import annotations
@@ -244,7 +250,12 @@ from btclib.script.limits import MAX_SCRIPT_ELEMENT_SIZE, MAX_SCRIPT_SIZE
 from ecc.exceptions import EccValueError
 from typing_extensions import override
 
-from bip32_descriptors.bip32 import derive, rootxprv_from_seed, xpub_from_xprv
+from bip32_descriptors.bip32 import (
+    BIP32KeyOrigin,
+    derive,
+    rootxprv_from_seed,
+    xpub_from_xprv,
+)
 from bip32_descriptors.descriptors import (
     Provider,
     add_checksum,
@@ -560,7 +571,7 @@ def test_an_unpickled_tr_holding_a_tree_node_its_build_refuses_gives_no_script(
     error: type[Exception],
     refusal: str,
 ) -> None:
-    """The whole ``tr()`` unpickled skips its build, so its script refuses.
+    """An unpickled ``tr()`` given a field its build refuses has no script.
 
     With its own build's message, as a leaf or node unpickled alone
     inside a ``tr()`` being built is refused. The node is the tree's
@@ -707,9 +718,9 @@ def test_a_tr_miniscript_leaf_of_another_context_is_refused() -> None:
 
 
 def _with_context(node: miniscript.Miniscript, context: object) -> None:
-    """Give the node a context, as unpickling a stream holding it would.
+    """Give the node a context through `object.__setattr__`.
 
-    Unpickling skips `Miniscript`'s own checks, which refuse a node of an
+    That skips `Miniscript`'s own checks, which refuse a node of an
     unknown context, or of a subexpression of another, when it is built.
     """
     object.__setattr__(node, "context", context)
@@ -2057,6 +2068,46 @@ def test_an_uncompressed_x_only_key_is_refused_as_parse_refuses_it() -> None:
         KeyExpression(pub_key=_UNCOMPRESSED, x_only=True)
 
 
+def _origin_holding(index: object) -> BIP32KeyOrigin:
+    """Return an origin whose list of indexes was changed to hold `index`."""
+    origin = BIP32KeyOrigin("deadbeef", "m/1h/2")
+    cast("list[Any]", origin.der_path)[0] = index
+    return origin
+
+
+@pytest.mark.parametrize(
+    "origin,error,refusal",
+    [
+        ("deadbeef", BTClibTypeError, "invalid origin type: str"),
+        (
+            BIP32KeyOrigin("deadbeef00", [1], check_validity=False),
+            BTClibValueError,
+            "invalid master fingerprint length: 5",
+        ),
+        (_origin_holding("1"), BTClibTypeError, "invalid der_path element type: str"),
+        (
+            _origin_holding(None),
+            BTClibTypeError,
+            "invalid der_path element type: NoneType",
+        ),
+    ],
+    ids=["no-origin", "fingerprint-size", "index-text", "index-none"],
+)
+def test_a_key_is_refused_for_an_origin_parse_never_builds(
+    origin: object, error: type[Exception], refusal: str
+) -> None:
+    """With the refusal of `BIP32KeyOrigin.assert_valid`, naming no index.
+
+    One of another type, one of a fingerprint not of four bytes, and one
+    whose list of indexes was changed in place to hold no integer. The
+    control is the same key with an origin `parse` builds.
+    """
+    built = BIP32KeyOrigin("deadbeef", "m/1h/2")
+    assert KeyExpression(origin=built, xkey=_RANGED_KEY.xkey).origin == built
+    with pytest.raises(error, match=f"^{re.escape(refusal)}$"):
+        KeyExpression(origin=cast("BIP32KeyOrigin", origin), xkey=_RANGED_KEY.xkey)
+
+
 _U_KEY = KeyExpression(pub_key=_UNCOMPRESSED)
 _KEYS = tuple(KeyExpression(pub_key=PrvKeyData(i).pub.sec) for i in range(1, 22))
 _P2WSH = miniscript.P2WSH
@@ -2065,8 +2116,9 @@ _P2WSH = miniscript.P2WSH
 def _and_v_older(key: KeyExpression) -> MiniscriptDescriptor:
     """Return ``and_v(v:pk(KEY),older(1))``, its node unpickled.
 
-    A P2WSH `Miniscript` node refuses an uncompressed key when built, and
-    unpickling skips that check, so the key is given to an unpickled copy.
+    A P2WSH `Miniscript` node refuses an uncompressed key when built,
+    and `object.__setattr__` skips that check, so the key is given to an
+    unpickled copy.
     """
     node = _unpickled(miniscript.parse(f"and_v(v:pk({_C}),older(1))", _P2WSH))
     object.__setattr__(node.subs[0].subs[0].subs[0], "keys", (key,))
@@ -2077,8 +2129,8 @@ def _unpickled_multi(keys: tuple[KeyExpression, ...]) -> Descriptor:
     """Return ``multi(1,KEY,...)``, unpickled.
 
     `MultiDescriptor` refuses no key, more than 20 keys and keys no
-    position takes when built, and unpickling skips those checks, so the
-    keys are given to an unpickled copy.
+    position takes when built, and `object.__setattr__` skips those
+    checks, so the keys are given to an unpickled copy.
     """
     parsed = _PARSED[MultiDescriptor]
     multi: MultiDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
@@ -2097,8 +2149,8 @@ def _unpickled_multi_with(**values: Any) -> Descriptor:
     """Return ``multi(1,KEY,KEY)``, unpickled, given `values` for its fields.
 
     `MultiDescriptor` refuses a field of the wrong type and a threshold
-    out of range when built, and unpickling skips those checks, so the
-    values are given to an unpickled copy.
+    out of range when built, and `object.__setattr__` skips those
+    checks, so the values are given to an unpickled copy.
     """
     multi = _unpickled_multi(_PARSED[MultiDescriptor].key_expressions)
     for name, value in values.items():
@@ -2110,7 +2162,8 @@ def _unpickled_wpkh(key: KeyExpression) -> Descriptor:
     """Return ``wpkh(KEY)``, unpickled.
 
     `WpkhDescriptor` refuses an uncompressed key when built, and
-    unpickling skips that check, so the key is given to an unpickled copy.
+    `object.__setattr__` skips that check, so the key is given to an
+    unpickled copy.
     """
     parsed = _PARSED[WpkhDescriptor]
     wpkh: WpkhDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
@@ -2121,9 +2174,9 @@ def _unpickled_wpkh(key: KeyExpression) -> Descriptor:
 def _unpickled_pk(key: KeyExpression) -> Descriptor:
     """Return ``pk(KEY)``, unpickled.
 
-    `PkDescriptor` refuses a key ``tr()`` and ``rawtr()`` alone take when
-    built, and unpickling skips that check, so the key is given to an
-    unpickled copy.
+    `PkDescriptor` refuses a key ``tr()`` and ``rawtr()`` alone take
+    when built, and `object.__setattr__` skips that check, so the key is
+    given to an unpickled copy.
     """
     parsed = _PARSED[PkDescriptor]
     pk: PkDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
@@ -2135,8 +2188,9 @@ def _unpickled_and_v_pk(first: KeyExpression, second: KeyExpression) -> Descript
     """Return ``and_v(v:pk(FIRST),pk(SECOND))``, unpickled.
 
     A P2WSH `Miniscript` node refuses an uncompressed key and a key
-    ``tr()`` and ``rawtr()`` alone take when built, and unpickling skips
-    those checks, so the keys are given to an unpickled copy.
+    ``tr()`` and ``rawtr()`` alone take when built, and
+    `object.__setattr__` skips those checks, so the keys are given to an
+    unpickled copy.
     """
     parsed = parse(f"wsh(and_v(v:pk({_C}),pk({_C2})))")
     assert isinstance(parsed, WshDescriptor)
@@ -2150,9 +2204,9 @@ def _unpickled_wsh(inner: Descriptor) -> Descriptor:
     """Return ``wsh(INNER)``, unpickled.
 
     `WshDescriptor` refuses an argument `parse` refuses inside ``wsh()``
-    when built, unless the argument is invalid by itself, as `Descriptor`
-    says. Unpickling skips that check, so the argument is given to an
-    unpickled copy.
+    when built, unless the argument is invalid by itself, as
+    `Descriptor` says. `object.__setattr__` skips that check, so the
+    argument is given to an unpickled copy.
     """
     parsed = _PARSED[WshDescriptor]
     wsh: WshDescriptor = pickle.loads(pickle.dumps(parsed))  # noqa: S301
@@ -2692,15 +2746,17 @@ def test_the_keys_of_a_multi_are_refused_before_its_function(
 
 
 def _with_network(inner: Descriptor, network: object) -> Descriptor:
-    """Return `inner`, unpickled, holding `network`.
+    """Return a copy of `inner` holding `network`.
 
     `Descriptor` refuses a network that is no `str` when built, and
-    unpickling skips that check, so the network is given to an unpickled
-    copy.
+    `object.__setattr__` skips that check, so the network is given to a
+    copy. The copy shares the fields of `inner` and is made without
+    pickle, which refuses an `inner` already changed.
     """
-    unpickled: Descriptor = pickle.loads(pickle.dumps(inner))  # noqa: S301
-    object.__setattr__(unpickled, "network", network)
-    return unpickled
+    copied: Descriptor = object.__new__(type(inner))
+    vars(copied).update(vars(inner))
+    object.__setattr__(copied, "network", network)
+    return copied
 
 
 _AND_V_PK = cast("WshDescriptor", parse(f"wsh(and_v(v:pk({_C}),pk({_C2})))")).inner
@@ -3334,8 +3390,8 @@ def _in_tapscript_leaf(key: KeyExpression) -> miniscript.Miniscript:
     """Return the tapscript ``and_v(v:pk(KEY),pk(C2))``, unpickled.
 
     A tapscript `Miniscript` node refuses a key ``tr()`` refuses when
-    built, and unpickling skips that check, so the key is given to an
-    unpickled copy.
+    built, and `object.__setattr__` skips that check, so the key is
+    given to an unpickled copy.
     """
     expression = f"and_v(v:pk({_C}),pk({_C2}))"
     leaf = _unpickled(miniscript.parse(expression, miniscript.TAPSCRIPT))
@@ -4541,8 +4597,9 @@ def test_an_uncompressed_key_is_refused_before_the_number_of_keys(
 def _unpickled_multi_a(keys: tuple[KeyExpression, ...]) -> MultiA:
     """Return ``multi_a(1,KEY,...)``, unpickled.
 
-    `MultiA` refuses an uncompressed key when built, and unpickling skips
-    that check, so the keys are given to an unpickled copy.
+    `MultiA` refuses an uncompressed key when built, and
+    `object.__setattr__` skips that check, so the keys are given to an
+    unpickled copy.
     """
     multi_a: MultiA = pickle.loads(pickle.dumps(MultiA(1, (_KEY2,))))  # noqa: S301
     object.__setattr__(multi_a, "keys", keys)
@@ -4552,9 +4609,9 @@ def _unpickled_multi_a(keys: tuple[KeyExpression, ...]) -> MultiA:
 def _tapscript_and_v_older(key: KeyExpression) -> miniscript.Miniscript:
     """Return the tapscript ``and_v(v:pk(KEY),older(1))``, unpickled.
 
-    A tapscript `Miniscript` node refuses an uncompressed key when built,
-    and unpickling skips that check, so the key is given to an unpickled
-    copy.
+    A tapscript `Miniscript` node refuses an uncompressed key when
+    built, and `object.__setattr__` skips that check, so the key is
+    given to an unpickled copy.
     """
     expression = f"and_v(v:pk({_X2}),older(1))"
     node = _unpickled(miniscript.parse(expression, _TAPSCRIPT))
@@ -4705,8 +4762,9 @@ def _holding(
 ) -> miniscript.Miniscript:
     """Return an unpickled node whose node of `fragment` holds `keys`.
 
-    Unpickling skips `Miniscript`'s own checks, so a multisig of the other
-    context is read as the context's own and given the fragment.
+    `object.__setattr__` skips `Miniscript`'s own checks, so a multisig
+    of the other context is read as the context's own and given the
+    fragment.
     """
     _, tapscript, p2wsh, path = _HOLDING[fragment]
     expression = tapscript if context == _TAPSCRIPT else p2wsh
@@ -4776,8 +4834,8 @@ def _miniscript_holding(node: miniscript.Miniscript) -> MiniscriptDescriptor:
     """Return a `MiniscriptDescriptor` holding `node`, unpickled.
 
     `MiniscriptDescriptor` refuses a ``multi_a()`` node when built, and
-    unpickling skips that check, so ``wsh()`` and ``sh(wsh())`` are given
-    an argument that reaches their own.
+    `object.__setattr__` skips that check, so ``wsh()`` and
+    ``sh(wsh())`` are given an argument that reaches their own.
     """
     inner = cast("WshDescriptor", _MINISCRIPT).inner
     ms: MiniscriptDescriptor = pickle.loads(pickle.dumps(inner))  # noqa: S301
@@ -5323,8 +5381,8 @@ def _unpickled_miniscript(expression: str) -> MiniscriptDescriptor:
     """Return a `MiniscriptDescriptor` of the P2WSH EXPRESSION, unpickled.
 
     `MiniscriptDescriptor` refuses a node `parse` does not read back as
-    itself when built, and unpickling skips that check, so the node is
-    given to an unpickled copy.
+    itself when built, and `object.__setattr__` skips that check, so the
+    node is given to an unpickled copy.
     """
     inner = cast("WshDescriptor", _MINISCRIPT).inner
     ms: MiniscriptDescriptor = pickle.loads(pickle.dumps(inner))  # noqa: S301
@@ -5536,9 +5594,9 @@ def _faulty_subs(
 def _forged_and_v(context: str, *, forged: bool) -> miniscript.Miniscript:
     """Return an unpickled ``and_v(v:pk(KEY),pk(KEY))`` of the context.
 
-    Where `forged`, its first subexpression is an ``older(2)``, which is B
-    and not V, and the ``and_v`` keeps the type, size and bounds it was
-    built with, as unpickling copies them.
+    Where `forged`, its first subexpression is an ``older(2)``, which is
+    B and not V, and the ``and_v`` keeps the type, size and bounds it
+    was built with, as `object.__setattr__` leaves them.
     """
     first, second = (_X, _X2) if context == _TAPSCRIPT else (_C, _C2)
     expression = f"and_v(v:pk({first}),pk({second}))"
@@ -5937,7 +5995,7 @@ def test_an_unpickled_node_lacking_a_field_its_build_computes_is_refused(
 ) -> None:
     """As one holding a type or bounds its build does not compute.
 
-    A stream can leave a field out, and unpickling then leaves it unset.
+    `object.__delattr__` can leave a field out, which no build does.
     Issue btclib-org/bip32-descriptors#286.
     """
     context, _ = _WRAPPED[wrapped]

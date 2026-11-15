@@ -121,6 +121,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _assert_compressed,
     _assert_outside_taproot,
     _assert_prv_keys,
+    _checked_state,
     _offered_signature,
     _parse_key,
     _script_keys,
@@ -1161,13 +1162,13 @@ def _assert_derived(root: Miniscript) -> None:
     """Refuse a tree a node of which holds fields its build did not compute.
 
     `Miniscript` computes its type properties, its script size and its
-    bounds when a node is built, and unpickling copies them from the
-    stream instead, so an unpickled node can hold a type its
-    subexpressions do not give it. Each node is asked after its
-    subexpressions, so that what it is computed from has been asked
-    already, and is refused first for its fragment, its arity and its
-    number as its build refuses them, without which nothing can be
-    computed. A node is refused where it lacks a field its build computes.
+    bounds when a node is built, and `object.__setattr__` can set them
+    after, so a forged node can hold a type its subexpressions do not
+    give it. Each node is asked after its subexpressions, so that what
+    it is computed from has been asked already, and is refused first for
+    its fragment, its arity and its number as its build refuses them,
+    without which nothing can be computed. A node is refused where it
+    lacks a field its build computes.
 
     Every node is asked, a multisig of more keys than its fragment takes
     included: what its build computes reads their number, whatever it is.
@@ -1183,7 +1184,7 @@ def _assert_derived(root: Miniscript) -> None:
     for node in reversed(nodes):
         node._assert_arity()
         node._assert_number()
-        # None, which no build computes, for a field an unpickled node lacks
+        # None, which no build computes, for a field a forged node lacks
         stored = tuple(getattr(node, name, None) for name in _DERIVED)
         if _derived(node) == stored:
             continue
@@ -1234,6 +1235,18 @@ class Miniscript:
         self._assert_shape()
         for name, value in zip(_DERIVED, _derived(self), strict=True):
             object.__setattr__(self, name, value)
+
+    def __setstate__(self, state: object) -> None:
+        """Refuse a pickle holding a field the build refuses.
+
+        As `_checked_state` says: what the build computes is computed
+        again, whatever the pickle holds for it. A subexpression that is
+        no `Miniscript` is refused first, naming its type alone.
+        """
+        subs = state.get("subs") if isinstance(state, dict) else None
+        for sub in subs if isinstance(subs, tuple) else ():
+            assert_type(sub, Miniscript, "subexpression")
+        _checked_state(self, state)
 
     def _assert_shape(self) -> None:
         """Refuse a node no fragment has the shape of.
@@ -1354,7 +1367,7 @@ class Miniscript:
     def _assert_number_read(self) -> None:
         """Refuse a number of another type, then one `parse` cannot read.
 
-        As `_assert_read_number` says. A walk of an unpickled node calls
+        As `_assert_read_number` says. A walk of a forged node calls
         this before anything writes the node's text: Python refuses to
         write an `int` past its limit on digits.
         """
@@ -1477,9 +1490,9 @@ class Miniscript:
         counted twice, which `has_duplicate_keys` answers for.
 
         Refused for a node its own build refuses, as an unpickled one can
-        hold, as `Miniscript._assert_shape` says, or one holding a type or
-        bounds its build does not compute, as `_assert_derived` says; for
-        an expression `script`
+        hold once forged, as `Miniscript._assert_shape` says, or one holding
+        a type or bounds its build does not compute, as `_assert_derived`
+        says; for an expression `script`
         refuses, one built by hand without a type; for a ``rawpkh()``,
         which names its key by its hash alone; and past this library's
         bounds, which the refusal states: on the number of paths, which
@@ -2332,8 +2345,7 @@ def _assert_typed(node: Miniscript) -> Miniscript:
 def _assert_fits(node: Miniscript) -> Miniscript:
     """Return the node, refusing one past the script size of its context.
 
-    An unpickled node holds any context, so only the library's own is
-    named.
+    A forged node holds any context, so only the library's own is named.
     """
     if node.script_size > _max_script_size(node.context):
         context = TAPSCRIPT if node.context == TAPSCRIPT else P2WSH
@@ -4219,9 +4231,9 @@ _MAX_PATH_WORK = 2_000_000
 def _assert_shapes(root: Miniscript) -> None:
     """Refuse a node of the tree that its own build refuses.
 
-    An unpickled tree skips every node's build, so each node is asked its
-    type, and its subexpressions theirs, before `Miniscript._assert_shape`
-    reads them.
+    A forged tree's nodes escape their builds, so each node is asked its
+    type, and its subexpressions theirs, before
+    `Miniscript._assert_shape` reads them.
     """
     assert_type(root, Miniscript, "miniscript node")
     stack = [root]
