@@ -4368,8 +4368,8 @@ def _rest_keys(path: SpendingPath) -> dict[tuple[object, int], int]:
 
     The key is the path's locks and the sum of the hashes of the quorums
     but that one, so that one pass over the quorums gives every rest's. A
-    sum is a hash and not the rest: `_same_rest` compares the two paths
-    whole where their keys match.
+    sum is a hash and not the rest: `_same_rest` compares the quorums of
+    two paths whose keys match, the locks being in the key.
     """
     locks = (path.older, path.after, path.hashes)
     hashes = [hash(quorum) for quorum in path.quorums]
@@ -4382,9 +4382,7 @@ def _rest_keys(path: SpendingPath) -> dict[tuple[object, int], int]:
 
 
 def _same_rest(one: SpendingPath, mine: int, other: SpendingPath, theirs: int) -> bool:
-    """Answer whether two paths but a quorum each are the same conditions."""
-    if (one.older, one.after, one.hashes) != (other.older, other.after, other.hashes):
-        return False
+    """Answer whether two paths but a quorum each ask the same quorums."""
     rest = Counter(one.quorums)
     rest[one.quorums[mine]] -= 1
     others = Counter(other.quorums)

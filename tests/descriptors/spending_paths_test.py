@@ -592,6 +592,48 @@ def test_an_unpickled_descriptor_is_asked_its_fields(
         _ = forged.spending_paths
 
 
+def test_paths_whose_rest_keys_collide_are_compared_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rest key is a sum of hashes, so two that match are checked."""
+    monkeypatch.setattr(Quorum, "__hash__", lambda _: 0)
+    expression = (
+        f"or_i(and_v(v:or_i(pk({A}),pk({B})),or_i(pk({C}),pk({D}))),"
+        f"and_v(v:or_i(pk({E}),pk({F})),or_i(pk({G}),pk({H}))))"
+    )
+    assert shapes(parse_miniscript(expression).spending_paths) == [
+        (((1, "AB"), (1, "CD")), None, None, (), None),
+        (((1, "EF"), (1, "GH")), None, None, (), None),
+    ]
+
+
+def test_a_merge_into_a_path_held_already_lists_it_once() -> None:
+    """Two paths whose merge another merge gave first are that path.
+
+    (AB CD | EF) shares no rest as it comes in; (AB | GH) and (CD | GH)
+    merge into (ABCD | GH), (CD | EFGH) and (AB | EFGH) into
+    (ABCD | EFGH); then (ABCD | GH) merges with (ABCD | EF) first,
+    into the path the second merge gave.
+    """
+
+    def either(*names: str) -> str:
+        if len(names) == 1:
+            return f"pk({names[0]})"
+        half = len(names) // 2
+        return f"or_i({either(*names[:half])},{either(*names[half:])})"
+
+    def both(first: tuple[str, ...], second: tuple[str, ...]) -> str:
+        return f"and_v(v:{either(*first)},{either(*second)})"
+
+    left = (
+        f"or_i(or_i({both((A, B, C, D), (E, F))},{both((A, B), (G, H))}),"
+        f"{both((C, D), (E, F, G, H))})"
+    )
+    right = f"or_i({both((C, D), (G, H))},{both((A, B), (E, F, G, H))})"
+    paths = parse_miniscript(f"or_i({left},{right})").spending_paths
+    assert shapes(paths) == [(((1, "ABCD"), (1, "EFGH")), None, None, (), None)]
+
+
 def test_an_unpickled_miniscript_is_asked_its_derived_fields() -> None:
     """A fragment changed under its cached type is refused, not read."""
     built = parse_miniscript(f"and_v(v:pk({A}),older(5))")
