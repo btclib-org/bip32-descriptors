@@ -1476,6 +1476,11 @@ class Miniscript:
         expression has one. A key the expression names twice is listed and
         counted twice, which `has_duplicate_keys` answers for.
 
+        Where `mixes_timelocks` is true, the bound on the paths, below, can
+        refuse an expression with fewer paths than the bound: a
+        ``thresh()`` counts toward it a choice of its branches that only
+        branches needing a lock time of another kind could complete.
+
         Refused for a node its own build refuses, as an unpickled one can
         hold, as `Miniscript._assert_shape` says, or one holding a type or
         bounds its build does not compute, as `_assert_derived` says; for
@@ -4553,11 +4558,16 @@ def _thresh_paths(
 
     A count that the branches still to read and the keys can no longer
     take to the threshold is dropped as soon as it is, so that the bound
-    on the paths is met by choices that can still be a path: a
+    on the paths is met by choices that can still reach the threshold: a
     thresh() of all of thirteen branches is one path, not the choices of
     fewer of them that come on the way. A branch with no path, a ``0``,
     takes no count further, so `viable[left]` counts only the branches
     still to read that have one.
+
+    `viable` counts a branch with paths even where none of them can join
+    a choice, each needing a lock time of another kind than the choice's.
+    That choice is kept, so an expression that mixes lock times can be
+    refused past the bound on the paths though it has fewer paths.
     """
     keys = tuple(paths[0].quorums[0].keys[0] for paths in subs if _is_key(paths))
     others = [paths for paths in subs if not _is_key(paths)]

@@ -33,6 +33,7 @@ from bip32_descriptors.descriptors import (
     SpendContext,
     SpendingPath,
     TrDescriptor,
+    miniscript,
     parse,
 )
 from bip32_descriptors.descriptors.miniscript import P2WSH, TAPSCRIPT, Miniscript
@@ -390,6 +391,30 @@ def test_a_branch_with_no_path_completes_no_choice() -> None:
     paths = node.spending_paths
     assert len(paths) == 455
     assert {len(path.hashes) for path in paths} == {12}
+
+
+def test_a_choice_only_another_kind_of_lock_time_could_complete_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A choice only another kind of lock time could complete is kept.
+
+    Issue btclib-org/bip32-descriptors#364. Twelve of a seconds-based
+    ``older()`` and fifteen preimages, each with a blocks-based one, are
+    the choices of twelve preimages, within the bound. The choices of
+    fewer preimages are kept, since the first branch has a path, and they
+    are past the bound: the expression, which mixes lock times, is refused.
+    """
+    digests = [sha256(bytes([i]) * 32).hex() for i in range(1, 16)]
+    rest = ",".join(f"a:andor(sha256({digest}),n:older(144),0)" for digest in digests)
+    node = parse_miniscript(f"thresh(12,ln:older(4194305),{rest})")
+    assert node.is_valid
+    assert node.mixes_timelocks
+    with pytest.raises(BTClibValueError, match="more than 1000 spending paths"):
+        _ = node.spending_paths
+    monkeypatch.setattr(miniscript, "_MAX_SPENDING_PATHS", 10_000)
+    paths = node.spending_paths
+    assert len(paths) == 455
+    assert {(len(path.hashes), path.older) for path in paths} == {(12, 144)}
 
 
 def test_the_work_of_a_disjunction_is_its_paths_times_their_quorums(
