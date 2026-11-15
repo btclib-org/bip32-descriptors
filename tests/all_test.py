@@ -67,7 +67,7 @@ CHILD_MODULES = {
         "unpublished": ["bip32", "der_path", "key_origin"],
     },
     "bip32_descriptors.descriptors": {
-        "groups": ["miniscript"],
+        "groups": ["compiler", "miniscript"],
         "unpublished": ["descriptors", "key_expression"],
     },
 }

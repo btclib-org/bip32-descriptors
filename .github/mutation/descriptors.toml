@@ -10,8 +10,9 @@
 # The profile is split into shards, one session and one job each, because a
 # whole session of it does not fit in one hosted job; the comment on
 # `profiles` in .github/workflows/mutation.yml says how they are sized. This
-# file is the shard of every module of the package but miniscript.py and
-# descriptors.py, which miniscript-*.toml and descriptors-py-*.toml split by
+# file is the shard of every module of the package but compiler.py,
+# miniscript.py and descriptors.py: compiler.toml is compiler.py's, and
+# miniscript-*.toml and descriptors-py-*.toml split the other two by
 # operator. Those files copy this one's test-command and timeout.
 #
 # A numbered shard's filter is a negative lookahead: cr-filter-operators
@@ -55,8 +56,9 @@ test-command = "python -m pytest -x -q -n0 -p no:randomly tests/descriptors"
 # widens one of those is what the slack is for
 timeout = 300
 
-# the two modules the other shard files split
+# the modules the other shard files hold
 excluded-modules = [
+    "src/bip32_descriptors/descriptors/compiler.py",
     "src/bip32_descriptors/descriptors/descriptors.py",
     "src/bip32_descriptors/descriptors/miniscript.py",
 ]

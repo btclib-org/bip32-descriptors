@@ -14,7 +14,9 @@ page points at it instead of repeating it.
   defines them.** BIP32 against its own vectors; descriptors against
   BIP380 to BIP390's, Bitcoin Core's `descriptor_tests.cpp` and
   bitcoin-s's; miniscript against Core's `miniscript_tests.cpp`, and its
-  spending paths against Liana's descriptor tests.
+  spending paths against Liana's descriptor tests; the policy compiler
+  against what sipa/miniscript's compiler answers and what
+  rust-miniscript's compiler tests assert.
   `tests/_data/README.md` says where each came from, pins it to the
   upstream commit it was taken from, and says whether the two still
   match. `.github/workflows/vendored-vectors.yml` runs weekly: it holds
@@ -120,7 +122,9 @@ to, and what counters each.
 - **Uncontrolled resource consumption (CWE-400).** A number read from
   text is bounded before `int()` reads it, and a `thresh()` whose
   arguments pass the size limit is refused before it is analysed
-  (`tests/parser_limits_test.py`).
+  (`tests/parser_limits_test.py`). The policy compiler's search grows
+  exponentially with nested `or()`, so it refuses a policy past its
+  bounds on nesting and on steps (`tests/descriptors/compiler_test.py`).
 - **Exposure of sensitive information (CWE-209).** A refusal does not
   quote the private key or the extended private key it was handed. The
   rule is section 7's *A refusal carries no secret* in the

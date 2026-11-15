@@ -816,6 +816,136 @@ licence. That licence asks that a copy of the source keep its notice, and
 `tests/descriptors/liana_test.py` carries the notice whole, below this
 package's header.
 
+### Not vendored as a file: sipa/miniscript's compiler answers
+
+```text
+repo    sipa/miniscript
+path    compiler.cpp, index.html, test.gram
+commit  6806dfb15a1fafabf7dd28aae3c9d2bc49db01f1  2023-03-16
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the repository
+```
+
+Verdict: **recorded**. `descriptors.compiler` is a port of
+`compiler.cpp`, so each answer of `tests/descriptors/compiler_test.py`'s
+`WEBSITE`, `GRAMMAR` and `COMPOSED` is the miniscript sipa's compiler
+answers, or None where it answers none, recorded from a build of the
+pinned commit. The policies of `WEBSITE` are the examples of the project's
+website, `index.html`. Those of `GRAMMAR` are drawn at random from its
+test grammar, `test.gram`, each `pk(C)` of a draw named apart, since the
+grammar names every key `C` and the compiler refuses a key named twice.
+Those of `COMPOSED` are composed here, with weights, every hash lock and
+both kinds of lock time, which the grammar does not draw. `RUST_DIFFERS`
+holds sipa's answer beside rust-miniscript's, below.
+
+The repository has no test that runs the compiler: the website's examples
+and the grammar are its test cases, and the compiler's answers are what
+the program `main.cpp` prints for them. `main.cpp` expands each `H` to a
+digest, of eights or of nines, as the test does.
+
+From the repository root, this builds the pinned commit and prints the
+cases whose recorded answer is not what it answers. It prints an empty
+list. `-ffp-contract=off` keeps the C++ compiler from fusing a
+multiplication and an addition, which Python's floats never do; a build
+without it answers every case alike.
+
+```shell
+commit=6806dfb15a1fafabf7dd28aae3c9d2bc49db01f1
+src=$(mktemp -d)
+git clone --quiet https://github.com/sipa/miniscript "$src"
+git -C "$src" checkout --quiet "${commit:?}"
+c++ -O2 -ffp-contract=off -std=c++17 -w -I"$src/bitcoin" \
+    "$src/bitcoin/util/strencodings.cpp" "$src/bitcoin/util/spanparsing.cpp" \
+    "$src/bitcoin/script/script.cpp" "$src/bitcoin/script/miniscript.cpp" \
+    "$src/compiler.cpp" "$src/main.cpp" -o "$src/miniscript"
+uv run python - "$src/miniscript" <<'PY'
+import subprocess
+import sys
+
+from tests.descriptors import compiler_test as t
+
+cases = t.WEBSITE + t.GRAMMAR + t.COMPOSED
+cases += [(policy, sipa) for _, policy, _, sipa in t.RUST_DIFFERS]
+lines = "".join(f"{policy}\n" for policy, _ in cases)
+run = subprocess.run([sys.argv[1]], input=lines, capture_output=True, text=True)
+answers = [
+    line.split()[3] if line.startswith("X ") else None
+    for line in run.stdout.splitlines()
+]
+print([case for case, answer in zip(cases, answers, strict=True) if case[1] != answer])
+PY
+rm -rf "${src:?}"
+```
+
+The policies and the answers are sipa/miniscript's, under the MIT
+licence its files state, and `tests/descriptors/compiler_test.py`
+carries that notice below this package's header. sipa/miniscript has no
+tapscript compiler at the pin, so neither has the port.
+
+### Not vendored as a file: rust-miniscript's compiler tests
+
+```text
+repo    rust-bitcoin/rust-miniscript
+path    src/policy/compiler.rs
+commit  7d10760b4bf170196d3a5d85f78dfac6259b90d9  2026-09-15
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
+```
+
+Verdict: **transcribed**. `tests/descriptors/compiler_test.py`'s `RUST`
+holds the policy of each test of that file's `tests` module that compiles
+for `Segwitv0`, under the test's name, with what the test asserts of the
+answer: the miniscript, the script or its size, a compilation whose
+lift is the policy's, or the refusal. The tests that compile for `Tap`,
+`compile_q` and `compile_tr_thresh`, are left out, there being no
+tapscript compiler here, and so is the `Legacy` half of `shared_limits`,
+P2SH being no context of BIP379.
+
+rust-miniscript writes most of these policies with keys it derives from
+secret keys whose first byte counts up, and the test names them `K0`,
+`K1` and so on, in rust-miniscript's order. A key's bytes decide no
+cost, only its size does, and every key here is compressed, as there.
+
+Where rust-miniscript and sipa's compiler answer differently,
+`RUST_DIFFERS` holds both, and the port answers sipa's: for a `thresh()`
+that any one of its keys satisfies, rust-miniscript's test asserts a
+`multi()`, and sipa's compiler answers a cheaper chain of `or_i()` by
+its cost model. The test asserts that both have the policy's spending
+paths.
+
+From the repository root, this fetches the file and prints the policies
+and miniscripts of `RUST` written with the names A to F that the file
+does not hold as a literal. It prints the first policy of
+`compile_timelocks`, which that test builds with `Concrete::And` rather
+than writes. The others are built in Rust from the keys above, so a
+reader compares them with the test that builds them.
+
+```shell
+commit=7d10760b4bf170196d3a5d85f78dfac6259b90d9
+file=src/policy/compiler.rs
+rs=$(mktemp)
+gh api -H 'Accept: application/vnd.github.raw' \
+    "repos/rust-bitcoin/rust-miniscript/contents/${file}?ref=${commit:?}" \
+    > "$rs"
+uv run python - "$rs" <<'PY'
+import re
+import sys
+
+from tests.descriptors import compiler_test as t
+
+source = open(sys.argv[1], encoding="utf-8").read()
+texts = [policy for _, policy, _ in t.RUST]
+texts += [asserted for _, _, asserted in t.RUST if isinstance(asserted, str)]
+named = [x for x in texts if "(" in x and not re.search(r"K[0-9]", x)]
+print([x for x in named if f'"{x}"' not in source])
+PY
+rm -f "${rs:?}"
+```
+
+rust-miniscript is under CC0, as each of its source files states,
+which asks for no notice. `tests/descriptors/compiler_test.py` names it
+all the same.
+
 ## Delving Bitcoin
 
 ### `tests/_data/preimage_descriptors.json`

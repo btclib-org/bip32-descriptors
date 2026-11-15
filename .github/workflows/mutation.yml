@@ -59,6 +59,7 @@ on:
           - descriptors-py-5
           - descriptors-py-6
           - descriptors-py-rest
+          - compiler
 
 # least privilege for the GITHUB_TOKEN: nothing here writes. No issues:
 # write either -- a survivor is a test to write rather than a defect to
@@ -110,6 +111,8 @@ jobs:
       # https://github.com/btclib-org/bip32-descriptors/actions/runs/43436179539,
       # the miniscript.py shards on
       # https://github.com/btclib-org/bip32-descriptors/actions/runs/43491103845.
+      # compiler.toml takes the budget of the others, and no run has
+      # measured it.
       # The ceiling is the budget plus the environment, and stays under those
       # six hours.
       #
@@ -151,7 +154,9 @@ jobs:
         {"profile": "descriptors.py, shard 6", "slug": "descriptors-py-6",
         "ceiling": 345, "sessions": "descriptors-py-6.toml 330m"},
         {"profile": "descriptors.py, the rest", "slug": "descriptors-py-rest",
-        "ceiling": 345, "sessions": "descriptors-py-rest.toml 330m"}]
+        "ceiling": 345, "sessions": "descriptors-py-rest.toml 330m"},
+        {"profile": "compiler.py", "slug": "compiler", "ceiling": 345,
+        "sessions": "compiler.toml 330m"}]
       # the dropdown above, forwarded. A schedule has no `inputs`, so this
       # arrives at the callee as an empty string, which its own `SELECTED`
       # expression reads as every profile
