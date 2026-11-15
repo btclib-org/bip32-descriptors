@@ -14,16 +14,17 @@
 A policy says who may spend and from when: ``pk(KEY)``, ``after(N)``,
 ``older(N)``, the four hash locks, and ``and()``, ``or()`` and
 ``thresh()`` over them. ``or()`` weighs its two branches by how likely
-each is to be the one spent, as in ``or(9@pk(A),pk(B))``, where a missing
-weight is 1. The miniscript that enforces a policy is a choice among many
--- which fragment carries each ``and`` and ``or``, and which wrappers make
-the types fit -- and `compile_policy` makes it as sipa's compiler does:
-of the non-malleable P2WSH candidates its search builds that need a
+each is to be the one spent, as in ``or(9@pk(A),pk(B))``, where a
+missing weight is 1. Here ``A`` and ``B`` stand for KEY expressions. The
+miniscript that enforces a policy is a choice among many -- which
+fragment carries each ``and`` and ``or``, and which wrappers make the
+types fit -- and `compile_policy` makes it as sipa's compiler does: of
+the non-malleable P2WSH candidates its search builds that need a
 signature, the one whose script plus its expected satisfaction costs
 fewest bytes. The search does not build every miniscript, so one that
-costs less can exist: ``and(pk(A),and(older(1),older(1)))`` compiles
-to a script three bytes longer than ``and(pk(A),older(1))`` does, with
-the same spending paths.
+costs less can exist: ``and(pk(A),and(older(1),older(1)))`` compiles to
+a script three bytes longer than ``and(pk(A),older(1))`` does, with the
+same spending paths.
 
 This is sipa/miniscript's compiler, the one behind its website. Its
 grammar is the policy language here, except that a key is a KEY

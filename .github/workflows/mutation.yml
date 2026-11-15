@@ -111,8 +111,7 @@ jobs:
       # https://github.com/btclib-org/bip32-descriptors/actions/runs/43436179539,
       # the miniscript.py shards on
       # https://github.com/btclib-org/bip32-descriptors/actions/runs/43491103845.
-      # compiler.toml takes the budget of the others, and no run has
-      # measured it.
+      # compiler.toml takes the budget of the others until a run sizes it.
       # The ceiling is the budget plus the environment, and stays under those
       # six hours.
       #

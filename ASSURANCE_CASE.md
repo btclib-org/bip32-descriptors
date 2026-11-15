@@ -15,8 +15,10 @@ page points at it instead of repeating it.
   BIP380 to BIP390's, Bitcoin Core's `descriptor_tests.cpp` and
   bitcoin-s's; miniscript against Core's `miniscript_tests.cpp`, and its
   spending paths against Liana's descriptor tests; the policy compiler
-  against what sipa/miniscript's compiler answers and what
-  rust-miniscript's compiler tests assert.
+  against what sipa/miniscript's compiler answers, and what
+  rust-miniscript's compiler tests assert where it answers as sipa's
+  does: where it does not, the answer is sipa's and has the policy's
+  spending paths.
   `tests/_data/README.md` says where each came from, pins it to the
   upstream commit it was taken from, and says whether the two still
   match. `.github/workflows/vendored-vectors.yml` runs weekly: it holds

@@ -40,9 +40,10 @@ Python arithmetic answers instead.
 - `sha256(preimage(HEX))`, the private form of the hash fragments, which
   no BIP specifies (`descriptors.miniscript` says where it is proposed)
 - a compiler from a spending policy, such as
-  `or(pk(A),and(pk(B),older(144)))`, to a P2WSH miniscript that
-  enforces it, the cheapest of the candidates its search builds: a port
-  of [sipa/miniscript](https://github.com/sipa/miniscript)'s
+  `or(pk(A),and(pk(B),older(144)))` with a KEY expression for each of
+  `A` and `B`, to a P2WSH miniscript that enforces it, the cheapest of
+  the candidates its search builds: a port of
+  [sipa/miniscript](https://github.com/sipa/miniscript)'s
   (`descriptors.compiler`)
 
 [ARCHITECTURE.md](https://github.com/btclib-org/bip32-descriptors/blob/main/ARCHITECTURE.md)
