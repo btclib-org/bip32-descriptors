@@ -209,6 +209,31 @@ the tag exercises the first.
    branch as its source ref, so the `--source-ref` of *Verify the
    provenance of an asset* refuses it.
 
+**A rehearsal that is not to be approved is closed by rejecting its
+`testpypi` deployment, before the branch is rehearsed again.** Section 12
+of the organization's standard says why. The runs waiting at an approval
+are listed by:
+
+```shell
+gh run list --repo "btclib-org/${repo:?}" --workflow release.yml \
+  --status waiting
+```
+
+```shell
+run=<run id>
+```
+
+```shell
+env=$(gh api "repos/btclib-org/${repo:?}/environments" \
+  --jq '.environments[] | select(.name == "testpypi") | .id')
+```
+
+```shell
+gh api -X POST \
+  "repos/btclib-org/${repo:?}/actions/runs/${run:?}/pending_deployments" \
+  -F "environment_ids[]=${env:?}" -f state=rejected -f comment=superseded
+```
+
 ## Release to PyPI
 
 **A release is a tag on `main`, and everything below that edits a file
@@ -643,9 +668,11 @@ request, next to `deps-latest`'s own result.
    `pypi-install.yml`.
 
    A dispatch of `pypi-install.yml` passes no version, so it waits for
-   nothing and installs what the index serves at the time. Read the
-   installed version each cell prints in its log, and dispatch again
-   where a cell installed the previous release.
+   no version and installs what the index serves at the time, or skips
+   as `btclib-org/.github`'s `reusable-wait-for-index.yml` header says
+   of its `published` output. Read the installed version each cell
+   prints in its log, and dispatch again where a cell installed the
+   previous release.
 
    Read the Docs builds a tag on its first push only: a deleted and
    re-pushed tag is rebuilt by hand from the builds page, and `documented`
@@ -788,8 +815,8 @@ request, next to `deps-latest`'s own result.
    change in a pull request of its own every answer the release changed:
    the release notes and the vulnerabilities it fixed, signed tags and
    assets, attestation names. Once it lands, open each URL the script's
-   `--drift` prints for this repository, one for each section of the form,
-   and save the form at each. Whoever cannot
+   `--drift` prints for this repository, save the form at each, and type
+   by hand each criterion it names as too long for a URL. Whoever cannot
    sign in to bestpractices.dev comments on the answers' pull request
    that the save is owed, so that the debt is on record and not in
    anybody's memory, and whoever next can saves it. The step stays open
