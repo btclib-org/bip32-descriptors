@@ -75,6 +75,7 @@ BIP379: https://github.com/bitcoin/bips/blob/master/bip-0379.md
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -131,7 +132,9 @@ __all__ = [
     "TAPSCRIPT",
     "Miniscript",
     "Preimages",
+    "Quorum",
     "SpendContext",
+    "SpendingPath",
     "from_script",
     "parse",
     "reads_back",
@@ -1447,6 +1450,46 @@ class Miniscript:
         hashes = _raw_key_hashes(self)
         known = {hash160(key) for key in keys if isinstance(key, bytes)}
         return len(set(hashes)) != len(hashes) or not known.isdisjoint(hashes)
+
+    @property
+    def spending_paths(self) -> tuple[SpendingPath, ...]:
+        """Return every way to satisfy the expression, as `SpendingPath`.
+
+        A disjunction is a path per branch and a conjunction joins its
+        branches into one, so ``or_d(pk(A),and_v(v:pkh(B),older(144)))``
+        has two: A alone, and B alone once 144 blocks have passed.
+
+        The keys a path needs are `Quorum`, Liana's `PathInfo`: a
+        ``multi()``, a ``multi_a()`` and a ``thresh()`` of keys alone are one
+        quorum, their threshold of their keys, and the keys a conjunction
+        needs all of are one quorum of all of them. Paths that differ only
+        in a quorum of one are one path, with a quorum of one of their keys
+        joined, as Liana joins keys that each spend alone. A ``thresh()``
+        of anything else is a path for each way to choose the branches that
+        are not keys, with a quorum of the keys for the rest of its
+        threshold. A conjunction no single threshold states, such as two of
+        three keys and three of six others, is a path of several quorums.
+
+        A path no transaction can take, one needing two lock times of
+        different kinds, is not listed: `mixes_timelocks` says the
+        expression has one. A key the expression names twice is listed and
+        counted twice, which `has_duplicate_keys` answers for.
+
+        Refused for an expression `script` refuses, one built by hand
+        without a type; for a ``rawpkh()``, which names its key by its hash
+        alone; and past this library's bound on the number of paths, which
+        the refusal states: conjoined disjunctions multiply them.
+        """
+        if not self.is_valid:
+            raise BTClibValueError(f"invalid miniscript: {self}")
+
+        def up(
+            _state: None, node: Miniscript, subs: list[list[SpendingPath]]
+        ) -> list[SpendingPath]:
+            return _computed_paths(node, subs)
+
+        paths: list[SpendingPath] = _tree_eval(self, None, lambda *_: None, up)
+        return tuple(paths)
 
     @property
     def max_ops(self) -> int | None:
@@ -3618,6 +3661,86 @@ class SpendContext:
 
 
 @dataclass(frozen=True)
+class Quorum:
+    """Any `threshold` of `keys` signing: Liana's `PathInfo`.
+
+    One key is a quorum of one of one. The keys are KEY expressions, in the
+    order the expression names them. A ``musig()`` is one key, whose
+    participants are its `KeyExpression.participants`.
+
+    Liana's `PathInfo`:
+    https://github.com/wizardsardine/liana/blob/433ad8ca38377aa2df40b60274abdb54fb8f0c2a/liana/src/descriptors/analysis.rs#L174-L179
+    """
+
+    threshold: int
+    keys: tuple[KeyExpression, ...]
+
+    def __post_init__(self) -> None:
+        """Refuse a field of the wrong type, and a threshold outside 1 to n."""
+        if not is_integer(self.threshold):
+            err_msg = f"invalid threshold type: {type(self.threshold).__name__}"
+            raise BTClibTypeError(err_msg)
+        assert_type(self.keys, tuple, "keys")
+        for key in self.keys:
+            assert_type(key, KeyExpression, "key")
+        if not 1 <= self.threshold <= len(self.keys):
+            err_msg = f"invalid quorum: threshold not from 1 to {len(self.keys)}"
+            raise BTClibValueError(err_msg)
+
+
+@dataclass(frozen=True)
+class SpendingPath:
+    """One way to spend: who signs, what it waits for, what it reveals.
+
+    Every one of `quorums` signs. One quorum is Liana's `PathInfo`, and
+    several are a conjunction no single threshold states.
+
+    `older` is the value of the ``older()`` the path waits for, which is
+    also the nSequence that meets it, and `after` the value of the
+    ``after()``, which is the nLockTime that meets it: None where the path
+    waits for none. These are the timelocks Liana's `LianaPolicy` keys its
+    recovery paths by, its primary path being the one with neither.
+
+    `hashes` holds, for each preimage the path reveals, the hash fragment
+    and the digest it holds. `leaf` is the number of the ``tr()`` leaf the
+    path spends, in the order `TrDescriptor.taproot_tree` lists the
+    leaves, and None for every other path, the key path of a ``tr()``
+    included.
+
+    Liana's `LianaPolicy`:
+    https://github.com/wizardsardine/liana/blob/433ad8ca38377aa2df40b60274abdb54fb8f0c2a/liana/src/descriptors/analysis.rs#L473-L477
+    """
+
+    quorums: tuple[Quorum, ...] = ()
+    older: int | None = None
+    after: int | None = None
+    hashes: tuple[tuple[str, bytes], ...] = ()
+    leaf: int | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse a field of the wrong type, and a value no path holds.
+
+        A lock time is one an ``older()`` or an ``after()`` takes, a hash
+        is one of the hash fragments with a digest of its size, and a leaf
+        number is not negative.
+        """
+        assert_type(self.quorums, tuple, "quorums")
+        for quorum in self.quorums:
+            assert_type(quorum, Quorum, "quorum")
+        _assert_lock_time("older", self.older)
+        _assert_lock_time("after", self.after)
+        assert_type(self.hashes, tuple, "hashes")
+        for hash_lock in self.hashes:
+            _assert_hash_lock(hash_lock)
+        if self.leaf is not None:
+            if not is_integer(self.leaf):
+                err_msg = f"invalid leaf type: {type(self.leaf).__name__}"
+                raise BTClibTypeError(err_msg)
+            if self.leaf < 0:
+                raise BTClibValueError("negative leaf")
+
+
+@dataclass(frozen=True)
 class _Input:
     """One witness stack that satisfies or dissatisfies an expression.
 
@@ -4028,3 +4151,256 @@ def _computed_input(
     if node.fragment == "thresh":
         return _thresh_input(node, subs, choose)
     return _or_input(node, subs[0], subs[1], choose)
+
+
+def _assert_lock_time(name: str, value: int | None) -> None:
+    """Refuse a lock time no ``older()`` or ``after()`` takes, None aside."""
+    if value is None:
+        return
+    if not is_integer(value):
+        raise BTClibTypeError(f"invalid {name} type: {type(value).__name__}")
+    if not 1 <= value < _MAX_TIMELOCK:
+        err_msg = f"invalid {name}() value: not from 1 to {_MAX_TIMELOCK - 1}"
+        raise BTClibValueError(err_msg)
+
+
+def _assert_hash_lock(hash_lock: tuple[str, bytes]) -> None:
+    """Refuse what is not a hash fragment with a digest of its size."""
+    assert_type(hash_lock, tuple, "hash")
+    if len(hash_lock) != 2:
+        raise BTClibValueError("a hash is a fragment and a digest")
+    fragment, digest = hash_lock
+    assert_type(fragment, str, "hash fragment")
+    assert_type(digest, bytes, "digest")
+    if fragment not in _HASH_OP_CODES:
+        raise BTClibValueError("unknown hash fragment")
+    if len(digest) != _DATA_SIZE[fragment]:
+        err_msg = f"{fragment} takes {_DATA_SIZE[fragment]} bytes of data"
+        raise BTClibValueError(err_msg)
+
+
+# the most paths `Miniscript.spending_paths` lists, or any of its branches
+# does on the way. A limit of this library and not of the protocol, as
+# `_MAX_THRESH_ARGUMENTS` is: the paths of conjoined disjunctions multiply,
+# so a script of a few hundred bytes can have more than anybody reads
+_MAX_SPENDING_PATHS = 1000
+
+
+def _assert_path_count(count: int) -> None:
+    """Refuse a list of spending paths past `_MAX_SPENDING_PATHS`."""
+    if count > _MAX_SPENDING_PATHS:
+        err_msg = f"more than {_MAX_SPENDING_PATHS} spending paths"
+        raise BTClibValueError(err_msg)
+
+
+def _joined_older(first: int | None, second: int | None) -> tuple[bool, int | None]:
+    """Return whether one nSequence meets two ``older()``, and which it meets.
+
+    BIP68's relative lock is in blocks or in 512-second intervals, as bit
+    22 of the sequence says, so two of different units are met by no
+    sequence. Two of one unit are met by the larger, compared on the bits
+    BIP68 reads.
+    """
+    if first is None or second is None:
+        return True, second if first is None else first
+    if first & SEQUENCE_LOCKTIME_TYPE_FLAG != second & SEQUENCE_LOCKTIME_TYPE_FLAG:
+        return False, None
+    if first & SEQUENCE_LOCKTIME_MASK >= second & SEQUENCE_LOCKTIME_MASK:
+        return True, first
+    return True, second
+
+
+def _joined_after(first: int | None, second: int | None) -> tuple[bool, int | None]:
+    """Return whether one nLockTime meets two ``after()``, and which it meets.
+
+    BIP65's lock is a height or a time, either side of 500000000, so two
+    of different kinds are met by no lock time.
+    """
+    if first is None or second is None:
+        return True, second if first is None else first
+    if (first >= LOCKTIME_THRESHOLD) != (second >= LOCKTIME_THRESHOLD):
+        return False, None
+    return True, max(first, second)
+
+
+def _conjoined(quorums: tuple[Quorum, ...]) -> tuple[Quorum, ...]:
+    """Return the quorums, those wanting all their keys made one.
+
+    Where the first of them stood: n of n keys and m of m others are n+m
+    of all of them, and a threshold lower than its keys stays a quorum of
+    its own.
+    """
+    whole = [quorum for quorum in quorums if quorum.threshold == len(quorum.keys)]
+    if len(whole) < 2:
+        return quorums
+    keys = tuple(key for quorum in whole for key in quorum.keys)
+    joined: list[Quorum] = []
+    for quorum in quorums:
+        if quorum.threshold != len(quorum.keys):
+            joined.append(quorum)
+        elif keys:
+            joined.append(Quorum(len(keys), keys))
+            keys = ()
+    return tuple(joined)
+
+
+def _path_and(first: SpendingPath, second: SpendingPath) -> SpendingPath | None:
+    """Return the path that takes both, None where no transaction can."""
+    older_met, older = _joined_older(first.older, second.older)
+    after_met, after = _joined_after(first.after, second.after)
+    if not (older_met and after_met):
+        return None
+    hashes = first.hashes + tuple(h for h in second.hashes if h not in first.hashes)
+    quorums = _conjoined(first.quorums + second.quorums)
+    return SpendingPath(quorums, older, after, hashes)
+
+
+def _paths_and(
+    first: Sequence[SpendingPath], second: Sequence[SpendingPath]
+) -> list[SpendingPath]:
+    """Return the paths of a conjunction: each of the first with each other."""
+    _assert_path_count(len(first) * len(second))
+    # a dict for its order and its keys: the same path reached twice is
+    # one path
+    paths: dict[SpendingPath, None] = {}
+    for one in first:
+        for other in second:
+            path = _path_and(one, other)
+            if path is not None:
+                paths[path] = None
+    return list(paths)
+
+
+def _rests(path: SpendingPath) -> list[tuple[int, object]]:
+    """Return each quorum of one key of the path, with the rest of the path.
+
+    The quorum by its place, the rest as what compares equal for two paths
+    that wait for the same, reveal the same and ask the same other quorums.
+    Two paths that share a rest are one, the quorum of one being one of
+    either's keys: either set of keys signs alone, which is how Liana reads
+    ``or_i(pk(A),pk(B))``.
+    """
+    locks = (path.older, path.after, frozenset(path.hashes))
+    rests: list[tuple[int, object]] = []
+    for index, quorum in enumerate(path.quorums):
+        if quorum.threshold == 1:
+            rest = Counter(path.quorums)
+            rest[quorum] -= 1
+            rests.append((index, (locks, frozenset((+rest).items()))))
+    return rests
+
+
+def _paths_or(
+    first: Sequence[SpendingPath], second: Sequence[SpendingPath]
+) -> list[SpendingPath]:
+    """Return the paths of a disjunction: either's, two sharing a rest as one.
+
+    `owners` is which path each rest was seen in. A merge changes the
+    rests of the path merged into, so an owner is asked again for the rest
+    before a path is merged into it.
+    """
+    _assert_path_count(len(first) + len(second))
+    paths: list[SpendingPath] = []
+    seen: set[SpendingPath] = set()
+    owners: dict[object, int] = {}
+    for path in (*first, *second):
+        if path in seen:
+            continue
+        seen.add(path)
+        for index, rest in _rests(path):
+            owner = owners.get(rest)
+            if owner is None:
+                continue
+            mine = {r: i for i, r in _rests(paths[owner])}.get(rest)
+            if mine is None:
+                continue
+            quorums = list(paths[owner].quorums)
+            quorums[mine] = Quorum(1, quorums[mine].keys + path.quorums[index].keys)
+            path = replace(paths[owner], quorums=tuple(quorums))  # noqa: PLW2901
+            paths[owner] = path
+            seen.add(path)
+            break
+        else:
+            owner = len(paths)
+            paths.append(path)
+        for _, rest in _rests(path):
+            owners.setdefault(rest, owner)
+    return paths
+
+
+def _is_key(paths: list[SpendingPath]) -> bool:
+    """Answer whether the paths are one key's signature and nothing else."""
+    if len(paths) != 1:
+        return False
+    [path] = paths
+    return (
+        path.older is None
+        and path.after is None
+        and not path.hashes
+        and len(path.quorums) == 1
+        and len(path.quorums[0].keys) == 1
+    )
+
+
+def _thresh_paths(threshold: int, subs: list[list[SpendingPath]]) -> list[SpendingPath]:
+    """Return the paths of a thresh(), its keys kept as one quorum.
+
+    `reached[count]` is the paths that satisfy `count` of the branches
+    that are not keys, read from the last one so that a path's
+    conditions come in the order the branches are written. The keys make
+    up the rest of the threshold, as a quorum of all of them.
+    """
+    keys = tuple(paths[0].quorums[0].keys[0] for paths in subs if _is_key(paths))
+    others = [paths for paths in subs if not _is_key(paths)]
+    reached: list[list[SpendingPath]] = [[SpendingPath()]]
+    reached += [[] for _ in range(min(threshold, len(others)))]
+    for paths in reversed(others):
+        for count in range(len(reached) - 1, 0, -1):
+            satisfied = _paths_and(paths, reached[count - 1])
+            reached[count] = _paths_or(satisfied, reached[count])
+    result: list[SpendingPath] = []
+    for count, paths in enumerate(reached):
+        signers = threshold - count
+        if signers > len(keys):
+            continue
+        if signers:
+            quorum = SpendingPath((Quorum(signers, keys),))
+            paths = _paths_and(paths, [quorum])  # noqa: PLW2901
+        result = _paths_or(result, paths)
+    return result
+
+
+def _leaf_paths(node: Miniscript) -> list[SpendingPath]:
+    """Return the paths of a fragment with no subexpressions."""
+    fragment = node.fragment
+    if fragment == "raw_pk_h":
+        err_msg = "rawpkh() names its key by its hash alone: no spending path lists it"
+        raise BTClibValueError(err_msg)
+    if fragment in {"pk_k", "pk_h", "multi", "multi_a"}:
+        threshold = node.threshold if fragment in {"multi", "multi_a"} else 1
+        return [SpendingPath((Quorum(threshold, node.keys),))]
+    if fragment == "older":
+        return [SpendingPath(older=node.threshold)]
+    if fragment == "after":
+        return [SpendingPath(after=node.threshold)]
+    if fragment in _HASH_OP_CODES:
+        return [SpendingPath(hashes=((fragment, node.data),))]
+    # "1" is satisfied by nothing at all, and "0" not at all
+    return [SpendingPath()] if fragment == "1" else []
+
+
+def _computed_paths(
+    node: Miniscript, subs: list[list[SpendingPath]]
+) -> list[SpendingPath]:
+    """Return the spending paths of one fragment, from its subexpressions'."""
+    if not subs:
+        return _leaf_paths(node)
+    if node.fragment in _WRAPPERS:
+        return subs[0]
+    if node.fragment in {"and_v", "and_b"}:
+        return _paths_and(subs[0], subs[1])
+    if node.fragment == "andor":
+        return _paths_or(_paths_and(subs[0], subs[1]), subs[2])
+    if node.fragment == "thresh":
+        return _thresh_paths(node.threshold, subs)
+    return _paths_or(subs[0], subs[1])

@@ -34,8 +34,9 @@ Python arithmetic answers instead.
   [BIP388](https://github.com/bitcoin/bips/blob/master/bip-0388.mediawiki)
   wallet policies (`descriptors`)
 - [BIP379](https://github.com/bitcoin/bips/blob/master/bip-0379.md)
-  miniscript: parsing, type checking, the script it compiles to and the
-  witness that satisfies it (`descriptors.miniscript`)
+  miniscript: parsing, type checking, the script it compiles to, the
+  witness that satisfies it, and its spending paths, each with its keys,
+  its threshold and its timelock (`descriptors.miniscript`)
 - `sha256(preimage(HEX))`, the private form of the hash fragments, which
   no BIP specifies (`descriptors.miniscript` says where it is proposed)
 
@@ -49,7 +50,7 @@ Signing, partially signed transactions and wallets are not here: they
 are [btclib-wallet](https://github.com/btclib-org/btclib-wallet)'s.
 
 The suite answers to vectors their authors publish -- the BIPs', Bitcoin
-Core's and bitcoin-s's -- and
+Core's, bitcoin-s's and Liana's -- and
 [tests/_data/README.md](https://github.com/btclib-org/bip32-descriptors/blob/main/tests/_data/README.md)
 pins each vendored file to the upstream commit it was copied from.
 
@@ -93,6 +94,9 @@ assert descriptor.address(0) == "bc1qw47q2vtlewz7jyx970nvm8wy6p44mqepwqdj27"
 # and a miniscript: the key, after 144 blocks
 policy = parse(f"wsh(and_v(v:pk({xpub}/0/*),older(144)))")
 assert policy.address(0).startswith("bc1q")
+[path] = policy.spending_paths
+assert path.older == 144
+assert [str(key) for key in path.quorums[0].keys] == [f"{xpub}/0/*"]
 ```
 
 `tests/readme_test.py` runs every Python block of this file, so the
