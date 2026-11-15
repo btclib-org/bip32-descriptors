@@ -3742,6 +3742,7 @@ class SpendingPath:
             if self.leaf < 0:
                 raise BTClibValueError("negative leaf")
 
+    @override
     def __hash__(self) -> int:
         """Hash the fields once, and answer that hash from then on.
 
@@ -3756,8 +3757,9 @@ class SpendingPath:
             object.__setattr__(self, "_hash", cached)
         return cached
 
+    @override
     def __getstate__(self) -> dict[str, object]:
-        """Return the fields without the hash: a str hashes apart per process."""
+        """Return the fields, not the hash: a str hashes apart per process."""
         return {name: value for name, value in self.__dict__.items() if name != "_hash"}
 
 
@@ -4341,7 +4343,9 @@ class _Order:
         for index, key in enumerate(root.key_expressions):
             self.keys.setdefault(key, index)
         self.hashes: dict[tuple[str, bytes], int] = {}
-        self.locks: dict[tuple[int | None, int | None, tuple[tuple[str, bytes], ...]], int] = {}
+        self.locks: dict[
+            tuple[int | None, int | None, tuple[tuple[str, bytes], ...]], int
+        ] = {}
         # depth first, left to right, as `key_expressions` reads the tree
         stack = [root]
         while stack:

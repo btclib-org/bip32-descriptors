@@ -25,6 +25,7 @@ from btclib.alias import Octets
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.hashes import hash160, hash256, ripemd160, sha256
 from btclib.key import PrvKeyData
+from typing_extensions import override
 
 from bip32_descriptors.bip32 import rootxprv_from_seed, xpub_from_xprv
 from bip32_descriptors.descriptors import (
@@ -430,6 +431,7 @@ class _CountedDigest(bytes):
 
     hashed = 0
 
+    @override
     def __hash__(self) -> int:
         _CountedDigest.hashed += 1
         return bytes.__hash__(self)
