@@ -4472,8 +4472,9 @@ class _Keyed:
 
     A path keeps no hash of its own: what it compares holds a key's
     origin, whose steps are a list a caller can change once the call has
-    returned the path. The call takes each path's hash once, in
-    `_Order.key`, and the hash goes when the call ends.
+    returned the path. Each path is hashed once, as it is first wrapped,
+    and `_Order.keep` holds the paths handed on until the expression's
+    paths are made, when the `_Order` goes with their hashes.
     """
 
     __slots__ = ("digest", "path")
