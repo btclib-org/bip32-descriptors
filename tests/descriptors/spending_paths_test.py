@@ -467,19 +467,23 @@ def test_a_path_s_locks_are_read_once_for_all_its_rests() -> None:
     assert _CountedDigest.hashed <= 8 * count * count
 
 
-def test_a_path_pickles_without_its_hash() -> None:
-    """A path keeps its hash once taken, and a pickle does not carry it.
+def test_a_path_hashes_its_keys_as_they_are_now() -> None:
+    """A path keeps no hash of its own, which a key's origin could outgrow.
 
-    A str and bytes hash apart in each process, so a hash carried into
-    another would file the path where no equal path looks for it.
+    The steps of a key's origin are a list, which a caller can change in
+    place once the call has returned the path.
     """
-    [path] = parse_miniscript(f"and_v(v:pk({A}),older(5))").spending_paths
-    first = hash(path)
-    assert hash(path) == first
-    loaded = pickle.loads(pickle.dumps(path))  # noqa: S301
-    assert "_hash" not in vars(loaded)
-    assert loaded == path
-    assert hash(loaded) == first
+    expression = f"and_v(v:pk([deadbeef/0]{A}),older(5))"
+    [path] = parse_miniscript(expression).spending_paths
+    origin = path.quorums[0].keys[0].origin
+    assert origin is not None
+    assert isinstance(origin.der_path, list)
+    origin.der_path[0] = 1
+    origin.assert_valid()
+    [fresh] = parse_miniscript(expression.replace("/0]", "/1]")).spending_paths
+    assert path == fresh
+    fields = (path.quorums, path.older, path.after, path.hashes, path.leaf)
+    assert hash(path) == hash(fields)
 
 
 def _preimage_thresh(threshold: int, count: int, salt: int) -> str:

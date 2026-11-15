@@ -3742,26 +3742,6 @@ class SpendingPath:
             if self.leaf < 0:
                 raise BTClibValueError("negative leaf")
 
-    @override
-    def __hash__(self) -> int:
-        """Hash the fields once, and answer that hash from then on.
-
-        A path is hashed at every set and dict it meets, and an
-        interpreter that caches no hash of a tuple would read its quorums
-        and their keys again each time.
-        """
-        cached: int | None = self.__dict__.get("_hash")
-        if cached is None:
-            fields = (self.quorums, self.older, self.after, self.hashes, self.leaf)
-            cached = hash(fields)
-            object.__setattr__(self, "_hash", cached)
-        return cached
-
-    @override
-    def __getstate__(self) -> dict[str, object]:
-        """Return the fields, not the hash: a str hashes apart per process."""
-        return {name: value for name, value in self.__dict__.items() if name != "_hash"}
-
 
 @dataclass(frozen=True)
 class _Input:
@@ -4334,11 +4314,13 @@ class _Order:
     already the order a caller reads.
 
     `work` is what the call has read, which every conjunction and
-    disjunction of the expression adds to.
+    disjunction of the expression adds to, and `kept` the paths the call
+    has made, each with its hash, by their id.
     """
 
     def __init__(self, root: Miniscript, work: _Work) -> None:
         self.work = work
+        self.kept: dict[int, _Keyed] = {}
         self.keys: dict[KeyExpression, int] = {}
         for index, key in enumerate(root.key_expressions):
             self.keys.setdefault(key, index)
@@ -4362,6 +4344,20 @@ class _Order:
         return self.locks.setdefault(
             (path.older, path.after, path.hashes), len(self.locks)
         )
+
+    def key(self, path: SpendingPath) -> _Keyed:
+        """Return the path with its hash, taken once in the call."""
+        keyed = self.kept.get(id(path))
+        return self.keep(_Keyed(path)) if keyed is None else keyed
+
+    def keep(self, keyed: _Keyed) -> _Keyed:
+        """Hold the path and its hash until the call ends.
+
+        Held, the path is the only one with its id for as long as the
+        hash is kept.
+        """
+        self.kept[id(keyed.path)] = keyed
+        return keyed
 
     def quorum(self, threshold: int, keys: Sequence[KeyExpression]) -> Quorum:
         """Return the quorum, its keys where the expression names them."""
@@ -4458,14 +4454,38 @@ def _paths_and(
     )
     # a dict for its order and its keys: the same path reached twice is
     # one path
-    paths: dict[SpendingPath, None] = {}
+    paths: dict[_Keyed, None] = {}
     for one in first:
         for other in second:
             path = _path_and(one, other, order)
             if path is not None:
-                paths[path] = None
+                paths[_Keyed(path)] = None
                 _assert_path_count(len(paths))
-    return list(paths)
+    return [order.keep(keyed).path for keyed in paths]
+
+
+class _Keyed:
+    """A path as a key of a dict, with its hash taken once.
+
+    A path keeps no hash of its own: what it compares holds a key's
+    origin, whose steps are a list a caller can change once the call has
+    returned the path. The call takes each path's hash once, in
+    `_Order.key`, and the hash goes when the call ends.
+    """
+
+    __slots__ = ("digest", "path")
+
+    def __init__(self, path: SpendingPath) -> None:
+        self.path = path
+        self.digest = hash(path)
+
+    @override
+    def __hash__(self) -> int:
+        return self.digest
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _Keyed) and self.path == other.path
 
 
 def _rest_keys(path: SpendingPath, locks: int) -> dict[tuple[int, int], int]:
@@ -4508,16 +4528,16 @@ class _Union:
 
     def __init__(self, order: _Order) -> None:
         self.order = order
-        self.live: dict[int, SpendingPath] = {}
-        self.places: dict[SpendingPath, int] = {}
+        self.live: dict[int, _Keyed] = {}
+        self.places: dict[_Keyed, int] = {}
         self.keys: dict[int, dict[tuple[int, int], int]] = {}
         self.owners: dict[tuple[int, int], set[int]] = {}
 
-    def add(self, place: int, path: SpendingPath) -> None:
+    def add(self, place: int, keyed: _Keyed) -> None:
         """Hold the path at its place, under each of its rest keys."""
-        self.live[place] = path
-        self.places[path] = place
-        self.keys[place] = _rest_keys(path, self.order.lock(path))
+        self.live[place] = self.order.keep(keyed)
+        self.places[keyed] = place
+        self.keys[place] = _rest_keys(keyed.path, self.order.lock(keyed.path))
         for key in self.keys[place]:
             self.owners.setdefault(key, set()).add(place)
 
@@ -4534,20 +4554,20 @@ class _Union:
         where the path shares no rest, or where the merged path is one
         held already.
         """
-        path = self.live[place]
+        path = self.live[place].path
         for key, mine in self.keys[place].items():
             for other in sorted(self.owners[key] - {place}):
                 theirs = self.keys[other][key]
-                owned = self.live[other]
+                owned = self.live[other].path
                 if _same_rest(path, mine, owned, theirs):
                     quorums = list(owned.quorums)
                     joined = quorums[theirs].keys + path.quorums[mine].keys
                     quorums[theirs] = self.order.quorum(1, list(dict.fromkeys(joined)))
-                    merged = self.order.path(
-                        quorums, owned.older, owned.after, owned.hashes
+                    merged = _Keyed(
+                        self.order.path(quorums, owned.older, owned.after, owned.hashes)
                     )
                     # asked again, as each path read was
-                    self.order.work.add(_path_size(merged))
+                    self.order.work.add(_path_size(merged.path))
                     self.drop(place)
                     self.drop(other)
                     if merged in self.places:
@@ -4583,9 +4603,10 @@ def _paths_or(
     union = _Union(order)
     work: deque[int] = deque()
     for path in (*first, *second):
-        if path not in union.places:
+        keyed = order.key(path)
+        if keyed not in union.places:
             work.append(len(work))
-            union.add(work[-1], path)
+            union.add(work[-1], keyed)
     while work:
         place = work.popleft()
         if place in union.live:
@@ -4593,7 +4614,7 @@ def _paths_or(
             if merged is not None:
                 work.append(merged)
     _assert_path_count(len(union.live))
-    return [union.live[place] for place in sorted(union.live)]
+    return [union.live[place].path for place in sorted(union.live)]
 
 
 def _is_key(paths: list[SpendingPath]) -> bool:
