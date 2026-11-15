@@ -79,6 +79,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from itertools import accumulate
 from typing import SupportsIndex, TypeVar
 
 from btclib.alias import Octets, ScriptList
@@ -4437,9 +4438,7 @@ def _thresh_paths(
     others = [paths for paths in subs if not _is_key(paths)]
     reached: list[list[SpendingPath]] = [[SpendingPath()]]
     reached += [[] for _ in range(min(threshold, len(others)))]
-    viable = [0]
-    for paths in others:
-        viable.append(viable[-1] + bool(paths))
+    viable = [0, *accumulate(1 if paths else 0 for paths in others)]
     for left, paths in reversed(list(enumerate(others))):
         least = threshold - len(keys) - viable[left]
         for count in range(len(reached) - 1, max(least, 1) - 1, -1):
