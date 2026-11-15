@@ -401,7 +401,9 @@ def test_the_work_of_a_disjunction_is_its_paths_times_their_quorums(
 
     Paths of a hundred quorums of one key each, or a key: reading each
     rest whole hashes the square of a path's quorums, where one pass
-    hashes their number.
+    hashes their number. Where an interpreter keeps no tuple's hash, as
+    3.11 does not, every hash of a path hashes its quorums again, so the
+    bound leaves room for that and stays far below the square.
     """
     keys = [PrvKeyData(i).pub.sec.hex()[2:] for i in range(1, 202)]
     conjunction = f"or_i(pk({keys[198]}),pk({keys[199]}))"
@@ -423,7 +425,7 @@ def test_the_work_of_a_disjunction_is_its_paths_times_their_quorums(
     monkeypatch.setattr(Quorum, "__hash__", counted)
     paths = node.spending_paths
     assert {len(path.quorums) for path in paths} == {100, 1}
-    assert hashed[0] <= 4 * len(paths) * 100
+    assert hashed[0] <= 8 * len(paths) * 100
 
 
 class _CountedDigest(bytes):
