@@ -139,10 +139,10 @@ made of -- `DescriptorTree` and the `MultiA`, `RawLeaf` and `RawNode` a
 tree may hold among them, all being names a caller reads off
 `TrDescriptor.tree`.
 `KeyExpression`, `PrvKeys` and `Wifs` are `key_expression`'s, and
-`Preimages` and the `Miniscript` a `MiniscriptDescriptor` holds are
+`Preimages`, the `Miniscript` a `MiniscriptDescriptor` holds and the
+`SpendingPath` and `Quorum` of `Descriptor.spending_paths` are
 `miniscript`'s; the package `__init__` re-exports them, being what a
-caller reads off `Descriptor.key_expressions` and annotates a mapping
-with.
+caller reads off a descriptor and annotates a mapping with.
 `INPUT_CHARSET`, `CHECKSUM_CHARSET` and `GENERATOR` stay out: they are the
 three tables BIP380's checksum is computed from, which is what `checksum`,
 `add_checksum` and `strip_checksum` answer.
@@ -196,6 +196,7 @@ from ecc.ssa import point_from_bip340pub_key_var
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import (
+    BIP32KeyData,
     _derive,
     _xpub_from_xprv,
     fingerprint,
@@ -211,6 +212,7 @@ from bip32_descriptors.bip32.der_path import (
 from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
 from bip32_descriptors.descriptors import miniscript
 from bip32_descriptors.descriptors.key_expression import (
+    _PLACEHOLDER,
     _PRINTED_PRV_KEYS,
     _PRINTED_WIFS,
     KeyExpression,
@@ -255,10 +257,13 @@ from bip32_descriptors.descriptors.miniscript import (
     _PRINTED_PREIMAGES,
     Miniscript,
     Preimages,
+    Quorum,
     SpendContext,
+    SpendingPath,
     _assert_derived,
     _assert_fragment_type,
     _assert_key_number,
+    _assert_path_count,
     _assert_sane,
     _assert_sane_script,
     _has_raw_key_hash,
@@ -410,6 +415,13 @@ def from_address(address: str) -> str:
 
 # the tapscript leaf version, which is the only one a BIP386 tree has
 _TAPSCRIPT_LEAF_VERSION = 0xC0
+
+# the x coordinate of BIP341's H, the point nobody knows the discrete
+# logarithm of: a key path to it, or to a key derived from it, is one
+# nobody can sign for
+_UNSPENDABLE_X = bytes.fromhex(
+    "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+)
 
 # where a SCRIPT expression sits. BIP381 to BIP386 give each function a
 # position rule -- sh() is top level only, wpkh() is top level or inside
@@ -743,6 +755,36 @@ def _leaf_keys(leaf: DescriptorLeaf) -> tuple[KeyExpression, ...]:
     if isinstance(leaf, Miniscript):
         return leaf.key_expressions
     return () if isinstance(leaf, RawLeaf) else (leaf,)
+
+
+def _tree_leaf_paths(leaf: DescriptorLeaf) -> tuple[SpendingPath, ...]:
+    """Return the spending paths of one leaf, refusing a `RawLeaf`'s."""
+    if isinstance(leaf, MultiA):
+        return (SpendingPath((Quorum(leaf.threshold, leaf.keys),)),)
+    if isinstance(leaf, Miniscript):
+        return leaf.spending_paths
+    if isinstance(leaf, RawLeaf):
+        err_msg = "a tr() with a rawleaf() does not name every key a spend needs"
+        raise BTClibValueError(err_msg)
+    return (SpendingPath((Quorum(1, (leaf,)),)),)
+
+
+def _is_unspendable(key: KeyExpression) -> bool:
+    """Answer whether the key is BIP341's H, or an extended key of it.
+
+    By its x coordinate, so that either parity of H is H. A ``musig()``
+    and a wallet-policy placeholder are neither.
+    """
+    if key.pub_key is not None:
+        # asked again: unpickling builds a key without `__post_init__`
+        assert_type(key.pub_key, bytes, "pub_key")
+        return key.pub_key[1:33] == _UNSPENDABLE_X
+    if not key.xkey:
+        return False
+    assert_type(key.xkey, str, "xkey")
+    if _PLACEHOLDER.fullmatch(key.xkey):
+        return False
+    return BIP32KeyData.b58decode(key.xkey).key[1:] == _UNSPENDABLE_X
 
 
 def _tree_leaves(tree: DescriptorTree) -> tuple[DescriptorLeaf, ...]:
@@ -1478,6 +1520,45 @@ class Descriptor(ABC):
         """Return True if the descriptor describes a range of scripts."""
         return any(key.is_ranged for key in self.key_expressions)
 
+    @property
+    def spending_paths(self) -> tuple[SpendingPath, ...]:
+        """Return every way to spend the script, as `SpendingPath`.
+
+        The KEY expressions each path needs signatures of, and the lock
+        times and the preimages it waits for: what a wallet shows of a
+        recovery or an inheritance policy, and builds each spend from.
+
+        A fragment of one key has one path, a quorum of that key, and a
+        ``multi()`` or a ``sortedmulti()`` one, its threshold of its keys in
+        the order the descriptor writes them. A ``sh()`` and a ``wsh()`` have
+        their argument's, a miniscript the paths `Miniscript.spending_paths`
+        lists, and an ``unused()`` none, having no script.
+
+        A ``tr()`` lists its key path, then the paths of each leaf in turn,
+        each marked with its leaf's number. The key path is left out where
+        the internal key is BIP341's unspendable point H, or an extended key
+        of it, as Liana writes one: H + tG, the key any derivation from it
+        gives, is one nobody can sign for either. A ``rawtr()`` of such a
+        key has no path.
+
+        Each fragment's fields are asked their type, as its build asks
+        them, before they are read: an unpickled descriptor skipped its
+        build.
+
+        Refused where the descriptor does not name every key a spend may
+        need: an ``addr()``, a ``raw()``, a ``rawpkh()``, and a ``tr()``
+        with a ``rawnode()`` or a ``rawleaf()``. Refused too where
+        `Miniscript.spending_paths` refuses a miniscript it holds, and where
+        a ``tr()``'s paths, its leaves' together, pass this library's bound
+        on the number of paths.
+        """
+        return self._spending_paths()
+
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        """Refuse: the fragments that know their paths override this."""
+        err_msg = f"{type(self).__name__} names no key a spending path needs"
+        raise BTClibValueError(err_msg)
+
     def _assert_index(self, index: int) -> None:
         """Refuse a non-integer or out-of-range index, or one with no script.
 
@@ -1892,6 +1973,12 @@ class PkDescriptor(Descriptor):
         return (self.key,)
 
     @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
+
+    @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         pub_key = _pub_key_data(
             self.key.sec(index, self.network, prv_keys), self.network
@@ -1934,6 +2021,12 @@ class PkhDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the one KEY expression, as the base class's tuple."""
         return (self.key,)
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -1981,6 +2074,12 @@ class WpkhDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the one KEY expression, as the base class's tuple."""
         return (self.key,)
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -2075,6 +2174,13 @@ class ShDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the wrapped SCRIPT's KEY expressions."""
         return self.inner.key_expressions
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.inner, Descriptor, "inner descriptor")
+        _assert_inner(self.inner, _P2SH)
+        return self.inner._spending_paths()
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -2176,6 +2282,13 @@ class WshDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the wrapped SCRIPT's KEY expressions."""
         return self.inner.key_expressions
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.inner, Descriptor, "inner descriptor")
+        _assert_inner(self.inner, _P2WSH)
+        return self.inner._spending_paths()
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -2364,6 +2477,13 @@ class MiniscriptDescriptor(Descriptor):
         return self.node.key_expressions
 
     @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.node, Miniscript, "miniscript")
+        _assert_p2wsh(self.node)
+        return self.node.spending_paths
+
+    @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         return [self.node.script(index, self.network, prv_keys)]
 
@@ -2449,6 +2569,12 @@ class MultiDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the KEY expressions, in descriptor order."""
         return self.keys
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        _assert_multi_types(self)
+        return (SpendingPath((Quorum(self.threshold, self.keys),)),)
 
     def _pub_keys(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         """Return the keys in the order the script holds them.
@@ -2548,6 +2674,12 @@ class ComboDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the one KEY expression, as the base class's tuple."""
         return (self.key,)
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -2901,6 +3033,27 @@ class TrDescriptor(Descriptor):
             return (self.internal_key,)
         return (self.internal_key, *_tree_keys(self.tree))
 
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        """Return the key path, unless it is H's, then each leaf's paths."""
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.internal_key, KeyExpression, "internal key")
+        if self.tree is not None:
+            _assert_tree(self.tree)
+        paths: list[SpendingPath] = []
+        if not _is_unspendable(self.internal_key):
+            paths.append(SpendingPath((Quorum(1, (self.internal_key,)),)))
+        if self.tree is None:
+            return tuple(paths)
+        if _has_raw_node(self.tree):
+            err_msg = "a tr() with a rawnode() does not name every key a spend needs"
+            raise BTClibValueError(err_msg)
+        for number, leaf in enumerate(_tree_leaves(self.tree)):
+            leaf_paths = _tree_leaf_paths(leaf)
+            _assert_path_count(len(paths) + len(leaf_paths))
+            paths += [replace(path, leaf=number) for path in leaf_paths]
+        return tuple(paths)
+
     def _tree(
         self, index: int, prv_keys: PrvKeys | None
     ) -> tuple[list[_TreeLeaf], bytes]:
@@ -3160,6 +3313,14 @@ class RawTrDescriptor(Descriptor):
         return (self.key,)
 
     @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
+        if _is_unspendable(self.key):
+            return ()
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
+
+    @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         # not ScriptPubKey.p2tr, which computes an output key from an
         # internal one: here the key already is the output key, and
@@ -3256,6 +3417,12 @@ class UnusedDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the one KEY expression, as the base class's tuple."""
         return (self.key,)
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
+        return ()
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:

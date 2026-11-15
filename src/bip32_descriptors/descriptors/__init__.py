@@ -21,8 +21,9 @@ by name -- `miniscript.parse`, `miniscript.from_script` and the
 `Miniscript` a `MiniscriptDescriptor` holds are its own interface, not the
 descriptor one -- while `key_expression` is not: `KeyExpression`,
 `PrvKeys` and `Wifs` are re-exported below, being names a caller reads off
-a parsed descriptor. So are `miniscript`'s `Preimages`, for the same
-reason.
+a parsed descriptor. So are `miniscript`'s `Preimages`, and its
+`Quorum` and `SpendingPath`, which `Descriptor.spending_paths` answers in,
+for the same reason.
 """
 
 from bip32_descriptors.descriptors import miniscript
@@ -65,7 +66,13 @@ from bip32_descriptors.descriptors.descriptors import (
     wallet_policy_descriptor,
 )
 from bip32_descriptors.descriptors.key_expression import KeyExpression, PrvKeys, Wifs
-from bip32_descriptors.descriptors.miniscript import Miniscript, Preimages, SpendContext
+from bip32_descriptors.descriptors.miniscript import (
+    Miniscript,
+    Preimages,
+    Quorum,
+    SpendContext,
+    SpendingPath,
+)
 
 __all__ = [
     "AddrDescriptor",
@@ -84,6 +91,7 @@ __all__ = [
     "Preimages",
     "Provider",
     "PrvKeys",
+    "Quorum",
     "RawDescriptor",
     "RawLeaf",
     "RawNode",
@@ -91,6 +99,7 @@ __all__ = [
     "RawTrDescriptor",
     "ShDescriptor",
     "SpendContext",
+    "SpendingPath",
     "TrDescriptor",
     "UnusedDescriptor",
     "Wifs",

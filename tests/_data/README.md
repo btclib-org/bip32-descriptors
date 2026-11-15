@@ -733,6 +733,89 @@ Not vendored as a file because the strings are literals in Scala source.
 bitcoin-s is under the MIT licence (its `LICENSE`), the licence of this
 package.
 
+### Not vendored as a file: Liana's descriptor tests
+
+```text
+repo    wizardsardine/liana
+path    liana/src/descriptors
+commit  29a1defdad175f2897562ea8b8b916a889a1851b  2026-10-12
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
+```
+
+Verdict: **transcribed**. `tests/descriptors/liana_test.py` holds every
+descriptor string of that directory's `mod.rs` and `analysis.rs`, each
+under the test function that writes it, with the paths read off the
+descriptor by hand. `analysis.rs` writes its keys apart and formats them
+into its descriptors, and the test does the same. It also holds the
+thresholds and key counts of `liana_desc_keys`, whose keys Liana draws at
+random and the test builds from small private keys. Its last case, a
+policy that Liana's comment says passes on Taproot and fails on P2WSH, is a
+question for a policy compiler and not for a descriptor reader, so it is
+left out.
+
+Issue #356 cites Liana at 433ad8ca38377aa2df40b60274abdb54fb8f0c2a, the tip
+of its default branch on 2026-11-13. Its tree holds that directory's files
+as the pinned commit does, the last to touch the directory.
+
+A descriptor Liana's test expects refused is in `REFUSED_BY_LIANA`, with
+its paths, where `parse` reads it. `REFUSED_HERE` holds those `parse`
+refuses: a `wsh()` that no input satisfies, which Liana refuses too, and a
+testnet descriptor mixing in mainnet keys, which Liana's test accepts.
+Bitcoin Core refuses that one too: its `DecodeExtPubKey` in
+`src/key_io.cpp`, at
+a527a0077a0fcae913188410214efe98021c0cca, reads an extended key only under
+the running chain's prefix. Where Liana writes a checksum,
+`multipath_descriptors` verifies it, so this package and Liana agree on
+each such checksum.
+
+From the repository root, the command fetches both files and prints a pair
+of lists: the test's strings that the files do not hold under the function
+the test names, and the files' strings that the test does not hold. It
+prints a pair of empty lists.
+
+```shell
+commit=29a1defdad175f2897562ea8b8b916a889a1851b
+rs=$(mktemp -d)
+dir=liana/src/descriptors
+for f in mod.rs analysis.rs; do
+    gh api -H 'Accept: application/vnd.github.raw' \
+        "repos/wizardsardine/liana/contents/${dir}/${f}?ref=${commit:?}" \
+        > "$rs/$f"
+done
+uv run python - "$rs" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+from tests.descriptors import liana_test as t
+
+keys = {"key_a": t.KEY_A, "key_b": t.KEY_B, "key_c": t.KEY_C, "key_d": t.KEY_D}
+held = []
+for function, descriptor, _ in t.ACCEPTED + t.REFUSED_BY_LIANA + t.REFUSED_HERE:
+    if function == "primary_path_key_merging":
+        for name, key in keys.items():
+            descriptor = descriptor.replace(key, "{" + name + "}")
+    held.append((function, descriptor))
+found = []
+for path in sorted(Path(sys.argv[1]).glob("*.rs")):
+    source = path.read_text()
+    found += [(n, k) for n, k in keys.items() if f'let {n} = "{k}";' in source]
+    for match in re.finditer(r'"([a-z_]+\([^"\s]*)"', source):
+        function = re.findall(r"\bfn (\w+)\(", source[: match.start()])[-1]
+        found.append((function, match.group(1)))
+held += keys.items()
+print([s for s in held if s not in found], [s for s in found if s not in held])
+PY
+rm -r "${rs:?}"
+```
+
+Not vendored as a file because the strings are literals in Rust source.
+Liana is under a BSD licence (its `LICENCE`), not this package's MIT
+licence. That licence asks that a copy of the source keep its notice, and
+`tests/descriptors/liana_test.py` carries the notice whole, below this
+package's header.
+
 ## Delving Bitcoin
 
 ### `tests/_data/preimage_descriptors.json`

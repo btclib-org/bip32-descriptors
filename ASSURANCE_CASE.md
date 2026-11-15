@@ -13,7 +13,8 @@ page points at it instead of repeating it.
 - **A key, a path and a descriptor agree with the specification that
   defines them.** BIP32 against its own vectors; descriptors against
   BIP380 to BIP390's, Bitcoin Core's `descriptor_tests.cpp` and
-  bitcoin-s's; miniscript against Core's `miniscript_tests.cpp`.
+  bitcoin-s's; miniscript against Core's `miniscript_tests.cpp`, and its
+  spending paths against Liana's descriptor tests.
   `tests/_data/README.md` says where each came from, pins it to the
   upstream commit it was taken from, and says whether the two still
   match. `.github/workflows/vendored-vectors.yml` runs weekly: it holds
