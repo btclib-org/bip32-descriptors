@@ -16,6 +16,7 @@ Liana's own vectors are in `liana_test.py`.
 from __future__ import annotations
 
 import itertools
+import pickle
 from collections.abc import Callable
 from typing import Any
 
@@ -504,6 +505,59 @@ def test_a_tr_path_spends_its_leaf() -> None:
             assert len(witness.stack) == 1
         else:
             assert witness.stack[-2] == tree[path.leaf][2]
+
+
+@pytest.mark.parametrize(
+    "key",
+    [NUMS, f"{NUMS_XPUB}/0/*", f"[aabbccdd/1]{NUMS_XPUB}/1/*"],
+)
+def test_a_rawtr_nobody_can_sign_for_has_no_path(key: str) -> None:
+    """A ``rawtr()`` of H, or of a key derived from it, is spent by nobody."""
+    assert parse(f"rawtr({key})").spending_paths == ()
+
+
+# each: a descriptor, the field of it or of a part of it an unpickled one
+# holds, the value, and the refusal's field
+FORGED: list[tuple[str, Callable[[Any], Any], str, object, str]] = [
+    (f"tr({A[2:]})", lambda d: d, "internal_key", "garbage", "internal key"),
+    (f"tr({A[2:]},pk({B[2:]}))", lambda d: d, "tree", 5, "script tree node"),
+    (f"rawtr({A[2:]})", lambda d: d, "key", "garbage", "key"),
+    (f"pkh({A})", lambda d: d, "key", None, "key"),
+    (f"wsh(pk({A}))", lambda d: d, "inner", "garbage", "inner descriptor"),
+    (f"sh(wpkh({A}))", lambda d: d, "inner", 5, "inner descriptor"),
+    (f"wsh(multi(1,{A},{B}))", lambda d: d.inner, "keys", "garbage", "keys"),
+    (f"wsh(and_v(v:pk({A}),older(5)))", lambda d: d.inner, "node", "x", "miniscript"),
+    (f"wsh(and_v(v:pk({A}),older(5)))", lambda d: d.inner.node, "subs", "x", "subs"),
+]
+
+
+@pytest.mark.parametrize("descriptor, part, field, value, message", FORGED)
+def test_an_unpickled_descriptor_is_asked_its_fields(
+    descriptor: str,
+    part: Callable[[Any], Any],
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    """Unpickling skips the build, so the paths ask its fields again."""
+    forged = pickle.loads(pickle.dumps(parse(descriptor)))  # noqa: S301
+    object.__setattr__(part(forged), field, value)
+    with pytest.raises(BTClibTypeError, match=message):
+        _ = forged.spending_paths
+
+
+def test_an_unpickled_miniscript_is_asked_its_nodes() -> None:
+    """A node of the wrong type, or of the wrong shape, is refused first."""
+    for field, value, message in (
+        ("subs", ("x", "y"), "miniscript node"),
+        ("data", 5, "data"),
+    ):
+        built = parse_miniscript(f"and_v(v:pk({A}),sha256({DIGEST['sha256']}))")
+        node = pickle.loads(pickle.dumps(built))  # noqa: S301
+        target = node if field == "subs" else node.subs[1]
+        object.__setattr__(target, field, value)
+        with pytest.raises(BTClibTypeError, match=message):
+            _ = node.spending_paths
 
 
 @pytest.mark.parametrize(

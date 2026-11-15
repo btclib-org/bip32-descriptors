@@ -1476,12 +1476,15 @@ class Miniscript:
         expression has one. A key the expression names twice is listed and
         counted twice, which `has_duplicate_keys` answers for.
 
-        Refused for an expression `script` refuses, one built by hand
-        without a type; for a ``rawpkh()``, which names its key by its hash
-        alone; and past this library's bound on the number of paths, or on
-        the pairs of paths a conjunction joins, which the refusal states:
-        conjoined disjunctions multiply them.
+        Refused for a node its own build refuses, as an unpickled one can
+        hold, as `Miniscript._assert_shape` says; for an expression `script`
+        refuses, one built by hand without a type; for a ``rawpkh()``,
+        which names its key by its hash alone; and past this library's
+        bound on the number of paths, or on the pairs of paths a
+        conjunction joins, which the refusal states: conjoined disjunctions
+        multiply them.
         """
+        _assert_shapes(self)
         if not self.is_valid:
             raise BTClibValueError(f"invalid miniscript: {self}")
 
@@ -4198,6 +4201,24 @@ _MAX_SPENDING_PATHS = 1000
 # already; this keeps a conjunction to a hundred times the paths it may
 # give rather than a thousand
 _MAX_PATH_PAIRS = 100_000
+
+
+def _assert_shapes(root: Miniscript) -> None:
+    """Refuse a node of the tree that its own build refuses.
+
+    An unpickled tree skips every node's build, so each node is asked its
+    type, and its subexpressions theirs, before `Miniscript._assert_shape`
+    reads them.
+    """
+    assert_type(root, Miniscript, "miniscript node")
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        node._assert_arity()
+        for sub in node.subs:
+            assert_type(sub, Miniscript, "miniscript node")
+        node._assert_shape()
+        stack.extend(node.subs)
 
 
 def _assert_path_count(count: int) -> None:

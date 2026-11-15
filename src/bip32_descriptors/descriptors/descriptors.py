@@ -1533,7 +1533,12 @@ class Descriptor(ABC):
         each marked with its leaf's number. The key path is left out where
         the internal key is BIP341's unspendable point H, or an extended key
         of it, as Liana writes one: H + tG, the key any derivation from it
-        gives, is one nobody can sign for either.
+        gives, is one nobody can sign for either. A ``rawtr()`` of such a
+        key has no path.
+
+        Each fragment's fields are asked their type, as its build asks
+        them, before they are read: an unpickled descriptor skipped its
+        build.
 
         Refused where the descriptor does not name every key a spend may
         need: an ``addr()``, a ``raw()``, a ``rawpkh()``, and a ``tr()``
@@ -1964,6 +1969,8 @@ class PkDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
         return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
@@ -2012,6 +2019,8 @@ class PkhDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
         return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
@@ -2063,6 +2072,8 @@ class WpkhDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
         return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
@@ -2161,6 +2172,9 @@ class ShDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.inner, Descriptor, "inner descriptor")
+        _assert_inner(self.inner, _P2SH)
         return self.inner._spending_paths()
 
     @override
@@ -2266,6 +2280,9 @@ class WshDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.inner, Descriptor, "inner descriptor")
+        _assert_inner(self.inner, _P2WSH)
         return self.inner._spending_paths()
 
     @override
@@ -2456,6 +2473,9 @@ class MiniscriptDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.node, Miniscript, "miniscript")
+        _assert_p2wsh(self.node)
         return self.node.spending_paths
 
     @override
@@ -2547,6 +2567,8 @@ class MultiDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        _assert_multi_types(self)
         return (SpendingPath((Quorum(self.threshold, self.keys),)),)
 
     def _pub_keys(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -2650,6 +2672,8 @@ class ComboDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
         return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
@@ -3007,6 +3031,10 @@ class TrDescriptor(Descriptor):
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
         """Return the key path, unless it is H's, then each leaf's paths."""
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.internal_key, KeyExpression, "internal key")
+        if self.tree is not None:
+            _assert_tree(self.tree)
         paths: list[SpendingPath] = []
         if not _is_unspendable(self.internal_key):
             paths.append(SpendingPath((Quorum(1, (self.internal_key,)),)))
@@ -3281,6 +3309,10 @@ class RawTrDescriptor(Descriptor):
 
     @override
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again: unpickling builds one without `__post_init__`
+        assert_type(self.key, KeyExpression, "key")
+        if _is_unspendable(self.key):
+            return ()
         return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
