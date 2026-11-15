@@ -76,7 +76,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import SupportsIndex, TypeVar
@@ -1483,29 +1483,15 @@ class Miniscript:
         if not self.is_valid:
             raise BTClibValueError(f"invalid miniscript: {self}")
 
+        order = _Order(self)
+
         def up(
             _state: None, node: Miniscript, subs: list[list[SpendingPath]]
         ) -> list[SpendingPath]:
-            return _computed_paths(node, subs)
+            return _computed_paths(node, subs, order)
 
         paths: list[SpendingPath] = _tree_eval(self, None, lambda *_: None, up)
-        place: dict[KeyExpression, int] = {}
-        for index, key in enumerate(self.key_expressions):
-            place.setdefault(key, index)
-        ordered = (
-            replace(
-                path,
-                quorums=tuple(
-                    Quorum(
-                        quorum.threshold,
-                        tuple(sorted(quorum.keys, key=place.__getitem__)),
-                    )
-                    for quorum in path.quorums
-                ),
-            )
-            for path in paths
-        )
-        return tuple(dict.fromkeys(ordered))
+        return tuple(paths)
 
     @property
     def max_ops(self) -> int | None:
@@ -3718,10 +3704,12 @@ class SpendingPath:
     recovery paths by, its primary path being the one with neither.
 
     `hashes` holds, for each preimage the path reveals, the hash fragment
-    and the digest it holds. `leaf` is the number of the ``tr()`` leaf the
-    path spends, in the order `TrDescriptor.taproot_tree` lists the
-    leaves, and None for every other path, the key path of a ``tr()``
-    included.
+    and the digest it holds. A path of `Miniscript.spending_paths` has its
+    quorums in the order the expression names their first keys, and its
+    hashes in the order the expression names them. `leaf` is the number of
+    the ``tr()`` leaf the path spends, in the order
+    `TrDescriptor.taproot_tree` lists the leaves, and None for every other
+    path, the key path of a ``tr()`` included.
 
     Liana's `LianaPolicy`:
     https://github.com/wizardsardine/liana/blob/433ad8ca38377aa2df40b60274abdb54fb8f0c2a/liana/src/descriptors/analysis.rs#L473-L477
@@ -4201,6 +4189,14 @@ def _assert_hash_lock(hash_lock: tuple[str, bytes]) -> None:
 # so a script of a few hundred bytes can have more than anybody reads
 _MAX_SPENDING_PATHS = 1000
 
+# the most pairs of paths a conjunction joins, the work its bound on the
+# paths does not cap: a pair no transaction can take, or one giving a path
+# another pair gave, adds no path but is work all the same. Each side is
+# within `_MAX_SPENDING_PATHS`, so the pairs are within its square
+# already; this keeps a conjunction to a hundred times the paths it may
+# give rather than a thousand
+_MAX_PATH_PAIRS = 100_000
+
 
 def _assert_path_count(count: int) -> None:
     """Refuse a list of spending paths past `_MAX_SPENDING_PATHS`."""
@@ -4215,15 +4211,16 @@ def _joined_older(first: int | None, second: int | None) -> tuple[bool, int | No
     BIP68's relative lock is in blocks or in 512-second intervals, as bit
     22 of the sequence says, so two of different units are met by no
     sequence. Two of one unit are met by the larger, compared on the bits
-    BIP68 reads.
+    BIP68 reads, and two equal there by the larger value, so that the path
+    is the same in whichever order the two come.
     """
     if first is None or second is None:
         return True, second if first is None else first
     if first & SEQUENCE_LOCKTIME_TYPE_FLAG != second & SEQUENCE_LOCKTIME_TYPE_FLAG:
         return False, None
-    if first & SEQUENCE_LOCKTIME_MASK >= second & SEQUENCE_LOCKTIME_MASK:
-        return True, first
-    return True, second
+    return True, max(
+        first, second, key=lambda value: (value & SEQUENCE_LOCKTIME_MASK, value)
+    )
 
 
 def _joined_after(first: int | None, second: int | None) -> tuple[bool, int | None]:
@@ -4239,51 +4236,100 @@ def _joined_after(first: int | None, second: int | None) -> tuple[bool, int | No
     return True, max(first, second)
 
 
-def _conjoined(quorums: tuple[Quorum, ...]) -> tuple[Quorum, ...]:
+class _Order:
+    """Where each key and each hash of an expression first stands.
+
+    Every path is built in one form, whatever order the expression reaches
+    its conditions in: a quorum's keys in the order the expression first
+    names them, a path's quorums in the order of their keys, and its
+    hashes in the order the expression first names them. Two ways to one
+    path are then one path, which the bounds count once, and the form is
+    already the order a caller reads.
+    """
+
+    def __init__(self, root: Miniscript) -> None:
+        self.keys: dict[KeyExpression, int] = {}
+        for index, key in enumerate(root.key_expressions):
+            self.keys.setdefault(key, index)
+        self.hashes: dict[tuple[str, bytes], int] = {}
+        # depth first, left to right, as `key_expressions` reads the tree
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            if node.fragment in _HASH_OP_CODES:
+                self.hashes.setdefault((node.fragment, node.data), len(self.hashes))
+            stack.extend(reversed(node.subs))
+
+    def quorum(self, threshold: int, keys: Sequence[KeyExpression]) -> Quorum:
+        """Return the quorum, its keys where the expression names them."""
+        return Quorum(threshold, tuple(sorted(keys, key=self.keys.__getitem__)))
+
+    def path(
+        self,
+        quorums: Sequence[Quorum],
+        older: int | None,
+        after: int | None,
+        hashes: Iterable[tuple[str, bytes]],
+    ) -> SpendingPath:
+        """Return the path, its quorums and its hashes in their order."""
+        ordered = sorted(
+            quorums,
+            key=lambda quorum: (
+                tuple(self.keys[key] for key in quorum.keys),
+                quorum.threshold,
+            ),
+        )
+        revealed = sorted(set(hashes), key=self.hashes.__getitem__)
+        return SpendingPath(tuple(ordered), older, after, tuple(revealed))
+
+
+def _conjoined(quorums: Sequence[Quorum], order: _Order) -> list[Quorum]:
     """Return the quorums, those wanting all their keys made one.
 
-    Where the first of them stood: n of n keys and m of m others are n+m
-    of all of them, and a threshold lower than its keys stays a quorum of
-    its own.
+    n of n keys and m of m others are n+m of all of them, and a threshold
+    lower than its keys stays a quorum of its own.
     """
     whole = [quorum for quorum in quorums if quorum.threshold == len(quorum.keys)]
     if len(whole) < 2:
-        return quorums
-    keys = tuple(key for quorum in whole for key in quorum.keys)
-    joined: list[Quorum] = []
-    for quorum in quorums:
-        if quorum.threshold != len(quorum.keys):
-            joined.append(quorum)
-        elif keys:
-            joined.append(Quorum(len(keys), keys))
-            keys = ()
-    return tuple(joined)
+        return list(quorums)
+    keys = [key for quorum in whole for key in quorum.keys]
+    joined = [quorum for quorum in quorums if quorum.threshold != len(quorum.keys)]
+    return [*joined, order.quorum(len(keys), keys)]
 
 
-def _path_and(first: SpendingPath, second: SpendingPath) -> SpendingPath | None:
+def _path_and(
+    first: SpendingPath, second: SpendingPath, order: _Order
+) -> SpendingPath | None:
     """Return the path that takes both, None where no transaction can."""
     older_met, older = _joined_older(first.older, second.older)
     after_met, after = _joined_after(first.after, second.after)
     if not (older_met and after_met):
         return None
-    hashes = first.hashes + tuple(h for h in second.hashes if h not in first.hashes)
-    quorums = _conjoined(first.quorums + second.quorums)
-    return SpendingPath(quorums, older, after, hashes)
+    quorums = _conjoined(first.quorums + second.quorums, order)
+    return order.path(quorums, older, after, first.hashes + second.hashes)
 
 
 def _paths_and(
-    first: Sequence[SpendingPath], second: Sequence[SpendingPath]
+    first: Sequence[SpendingPath], second: Sequence[SpendingPath], order: _Order
 ) -> list[SpendingPath]:
-    """Return the paths of a conjunction: each of the first with each other."""
-    _assert_path_count(len(first) * len(second))
+    """Return the paths of a conjunction: each of the first with each other.
+
+    The bound on the paths is on those that come out: a pair no
+    transaction can take is none, and the same path reached twice is one.
+    The pairs are bounded apart, by `_MAX_PATH_PAIRS`, being the work.
+    """
+    if len(first) * len(second) > _MAX_PATH_PAIRS:
+        err_msg = f"more than {_MAX_PATH_PAIRS} pairs of spending paths to join"
+        raise BTClibValueError(err_msg)
     # a dict for its order and its keys: the same path reached twice is
     # one path
     paths: dict[SpendingPath, None] = {}
     for one in first:
         for other in second:
-            path = _path_and(one, other)
+            path = _path_and(one, other, order)
             if path is not None:
                 paths[path] = None
+                _assert_path_count(len(paths))
     return list(paths)
 
 
@@ -4307,7 +4353,7 @@ def _rests(path: SpendingPath) -> list[tuple[int, object]]:
 
 
 def _paths_or(
-    first: Sequence[SpendingPath], second: Sequence[SpendingPath]
+    first: Sequence[SpendingPath], second: Sequence[SpendingPath], order: _Order
 ) -> list[SpendingPath]:
     """Return the paths of a disjunction: either's, two sharing a rest as one.
 
@@ -4316,7 +4362,12 @@ def _paths_or(
     before a path is merged into it.
 
     The bound is on the paths that come out, a path both branches have
-    being one: each branch is within it already, so the work is too.
+    being one. Each branch is within it already, so the paths read are at
+    most twice the bound: that is the work.
+
+    Which paths merge follows the order they come in: a path whose
+    quorums of one could each join another path joins the first of them,
+    and either reading lists the same spends.
     """
     paths: list[SpendingPath] = []
     seen: set[SpendingPath] = set()
@@ -4332,18 +4383,20 @@ def _paths_or(
             mine = {r: i for i, r in _rests(paths[owner])}.get(rest)
             if mine is None:
                 continue
-            quorums = list(paths[owner].quorums)
-            quorums[mine] = Quorum(1, quorums[mine].keys + path.quorums[index].keys)
-            path = replace(paths[owner], quorums=tuple(quorums))  # noqa: PLW2901
+            owned = paths[owner]
+            quorums = list(owned.quorums)
+            keys = quorums[mine].keys + path.quorums[index].keys
+            quorums[mine] = order.quorum(1, keys)
+            path = order.path(quorums, owned.older, owned.after, owned.hashes)  # noqa: PLW2901
             paths[owner] = path
             seen.add(path)
             break
         else:
             owner = len(paths)
             paths.append(path)
+            _assert_path_count(len(paths))
         for _, rest in _rests(path):
             owners.setdefault(rest, owner)
-    _assert_path_count(len(paths))
     return paths
 
 
@@ -4361,7 +4414,9 @@ def _is_key(paths: list[SpendingPath]) -> bool:
     )
 
 
-def _thresh_paths(threshold: int, subs: list[list[SpendingPath]]) -> list[SpendingPath]:
+def _thresh_paths(
+    threshold: int, subs: list[list[SpendingPath]], order: _Order
+) -> list[SpendingPath]:
     """Return the paths of a thresh(), its keys kept as one quorum.
 
     `reached[count]` is the paths that satisfy `count` of the branches
@@ -4382,8 +4437,8 @@ def _thresh_paths(threshold: int, subs: list[list[SpendingPath]]) -> list[Spendi
     for left, paths in reversed(list(enumerate(others))):
         least = threshold - len(keys) - left
         for count in range(len(reached) - 1, max(least, 1) - 1, -1):
-            satisfied = _paths_and(paths, reached[count - 1])
-            reached[count] = _paths_or(satisfied, reached[count])
+            satisfied = _paths_and(paths, reached[count - 1], order)
+            reached[count] = _paths_or(satisfied, reached[count], order)
         for count in range(min(least, len(reached))):
             reached[count] = []
     result: list[SpendingPath] = []
@@ -4392,13 +4447,13 @@ def _thresh_paths(threshold: int, subs: list[list[SpendingPath]]) -> list[Spendi
         if signers > len(keys):
             continue
         if signers:
-            quorum = SpendingPath((Quorum(signers, keys),))
-            paths = _paths_and(paths, [quorum])  # noqa: PLW2901
-        result = _paths_or(result, paths)
+            quorum = order.path([order.quorum(signers, keys)], None, None, ())
+            paths = _paths_and(paths, [quorum], order)  # noqa: PLW2901
+        result = _paths_or(result, paths, order)
     return result
 
 
-def _leaf_paths(node: Miniscript) -> list[SpendingPath]:
+def _leaf_paths(node: Miniscript, order: _Order) -> list[SpendingPath]:
     """Return the paths of a fragment with no subexpressions."""
     fragment = node.fragment
     if fragment == "raw_pk_h":
@@ -4406,7 +4461,7 @@ def _leaf_paths(node: Miniscript) -> list[SpendingPath]:
         raise BTClibValueError(err_msg)
     if fragment in {"pk_k", "pk_h", "multi", "multi_a"}:
         threshold = node.threshold if fragment in {"multi", "multi_a"} else 1
-        return [SpendingPath((Quorum(threshold, node.keys),))]
+        return [order.path([order.quorum(threshold, node.keys)], None, None, ())]
     if fragment == "older":
         return [SpendingPath(older=node.threshold)]
     if fragment == "after":
@@ -4418,17 +4473,17 @@ def _leaf_paths(node: Miniscript) -> list[SpendingPath]:
 
 
 def _computed_paths(
-    node: Miniscript, subs: list[list[SpendingPath]]
+    node: Miniscript, subs: list[list[SpendingPath]], order: _Order
 ) -> list[SpendingPath]:
     """Return the spending paths of one fragment, from its subexpressions'."""
     if not subs:
-        return _leaf_paths(node)
+        return _leaf_paths(node, order)
     if node.fragment in _WRAPPERS:
         return subs[0]
     if node.fragment in {"and_v", "and_b"}:
-        return _paths_and(subs[0], subs[1])
+        return _paths_and(subs[0], subs[1], order)
     if node.fragment == "andor":
-        return _paths_or(_paths_and(subs[0], subs[1]), subs[2])
+        return _paths_or(_paths_and(subs[0], subs[1], order), subs[2], order)
     if node.fragment == "thresh":
-        return _thresh_paths(node.threshold, subs)
-    return _paths_or(subs[0], subs[1])
+        return _thresh_paths(node.threshold, subs, order)
+    return _paths_or(subs[0], subs[1], order)

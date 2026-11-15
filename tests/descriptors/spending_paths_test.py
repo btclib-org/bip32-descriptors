@@ -153,6 +153,11 @@ SHAPES = [
         f"and_v(v:pk({A}),and_v(v:older(10),older(65541)))",
         [(((1, "A"),), 10, None, ())],
     ),
+    # and two that BIP68 reads alike are one path, whichever comes first
+    (
+        "or_i(and_v(v:older(65541),older(5)),and_v(v:older(5),older(65541)))",
+        [((), 65541, None, ())],
+    ),
     (
         f"and_v(v:pk({A}),and_v(v:after(20),after(10)))",
         [(((1, "A"),), None, 20, ())],
@@ -359,6 +364,57 @@ def test_a_choice_that_can_no_longer_complete_counts_toward_no_bound() -> None:
     [path] = node.spending_paths
     assert [(q.threshold, len(q.keys)) for q in path.quorums] == [(2, 3)] * 13
     assert [str(q.keys[0]) for q in path.quorums] == keys[::3]
+
+
+def _preimage_thresh(threshold: int, count: int, salt: int) -> str:
+    """Return a thresh() of `count` preimages, `salt` telling digests apart."""
+    digests = [sha256(bytes([salt, i]) * 16).hex() for i in range(count)]
+    rest = ",".join(f"a:sha256({digest})" for digest in digests[1:])
+    return f"thresh({threshold},sha256({digests[0]}),{rest})"
+
+
+def test_a_pair_no_transaction_takes_counts_toward_no_bound() -> None:
+    """Paths in blocks against paths in time give no path, not too many."""
+    blocks = f"and_v(v:{_preimage_thresh(3, 7, 1)},older(10))"
+    seconds = f"and_v(v:{_preimage_thresh(3, 7, 2)},older(4194305))"
+    assert len(parse_miniscript(blocks).spending_paths) == 35
+    assert len(parse_miniscript(seconds).spending_paths) == 35
+    assert parse_miniscript(f"and_v(v:{blocks},{seconds})").spending_paths == ()
+
+
+def test_a_path_is_its_hashes_in_whatever_order_reached() -> None:
+    """Two preimages revealed in either order are one path, in their order."""
+    first, second = sha256(b"1").hex(), sha256(b"2").hex()
+    node = parse_miniscript(
+        f"or_i(and_v(v:sha256({first}),sha256({second})),"
+        f"and_v(v:sha256({second}),sha256({first})))"
+    )
+    [path] = node.spending_paths
+    assert path.hashes == (
+        ("sha256", bytes.fromhex(first)),
+        ("sha256", bytes.fromhex(second)),
+    )
+
+
+def test_a_quorum_is_its_keys_in_whatever_order_named() -> None:
+    """multi(2,A,B) and multi(2,B,A) beside the same paths give them once."""
+    rest = _preimage_thresh(5, 12, 3)
+    node = parse_miniscript(
+        f"or_i(and_v(v:multi(2,{A},{B}),{rest}),and_v(v:multi(2,{B},{A}),{rest}))"
+    )
+    paths = node.spending_paths
+    assert len(paths) == 792
+    assert {shape(path)[0] for path in paths} == {((2, "AB"),)}
+
+
+def test_the_bounds_of_a_conjunction() -> None:
+    """The paths that come out are bounded, and so are the pairs read."""
+    many = f"and_v(v:{_preimage_thresh(1, 33, 4)},{_preimage_thresh(1, 33, 5)})"
+    with pytest.raises(BTClibValueError, match="more than 1000 spending paths"):
+        _ = parse_miniscript(many).spending_paths
+    pairs = f"and_v(v:{_preimage_thresh(5, 12, 6)},{_preimage_thresh(5, 12, 7)})"
+    with pytest.raises(BTClibValueError, match="more than 100000 pairs"):
+        _ = parse_miniscript(pairs).spending_paths
 
 
 # (descriptor, its paths): the fragments that are not a miniscript
