@@ -1482,9 +1482,12 @@ class Miniscript:
         an expression `script`
         refuses, one built by hand without a type; for a ``rawpkh()``,
         which names its key by its hash alone; and past this library's
-        bound on the number of paths, or on the pairs of paths a
-        conjunction joins, which the refusal states: conjoined disjunctions
-        multiply them.
+        bounds, which the refusal states: on the number of paths, which
+        conjoined disjunctions multiply; on the pairs of paths a
+        conjunction joins; and on the keys and hashes those pairs read, a
+        path holding every quorum and hash conjoined into it. A
+        conjunction counts its pairs, and what they read, before it joins
+        the first, so one past either bound is refused before its work.
         """
         _assert_shapes(self)
         _assert_derived(self)
@@ -4205,6 +4208,13 @@ _MAX_SPENDING_PATHS = 1000
 # give rather than a thousand
 _MAX_PATH_PAIRS = 100_000
 
+# the most a conjunction's pairs read, each pair at most its two paths,
+# as `_path_size` counts one: the work the bound on the pairs does not
+# cap, since a path grows with every quorum and hash conjoined into it.
+# It lets as many pairs as the bound on the paths join two paths of a
+# thousand each, a multi_a() of its most keys being one
+_MAX_PATH_WORK = 2_000_000
+
 
 def _assert_shapes(root: Miniscript) -> None:
     """Refuse a node of the tree that its own build refuses.
@@ -4335,6 +4345,27 @@ def _path_and(
     return order.path(quorums, older, after, first.hashes + second.hashes)
 
 
+def _key_size(key: KeyExpression) -> int:
+    """Return what hashing the key reads: itself, its paths, its participants.
+
+    A key's hash serializes its origin, every step of it, each time. It
+    reads the steps of its path, and each participant of a ``musig()``
+    whole, each time too where the interpreter caches no hash of a tuple.
+    """
+    steps = len(key.der_path) + (0 if key.origin is None else len(key.origin))
+    return 1 + steps + sum(map(_key_size, key.participants))
+
+
+def _path_size(path: SpendingPath) -> int:
+    """Return what joining the path reads: its keys, its hashes, and itself.
+
+    A quorum is read by its keys, which order it, check it and hash it,
+    each as big as `_key_size` says.
+    """
+    keys = sum(_key_size(key) for quorum in path.quorums for key in quorum.keys)
+    return 1 + len(path.hashes) + keys
+
+
 def _paths_and(
     first: Sequence[SpendingPath], second: Sequence[SpendingPath], order: _Order
 ) -> list[SpendingPath]:
@@ -4342,10 +4373,24 @@ def _paths_and(
 
     The bound on the paths is on those that come out: a pair no
     transaction can take is none, and the same path reached twice is one.
-    The pairs are bounded apart, by `_MAX_PATH_PAIRS`, being the work.
+    The work is bounded apart, before the first pair is joined: the
+    pairs, by `_MAX_PATH_PAIRS`, and what they read, by `_MAX_PATH_WORK`.
+    A pair joins the locks, the quorums and the hashes of its two paths,
+    and hashes the path they give, no bigger than the two together: its
+    work is at most in proportion to their `_path_size` together. Each
+    path of one side is in a pair with each path of the other, so the
+    work of the pairs is at most in proportion to each side's sizes times
+    the other side's paths, which is what is bounded.
     """
     if len(first) * len(second) > _MAX_PATH_PAIRS:
         err_msg = f"more than {_MAX_PATH_PAIRS} pairs of spending paths to join"
+        raise BTClibValueError(err_msg)
+    work = len(second) * sum(map(_path_size, first))
+    work += len(first) * sum(map(_path_size, second))
+    if work > _MAX_PATH_WORK:
+        err_msg = (
+            f"more than {_MAX_PATH_WORK} keys and hashes of spending paths to join"
+        )
         raise BTClibValueError(err_msg)
     # a dict for its order and its keys: the same path reached twice is
     # one path
@@ -4463,7 +4508,8 @@ def _paths_or(
     for each merge, and a merge leaves one path fewer, so the paths asked
     are at most twice those read. Asking a path reads its quorums once,
     as `_rest_keys` says, and compares two paths whole only where their
-    keys match: the work is the paths asked times their quorums.
+    keys match: the work is the paths asked times their quorums, each
+    read by its keys, as big as `_key_size` says.
     """
     union = _Union(order)
     work: deque[int] = deque()

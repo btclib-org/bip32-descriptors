@@ -1548,7 +1548,8 @@ class Descriptor(ABC):
         Refused where the descriptor does not name every key a spend may
         need: an ``addr()``, a ``raw()``, a ``rawpkh()``, and a ``tr()``
         with a ``rawnode()`` or a ``rawleaf()``. Refused too where
-        `Miniscript.spending_paths` refuses a miniscript it holds, and where
+        `Miniscript.spending_paths` refuses a miniscript it holds, as past
+        its bounds on the paths and on the work of a conjunction, and where
         a ``tr()``'s paths, its leaves' together, pass this library's bound
         on the number of paths.
         """
