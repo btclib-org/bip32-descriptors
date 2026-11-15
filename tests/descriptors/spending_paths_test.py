@@ -651,6 +651,44 @@ def _joined(paths: str, links: int) -> str:
     return paths
 
 
+def test_a_side_of_no_path_is_not_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A conjunction with a side of no path reads neither side.
+
+    thresh(50) of a hundred branches, the last a choice of preimages beside
+    five quorums of one of two keys: read first, its paths are joined with
+    each count no branch has reached yet, none of them a path. The keys
+    the call reads are no more than its work counts.
+    """
+    keys = [PrvKeyData(i).pub.sec.hex()[2:] for i in range(1, 11)]
+    branch = _preimage_thresh(5, 12, 9)
+    for i in range(5):
+        branch = f"and_b({branch},a:or_i(pk({keys[2 * i]}),pk({keys[2 * i + 1]})))"
+    digests = [sha256(i.to_bytes(4, "big")).hex() for i in range(99)]
+    rest = ",".join(f"a:sha256({digest})" for digest in digests[1:])
+    node = parse_miniscript(
+        f"thresh(50,sha256({digests[0]}),{rest},a:{branch})", TAPSCRIPT
+    )
+    read = [0]
+    key_size = miniscript._key_size
+    works: list[miniscript._Work] = []
+
+    def counted(key: KeyExpression) -> int:
+        read[0] += 1
+        return key_size(key)
+
+    class Kept(miniscript._Work):
+        def __init__(self) -> None:
+            super().__init__()
+            works.append(self)
+
+    monkeypatch.setattr(miniscript, "_key_size", counted)
+    monkeypatch.setattr(miniscript, "_Work", Kept)
+    with pytest.raises(BTClibValueError, match="more than 1000 spending paths"):
+        _ = node.spending_paths
+    [work] = works
+    assert read[0] <= work.read
+
+
 @pytest.mark.parametrize("quorums", [0, 6])
 def test_the_work_of_a_call_is_bounded_however_often_its_paths_are_joined(
     monkeypatch: pytest.MonkeyPatch, quorums: int

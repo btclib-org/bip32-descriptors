@@ -4444,7 +4444,10 @@ def _paths_and(
     together. Each path of one side is in a pair with each path of the
     other, so the work of the pairs is at most in proportion to each
     side's sizes times the other side's paths, which is what is added.
+    A side with no path makes no pair, and neither side is read.
     """
+    if not (first and second):
+        return []
     if len(first) * len(second) > _MAX_PATH_PAIRS:
         err_msg = f"more than {_MAX_PATH_PAIRS} pairs of spending paths to join"
         raise BTClibValueError(err_msg)
