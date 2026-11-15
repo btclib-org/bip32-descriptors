@@ -3742,6 +3742,24 @@ class SpendingPath:
             if self.leaf < 0:
                 raise BTClibValueError("negative leaf")
 
+    def __hash__(self) -> int:
+        """Hash the fields once, and answer that hash from then on.
+
+        A path is hashed at every set and dict it meets, and an
+        interpreter that caches no hash of a tuple would read its quorums
+        and their keys again each time.
+        """
+        cached: int | None = self.__dict__.get("_hash")
+        if cached is None:
+            fields = (self.quorums, self.older, self.after, self.hashes, self.leaf)
+            cached = hash(fields)
+            object.__setattr__(self, "_hash", cached)
+        return cached
+
+    def __getstate__(self) -> dict[str, object]:
+        """Return the fields without the hash: a str hashes apart per process."""
+        return {name: value for name, value in self.__dict__.items() if name != "_hash"}
+
 
 @dataclass(frozen=True)
 class _Input:
@@ -4200,8 +4218,11 @@ _MAX_PATH_PAIRS = 100_000
 # leaves together, as `_Work` counts it: the work the bounds on the paths
 # and on the pairs do not cap, since a path grows with every quorum and
 # hash conjoined into it, and the same paths can be joined again and
-# again. It lets as many pairs as the bound on the paths join two paths
-# of a thousand each, a multi_a() of its most keys being one
+# again. The value is what one conjunction alone reads where as many
+# pairs as the bound on the paths join two paths of a thousand each, a
+# multi_a() of its most keys being one. In a call, the paths a
+# conjunction joins were first read by what made them, so a call
+# reaches the bound sooner than that conjunction alone would
 _MAX_PATH_WORK = 2_000_000
 
 
@@ -4320,6 +4341,7 @@ class _Order:
         for index, key in enumerate(root.key_expressions):
             self.keys.setdefault(key, index)
         self.hashes: dict[tuple[str, bytes], int] = {}
+        self.locks: dict[tuple[int | None, int | None, tuple[tuple[str, bytes], ...]], int] = {}
         # depth first, left to right, as `key_expressions` reads the tree
         stack = [root]
         while stack:
@@ -4327,6 +4349,15 @@ class _Order:
             if node.fragment in _HASH_OP_CODES:
                 self.hashes.setdefault((node.fragment, node.data), len(self.hashes))
             stack.extend(reversed(node.subs))
+
+    def lock(self, path: SpendingPath) -> int:
+        """Return a number for the path's locks, the same for the same locks.
+
+        So that a key holding them reads one number, not every hash again.
+        """
+        return self.locks.setdefault(
+            (path.older, path.after, path.hashes), len(self.locks)
+        )
 
     def quorum(self, threshold: int, keys: Sequence[KeyExpression]) -> Quorum:
         """Return the quorum, its keys where the expression names them."""
@@ -4433,19 +4464,19 @@ def _paths_and(
     return list(paths)
 
 
-def _rest_keys(path: SpendingPath) -> dict[tuple[object, int], int]:
+def _rest_keys(path: SpendingPath, locks: int) -> dict[tuple[int, int], int]:
     """Return a key for each rest of the path, with the place of its quorum.
 
     A rest is the path but one quorum of one key: what two paths have to
     share to be one, that quorum taking either's keys, as either set of
     keys signs alone, which is how Liana reads ``or_i(pk(A),pk(B))``.
 
-    The key is the path's locks and the sum of the hashes of the quorums
-    but that one, so that one pass over the quorums gives every rest's. A
-    sum is a hash and not the rest: `_same_rest` compares the quorums of
-    two paths whose keys match, the locks being in the key.
+    The key is the number `_Order.lock` gives the path's locks, and the
+    sum of the hashes of the quorums but that one, so that one pass over
+    the quorums gives every rest's. A sum is a hash and not the rest:
+    `_same_rest` compares the quorums of two paths whose keys match, the
+    locks being in the key.
     """
-    locks = (path.older, path.after, path.hashes)
     hashes = [hash(quorum) for quorum in path.quorums]
     total = sum(hashes)
     return {
@@ -4475,14 +4506,14 @@ class _Union:
         self.order = order
         self.live: dict[int, SpendingPath] = {}
         self.places: dict[SpendingPath, int] = {}
-        self.keys: dict[int, dict[tuple[object, int], int]] = {}
-        self.owners: dict[tuple[object, int], set[int]] = {}
+        self.keys: dict[int, dict[tuple[int, int], int]] = {}
+        self.owners: dict[tuple[int, int], set[int]] = {}
 
     def add(self, place: int, path: SpendingPath) -> None:
         """Hold the path at its place, under each of its rest keys."""
         self.live[place] = path
         self.places[path] = place
-        self.keys[place] = _rest_keys(path)
+        self.keys[place] = _rest_keys(path, self.order.lock(path))
         for key in self.keys[place]:
             self.owners.setdefault(key, set()).add(place)
 

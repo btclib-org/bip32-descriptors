@@ -425,6 +425,61 @@ def test_the_work_of_a_disjunction_is_its_paths_times_their_quorums(
     assert hashed[0] <= 4 * len(paths) * 100
 
 
+class _CountedDigest(bytes):
+    """A digest that counts how often it is hashed."""
+
+    hashed = 0
+
+    def __hash__(self) -> int:
+        _CountedDigest.hashed += 1
+        return bytes.__hash__(self)
+
+
+def test_a_path_s_locks_are_read_once_for_all_its_rests() -> None:
+    """A rest's key holds a number for the path's locks, not its hashes.
+
+    A path of fifty quorums of one of two keys and fifty hashes, under
+    fifty disjunctions with a lock alone. Where no hash of a tuple is
+    cached, a key holding the path's hashes would read each of them again
+    for every quorum of one key.
+    """
+    count = 50
+    keys = [PrvKeyData(i).pub.sec.hex()[2:] for i in range(1, 2 * count + 1)]
+    expression = f"sha256({sha256(b'0').hex()})"
+    for i in range(1, count):
+        expression = f"and_v(v:sha256({sha256(bytes([i])).hex()}),{expression})"
+    for i in range(count):
+        either = f"or_i(pk({keys[2 * i]}),pk({keys[2 * i + 1]}))"
+        expression = f"and_v(v:{either},{expression})"
+    for _ in range(count):
+        expression = f"or_i(older(1),{expression})"
+    node = parse_miniscript(expression, TAPSCRIPT)
+    stack = [node]
+    while stack:
+        sub = stack.pop()
+        if sub.fragment == "sha256":
+            object.__setattr__(sub, "data", _CountedDigest(sub.data))
+        stack.extend(sub.subs)
+    _CountedDigest.hashed = 0
+    assert len(node.spending_paths) == 2
+    assert _CountedDigest.hashed <= 8 * count * count
+
+
+def test_a_path_pickles_without_its_hash() -> None:
+    """A path keeps its hash once taken, and a pickle does not carry it.
+
+    A str and bytes hash apart in each process, so a hash carried into
+    another would file the path where no equal path looks for it.
+    """
+    [path] = parse_miniscript(f"and_v(v:pk({A}),older(5))").spending_paths
+    first = hash(path)
+    assert hash(path) == first
+    loaded = pickle.loads(pickle.dumps(path))  # noqa: S301
+    assert "_hash" not in vars(loaded)
+    assert loaded == path
+    assert hash(loaded) == first
+
+
 def _preimage_thresh(threshold: int, count: int, salt: int) -> str:
     """Return a thresh() of `count` preimages, `salt` telling digests apart."""
     digests = [sha256(bytes([salt, i]) * 16).hex() for i in range(count)]
