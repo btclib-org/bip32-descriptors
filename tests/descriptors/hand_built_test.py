@@ -228,10 +228,8 @@ Neither quotes a number longer than `parse` quotes: it may be a private
 key.
 
 An unpickled object, in the cases below, is a copy `pickle.loads`
-restored and `object.__setattr__` then changed: `pickle.loads` refuses a
-pickle holding a field `__init__` takes that the build refuses, and
-computes again a field the build computes, as
-`tests/descriptors/pickle_test.py` says.
+restored and `object.__setattr__` then changed, since `pickle.loads`
+asks what it restores, as CONTRIBUTING.md's *The public surface* says.
 """
 
 from __future__ import annotations

@@ -1239,9 +1239,8 @@ class Miniscript:
     def __setstate__(self, state: object) -> None:
         """Refuse a pickle holding a field the build refuses.
 
-        As `_checked_state` says: what the build computes is computed
-        again, whatever the pickle holds for it. A subexpression that is
-        no `Miniscript` is refused first, naming its type alone.
+        As `_checked_state` says. A subexpression that is no `Miniscript`
+        is refused first, naming its type alone.
         """
         subs = state.get("subs") if isinstance(state, dict) else None
         for sub in subs if isinstance(subs, tuple) else ():

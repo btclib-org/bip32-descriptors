@@ -34,6 +34,7 @@ from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields, is_dataclass
+from types import MemberDescriptorType
 from typing import Any, TypeVar
 
 from base58_bech32.base58 import b58decode_check
@@ -116,12 +117,16 @@ def _init_fields(obj: Any) -> set[str]:
 
 def _is_instance_lacking_fields(value: object) -> bool:
     """Answer whether the dataclass object `value` lacks a field it takes."""
-    # an unset slot has no class attribute standing in for it, as a
-    # field's default does for an entry missing from `__dict__`
-    held = getattr(value, "__dict__", None)
-    if held is None:
-        return not all(hasattr(value, name) for name in _init_fields(value))
-    return not _init_fields(value) <= held.keys()
+    # a field is in a slot where its class gives it one, else in
+    # `__dict__`: an unset slot answers nothing, while a field missing
+    # from `__dict__` answers with its default, a class attribute
+    held = getattr(value, "__dict__", {})
+    return not all(
+        hasattr(value, name)
+        if isinstance(getattr(type(value), name, None), MemberDescriptorType)
+        else name in held
+        for name in _init_fields(value)
+    )
 
 
 # each object `_checked_state` restored, by its `id`: its state was read
@@ -135,11 +140,9 @@ def _checked_state(obj: Any, state: object) -> None:
     `state` is the instance dictionary the default pickling writes: each
     field `__init__` takes, and none that is no field of a dataclass the
     class of `obj` derives from, as a leaf of two classes holds the
-    fields of both. Once the fields are set, `__post_init__` asks those
-    `__init__` takes and computes again what it computes, whatever the
-    pickle holds for it: `pickle.loads` refuses a field the build
-    refuses, with the build's refusal. A refusal of the state quotes no
-    value it holds.
+    fields of both. Once the fields are set, `obj.__post_init__` runs,
+    as CONTRIBUTING.md's *The public surface* says of what `pickle.loads`
+    restores. A refusal of the state quotes no value it holds.
 
     The default pickling restores `obj` without fields first and sets
     them here once; a second state for an object holding its fields is

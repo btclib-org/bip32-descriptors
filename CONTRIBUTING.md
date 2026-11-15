@@ -393,6 +393,12 @@ copy: `derive` validates and calls `_derive`, which does not, and
 `key_data_from_bip32_key` is the one place a `BIP32Key` of any spelling
 becomes a validated `BIP32KeyData`.
 
+**An object a field of which `object.__setattr__` set after its build is
+outside that rule.** `object.__setattr__` sets a field a frozen dataclass
+refuses to set, and the package calls it only inside an `__init__` or a
+`__post_init__`. A reader held to such a field would have to ask every
+field it reads again, at each read.
+
 **An object `pickle.loads` restores through `__setstate__` is asked as
 its build asks it**, by the `__setstate__` of a `Descriptor`, a
 `Miniscript` node, a `KeyExpression`, a `MultiA`, a `RawLeaf`, a `RawNode`
@@ -403,9 +409,7 @@ computes is computed again, whatever the pickle holds for it.
 hold the cases. A pickle with no state never calls `__setstate__`, at any
 protocol: the default pickling writes one for an object with no field
 set, such as `object.__new__(RawNode)`, and `pickle.loads` restores it
-with no fields, which `str` of it then fails on with an `AttributeError`.
-That object is outside this rule, as is one a field of which
-`object.__setattr__` set after its build.
+with no fields. That object is outside this rule.
 
 **A refusal of ecc's own leaves as that package's class.** The curve
 arithmetic and the schemes on it are ecc's (btclib-org/btclib#2282),

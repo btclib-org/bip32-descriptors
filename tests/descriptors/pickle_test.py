@@ -4,19 +4,12 @@
 
 """What `pickle.loads` refuses in a descriptor and in what it holds.
 
-A `Descriptor`, a `Miniscript` node, a `KeyExpression`, a `MultiA`, a
-`RawLeaf` and a `RawNode` are checked as they are restored, as their
-build checks them, so a pickle holding a field `__init__` takes that the
-build refuses is refused with the build's refusal, quoting none of the
-field, and a field the build computes is computed again. A key that
-is no point is taken in a `KeyExpression` and a `Miniscript` node, as
-`miniscript.from_script` builds one, and refused in a descriptor. A
-valid pickle restores the object it was written from, at every protocol.
-Issue btclib-org/bip32-descriptors#363.
-
-A field changed through `object.__setattr__` after the build is not
-asked here, nor a pickle with no state, which never calls
-`__setstate__`: CONTRIBUTING.md's *The public surface* leaves both out.
+The cases of what CONTRIBUTING.md's *The public surface* says of an
+object `pickle.loads` restores, each refusal quoting none of the field.
+A key that is no point is taken in a `KeyExpression` and a `Miniscript`
+node, as `miniscript.from_script` builds one, and refused in a
+descriptor. A valid pickle restores the object it was written from, at
+every protocol. Issue btclib-org/bip32-descriptors#363.
 """
 
 from __future__ import annotations
@@ -530,20 +523,71 @@ class _Slotted:
     value: int = 0
 
 
-def test_a_pickle_holding_an_object_of_slots_is_refused_by_the_build() -> None:
-    """Which the check of what is restored reads without a `__dict__`.
+class _Plain:
+    """A class that gives each class derived from it a `__dict__`."""
 
-    A ``musig()`` participant that is no `KeyExpression`, with the
-    build's refusal.
+
+@dataclass(frozen=True, slots=True)
+class _SlottedBesideDict(_Plain):
+    """A dataclass whose field is a slot, beside the `__dict__` of `_Plain`."""
+
+    value: int = 0
+
+
+@pytest.mark.parametrize("cls", [_Slotted, _SlottedBesideDict])
+def test_a_pickle_holding_an_object_of_slots_is_refused_by_the_build(
+    cls: type,
+) -> None:
+    """Which the check of what is restored reads in its slots.
+
+    A ``musig()`` participant that is no `KeyExpression`, with or
+    without a `__dict__`, with the build's refusal, at every protocol.
+    One whose slot is unset is refused as an object not restored yet.
     """
     key = _tr(f"musig({_XPUB},{_XPUB2})").internal_key
-    object.__setattr__(key, "participants", (_Slotted(), _Slotted()))
+    state = {**vars(key), "participants": (_Pickled(cls, None),)}
+    with pytest.raises(
+        BTClibValueError, match="^invalid pickle state: an object not restored yet$"
+    ):
+        pickle.loads(pickle.dumps(_Pickled(KeyExpression, state)))  # noqa: S301
+    object.__setattr__(key, "participants", (cls(), cls()))
     for protocol in _PROTOCOLS:
         forged = pickle.dumps(key, protocol)
         with pytest.raises(
-            BTClibTypeError, match="^invalid participant type: _Slotted$"
+            BTClibTypeError, match=f"^invalid participant type: {cls.__name__}$"
         ):
             pickle.loads(forged)  # noqa: S301
+
+
+@pytest.mark.parametrize(
+    "valid",
+    [*_VALID, BIP32KeyOrigin("deadbeef", "m/1h/2")],
+    ids=lambda valid: type(valid).__name__,
+)
+def test_a_pickle_with_no_state_never_calls_setstate(
+    valid: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At every protocol: an object of no field set is restored as it was.
+
+    The default pickling writes no state for it. The control is the
+    pickle of `valid`, whose state reaches `__setstate__`, which here
+    only records it.
+    """
+    calls: list[object] = []
+
+    def recorded(_: object, state: object) -> None:
+        calls.append(state)
+
+    monkeypatch.setattr(type(valid), "__setstate__", recorded)
+    empty = object.__new__(type(valid))
+    for protocol in _PROTOCOLS:
+        restored = pickle.loads(pickle.dumps(empty, protocol))  # noqa: S301
+        assert type(restored) is type(valid)
+        assert not vars(restored)
+        assert not calls
+        pickle.loads(pickle.dumps(valid, protocol))  # noqa: S301
+        assert calls
+        calls.clear()
 
 
 def test_a_pickle_holding_one_tuple_through_many_is_read_at_once() -> None:
