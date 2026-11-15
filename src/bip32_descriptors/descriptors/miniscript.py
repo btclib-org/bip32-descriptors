@@ -4348,9 +4348,9 @@ def _path_and(
 def _key_size(key: KeyExpression) -> int:
     """Return what hashing the key reads: itself, its paths, its participants.
 
-    A key's hash reads the steps of its origin and of its path, and each
-    participant of a ``musig()`` whole, every time: an interpreter that
-    caches no hash of a tuple reads them all again.
+    A key's hash serializes its origin, every step of it, each time. It
+    reads the steps of its path, and each participant of a ``musig()``
+    whole, each time too where the interpreter caches no hash of a tuple.
     """
     steps = len(key.der_path) + (0 if key.origin is None else len(key.origin))
     return 1 + steps + sum(map(_key_size, key.participants))

@@ -531,11 +531,11 @@ def _key_of_size(size: int, spelling: int) -> str:
 def test_a_key_is_as_big_as_what_its_hash_reads(spelling: int) -> None:
     """A key counts each participant and each step of its origin and path.
 
-    Ordering and joining paths hashes their keys, and where no hash of a
-    tuple is cached the hash reads each of them every time. The pairs are
-    those of the edge of `test_the_bounds_of_a_conjunction`, one key in
-    place of its quorums: thirteen parts are within the bound, fourteen
-    past it.
+    Ordering and joining paths hashes their keys. A key's hash serializes
+    its origin each time, and reads its path and its participants each
+    time too where no hash of a tuple is cached. The pairs are those of
+    the edge of `test_the_bounds_of_a_conjunction`, one key in place of
+    its quorums: thirteen parts are within the bound, fourteen past it.
     """
     seconds = _any_older(4194305, 126)
     for size, refused in ((13, False), (14, True)):
