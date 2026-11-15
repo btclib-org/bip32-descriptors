@@ -571,9 +571,16 @@ class KeyExpression:
         """Return False for an uncompressed SEC public key, True otherwise.
 
         An extended key is compressed by construction: BIP32 has no
-        uncompressed serialization.
+        uncompressed serialization. A key is sized by the bytes it holds,
+        which no subclass's `__len__` answers.
         """
-        return self.pub_key is None or len(self.pub_key) == 33
+        pub_key = self.pub_key
+        if pub_key is None:
+            return True
+        if not isinstance(pub_key, bytes):
+            # an unpickled key may hold another type, refused for it elsewhere
+            return len(pub_key) == 33  # type: ignore[unreachable]
+        return bytes.__len__(pub_key) == 33
 
     def sec(
         self,
@@ -1029,7 +1036,9 @@ def _assert_pub_key(key: KeyExpression) -> None:
     uncompressed WIF in a taproot position to one of 65, which this
     refuses with the message `parse` gives for it.
 
-    A key that is no point is refused outside `_script_keys` only.
+    A key that is no point is refused outside `_script_keys` only. The key
+    is sized, and read as a point, by the bytes it holds, which no
+    subclass's `__len__` answers.
     """
     pub_key = key.pub_key
     if pub_key is None:
@@ -1039,7 +1048,7 @@ def _assert_pub_key(key: KeyExpression) -> None:
     if not isinstance(pub_key, bytes):
         err_msg = f"invalid pub_key type: {_type_name(pub_key)}"  # type: ignore[unreachable]
         raise BTClibTypeError(err_msg)
-    size = len(pub_key)
+    size = bytes.__len__(pub_key)
     if size not in {33, 65}:
         raise BTClibValueError(f"invalid public key length in bytes: {_size(pub_key)}")
     prefix = pub_key[0]
@@ -1050,7 +1059,7 @@ def _assert_pub_key(key: KeyExpression) -> None:
         raise BTClibValueError(f"invalid public key prefix for {_size(pub_key)} bytes")
     # as Bitcoin Core's descriptor parser does
     if not _SCRIPT_KEYS.get():
-        point_from_pub_key(pub_key)
+        point_from_pub_key(bytes.__getitem__(pub_key, slice(None)))
     if key.x_only and size != 33:
         raise BTClibValueError(_UNCOMPRESSED_REFUSED)
     if key.x_only and prefix == 3:
@@ -1295,10 +1304,11 @@ def _assert_compressed(key: KeyExpression) -> None:
 def _assert_point(key: KeyExpression) -> None:
     """Refuse a key that is no point, as `parse` refuses it.
 
-    `KeyExpression` builds one inside `_script_keys` only.
+    `KeyExpression` builds one inside `_script_keys` only. The key is read
+    by the bytes it holds, as `_assert_pub_key` reads it.
     """
     if key.pub_key is not None:
-        point_from_pub_key(key.pub_key)
+        point_from_pub_key(bytes.__getitem__(key.pub_key, slice(None)))
 
 
 # Bitcoin Core's own message, refusing a key path with two multipath steps

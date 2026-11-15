@@ -12,6 +12,9 @@ btclib-org/bip32-descriptors#133.
 
 Subexpressions given as no tuple, naming the type alone. Issue
 btclib-org/bip32-descriptors#287.
+
+Data sized by the bytes it holds, whatever a subclass's `__len__` says.
+Issue btclib-org/bip32-descriptors#355.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from typing import Any
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
+from typing_extensions import override
 
 from bip32_descriptors.descriptors import parse
 from bip32_descriptors.descriptors.descriptors import (
@@ -156,3 +160,34 @@ def test_a_subexpression_of_another_context_is_refused_in_any_position() -> None
     with pytest.raises(BTClibValueError, match=err_msg) as e:
         Miniscript("thresh", TAPSCRIPT, (one, one, Miniscript("1")), threshold=1)
     assert_secret_free(e.value, [P2WSH])
+
+
+class _Says(bytes):
+    """Bytes whose length says `n`, whatever they hold."""
+
+    n = 0
+
+    @override
+    def __len__(self) -> int:
+        return self.n
+
+
+def _says(octets: bytes, n: int) -> bytes:
+    """Return `octets` as bytes whose length says `n`."""
+    says = _Says(octets)
+    says.n = n
+    return says
+
+
+@pytest.mark.parametrize("length", [33, 31])
+def test_data_is_sized_by_its_bytes(length: int) -> None:
+    """Built as its plain bytes are, and refused for the size it holds.
+
+    Issue btclib-org/bip32-descriptors#355.
+    """
+    digest = bytes.fromhex(_RANDOM_HEX)
+    assert len(_says(digest, length)) == length
+    node = Miniscript("sha256", P2WSH, data=_says(digest, length))
+    assert node == Miniscript("sha256", P2WSH, data=digest)
+    with pytest.raises(BTClibValueError, match="takes 32 bytes of data, 31 given$"):
+        Miniscript("sha256", P2WSH, data=_says(digest[1:], 32))

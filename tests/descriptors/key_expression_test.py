@@ -5,6 +5,9 @@
 """Tests for `KeyExpression`'s derivation at an index.
 
 Issue btclib-org/btclib-wallet#383.
+
+A `pub_key` that is a `bytes` subclass is sized by the bytes it holds,
+whatever its `__len__` says. Issue btclib-org/bip32-descriptors#355.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from typing import Any
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.network import NETWORKS
+from typing_extensions import override
 
 from bip32_descriptors.bip32 import xpub_from_xprv
 from bip32_descriptors.bip32.bip32 import rootxprv_from_seed
@@ -138,3 +142,54 @@ def test_public_index_methods_accept_integer_subclasses() -> None:
         for index in indexes:
             assert descriptor.address(index) == descriptor.address(int(index))
             assert key.sec(index, "testnet") == key.sec(int(index), "testnet")
+
+
+class _Says(bytes):
+    """Bytes whose length says `n`, whatever they hold."""
+
+    n = 0
+
+    @override
+    def __len__(self) -> int:
+        return self.n
+
+
+def _says(octets: bytes, n: int) -> bytes:
+    """Return `octets` as bytes whose length says `n`."""
+    says = _Says(octets)
+    says.n = n
+    return says
+
+
+_SEC = bytes.fromhex(
+    "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+)
+_SEC65 = bytes.fromhex(
+    "0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"
+)
+
+
+@pytest.mark.parametrize("length", [65, 1])
+@pytest.mark.parametrize("sec", [_SEC, _SEC65], ids=["compressed", "uncompressed"])
+def test_a_pub_key_is_sized_by_its_bytes(sec: bytes, length: int) -> None:
+    """Built, and compressed or not, as its plain bytes are.
+
+    Its length saying more or less than it holds changes nothing. Issue
+    btclib-org/bip32-descriptors#355.
+    """
+    assert len(_says(sec, length)) == length
+    key = KeyExpression(pub_key=_says(sec, length))
+    plain = KeyExpression(pub_key=sec)
+    assert key == plain
+    assert key.is_compressed is plain.is_compressed
+    assert str(key) == str(plain)
+
+
+def test_a_pub_key_of_the_wrong_size_is_refused_whatever_its_length_says() -> None:
+    """Refused for the size it holds, not for the one it claims.
+
+    Issue btclib-org/bip32-descriptors#355.
+    """
+    with pytest.raises(BTClibValueError, match="length in bytes: 32$"):
+        KeyExpression(pub_key=_says(_SEC[1:], 33))

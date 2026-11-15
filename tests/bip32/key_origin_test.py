@@ -8,13 +8,14 @@ import dataclasses
 import pickle
 import re
 import string
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from btclib.alias import Octets
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from ecc.curves import secp256k1
 from ecc.curves.sec_point import bytes_from_point
+from typing_extensions import override
 
 from bip32_descriptors.bip32 import (
     BIP32KeyOrigin,
@@ -239,6 +240,49 @@ def test_assert_valid_hd_key_paths_checks_the_point() -> None:
         with pytest.raises(BTClibValueError, match="invalid public key: not a point"):
             assert_valid_hd_key_paths({pub_key: key_origin})
     assert_valid_hd_key_paths({b"\x06" + _G65[1:]: key_origin})
+
+
+class _Says(bytes):
+    """Bytes whose length says `n`, whatever they hold."""
+
+    n = 0
+
+    @override
+    def __len__(self) -> int:
+        return self.n
+
+
+def _says(octets: bytes, n: int) -> bytes:
+    """Return `octets` as bytes whose length says `n`."""
+    says = _Says(octets)
+    says.n = n
+    return says
+
+
+@pytest.mark.parametrize("length", [34, 2])
+def test_assert_valid_hd_key_paths_sizes_a_key_by_its_bytes(length: int) -> None:
+    """A key is sized and read as a point by the bytes it holds.
+
+    Its length saying more or less than it holds changes nothing. Issue
+    btclib-org/bip32-descriptors#355.
+    """
+    key_origin = BIP32KeyOrigin("deadbeef", [0])
+    assert len(_says(_G33, length)) == length
+    assert_valid_hd_key_paths({_says(_G33, length): key_origin})
+    assert_valid_hd_key_paths({_says(_G65, length): key_origin})
+    with pytest.raises(BTClibValueError, match="invalid public key length: 34$"):
+        assert_valid_hd_key_paths({_says(_G33 + b"\x00", 33): key_origin})
+
+
+def test_assert_valid_hd_key_paths_refuses_a_key_of_another_type() -> None:
+    """A key that is no bytes is refused for its type, not sized.
+
+    Issue btclib-org/bip32-descriptors#355.
+    """
+    key_origin = BIP32KeyOrigin("deadbeef", [0])
+    hd_key_paths = cast("dict[bytes, BIP32KeyOrigin]", {_G33.hex(): key_origin})
+    with pytest.raises(BTClibTypeError, match="public key"):
+        assert_valid_hd_key_paths(hd_key_paths)
 
 
 def test_assert_valid_hd_key_paths_checks_every_entry() -> None:

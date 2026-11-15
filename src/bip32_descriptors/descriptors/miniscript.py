@@ -1298,7 +1298,9 @@ class Miniscript:
             raise BTClibValueError(err_msg)
         self._assert_keys()
         assert_type(self.data, bytes, "data")
-        if len(self.data) != _DATA_SIZE.get(fragment, 0):
+        # sized by the bytes it holds, which no subclass's __len__ answers
+        size = bytes.__len__(self.data)
+        if size != _DATA_SIZE.get(fragment, 0):
             expected = _DATA_SIZE.get(fragment, 0)
             err_msg = (
                 f"{_label(fragment, _NAMES)} takes {_position(expected)} bytes"
