@@ -88,9 +88,8 @@ _MAX_NESTING = 80
 _MAX_DEPTH = 250
 
 # the most steps a compilation takes, a step being a candidate node built,
-# its type and bounds computed, or a compilation started. Each takes some
-# microseconds, so this is a few seconds and some hundred megabytes. A
-# thresh() of one of ten keys compiles within it, and one of eleven does not
+# its type and bounds computed, or a compilation started: the value
+# btclib-org/bip32-descriptors#372 decided
 _MAX_STEPS = 500_000
 
 # the hash locks, and the size of the digest each takes
