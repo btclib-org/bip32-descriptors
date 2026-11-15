@@ -4349,15 +4349,24 @@ def _thresh_paths(threshold: int, subs: list[list[SpendingPath]]) -> list[Spendi
     that are not keys, read from the last one so that a path's
     conditions come in the order the branches are written. The keys make
     up the rest of the threshold, as a quorum of all of them.
+
+    A count that the branches still to read and the keys can no longer
+    take to the threshold is dropped as soon as it is, so that the bound
+    on the paths is met by choices that can still be a path: a
+    thresh() of all of thirteen branches is one path, not the choices of
+    fewer of them that come on the way.
     """
     keys = tuple(paths[0].quorums[0].keys[0] for paths in subs if _is_key(paths))
     others = [paths for paths in subs if not _is_key(paths)]
     reached: list[list[SpendingPath]] = [[SpendingPath()]]
     reached += [[] for _ in range(min(threshold, len(others)))]
-    for paths in reversed(others):
-        for count in range(len(reached) - 1, 0, -1):
+    for left, paths in reversed(list(enumerate(others))):
+        least = threshold - len(keys) - left
+        for count in range(len(reached) - 1, max(least, 1) - 1, -1):
             satisfied = _paths_and(paths, reached[count - 1])
             reached[count] = _paths_or(satisfied, reached[count])
+        for count in range(min(least, len(reached))):
+            reached[count] = []
     result: list[SpendingPath] = []
     for count, paths in enumerate(reached):
         signers = threshold - count

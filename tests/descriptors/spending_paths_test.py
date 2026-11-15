@@ -338,6 +338,21 @@ def test_the_bound_on_the_paths() -> None:
         _ = _thresh_of_preimages(5, 15).spending_paths
 
 
+def test_a_choice_that_can_no_longer_complete_counts_toward_no_bound() -> None:
+    """All of thirteen branches is one path, though fewer of them are many.
+
+    Five of thirteen branches can be chosen in more ways than the bound
+    allows, and a reading that kept such choices until the last branch
+    refused this thresh() before reaching its one path.
+    """
+    keys = [PrvKeyData(i).pub.sec.hex() for i in range(1, 40)]
+    multis = [f"multi(2,{','.join(keys[3 * b : 3 * b + 3])})" for b in range(13)]
+    node = parse_miniscript(f"thresh(13,{multis[0]},a:{',a:'.join(multis[1:])})")
+    [path] = node.spending_paths
+    assert [(q.threshold, len(q.keys)) for q in path.quorums] == [(2, 3)] * 13
+    assert [str(q.keys[0]) for q in path.quorums] == keys[::3]
+
+
 # (descriptor, its paths): the fragments that are not a miniscript
 FRAGMENTS = [
     (f"pk({A})", [(((1, "A"),), None, None, (), None)]),
