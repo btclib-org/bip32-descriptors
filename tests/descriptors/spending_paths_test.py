@@ -366,6 +366,21 @@ def test_a_choice_that_can_no_longer_complete_counts_toward_no_bound() -> None:
     assert [str(q.keys[0]) for q in path.quorums] == keys[::3]
 
 
+def test_a_branch_with_no_path_completes_no_choice() -> None:
+    """Twelve of a 0 and fifteen preimages are the choices of twelve preimages.
+
+    Eleven of the fifteen can be chosen in more ways than the bound allows,
+    and the 0 brings none of those choices to the threshold.
+    """
+    digests = [sha256(bytes([i]) * 32).hex() for i in range(1, 16)]
+    rest = ",".join(f"a:sha256({digest})" for digest in digests)
+    node = parse_miniscript(f"thresh(12,0,{rest})")
+    assert node.is_valid
+    paths = node.spending_paths
+    assert len(paths) == 455
+    assert {len(path.hashes) for path in paths} == {12}
+
+
 def _preimage_thresh(threshold: int, count: int, salt: int) -> str:
     """Return a thresh() of `count` preimages, `salt` telling digests apart."""
     digests = [sha256(bytes([salt, i]) * 16).hex() for i in range(count)]

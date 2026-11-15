@@ -1477,8 +1477,9 @@ class Miniscript:
 
         Refused for an expression `script` refuses, one built by hand
         without a type; for a ``rawpkh()``, which names its key by its hash
-        alone; and past this library's bound on the number of paths, which
-        the refusal states: conjoined disjunctions multiply them.
+        alone; and past this library's bound on the number of paths, or on
+        the pairs of paths a conjunction joins, which the refusal states:
+        conjoined disjunctions multiply them.
         """
         if not self.is_valid:
             raise BTClibValueError(f"invalid miniscript: {self}")
@@ -4428,14 +4429,19 @@ def _thresh_paths(
     take to the threshold is dropped as soon as it is, so that the bound
     on the paths is met by choices that can still be a path: a
     thresh() of all of thirteen branches is one path, not the choices of
-    fewer of them that come on the way.
+    fewer of them that come on the way. A branch with no path, a ``0``,
+    takes no count further, so `viable[left]` counts only the branches
+    still to read that have one.
     """
     keys = tuple(paths[0].quorums[0].keys[0] for paths in subs if _is_key(paths))
     others = [paths for paths in subs if not _is_key(paths)]
     reached: list[list[SpendingPath]] = [[SpendingPath()]]
     reached += [[] for _ in range(min(threshold, len(others)))]
+    viable = [0]
+    for paths in others:
+        viable.append(viable[-1] + bool(paths))
     for left, paths in reversed(list(enumerate(others))):
-        least = threshold - len(keys) - left
+        least = threshold - len(keys) - viable[left]
         for count in range(len(reached) - 1, max(least, 1) - 1, -1):
             satisfied = _paths_and(paths, reached[count - 1], order)
             reached[count] = _paths_or(satisfied, reached[count], order)
