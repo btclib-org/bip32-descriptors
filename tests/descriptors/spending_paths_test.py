@@ -33,6 +33,7 @@ from bip32_descriptors.descriptors import (
     SpendContext,
     SpendingPath,
     TrDescriptor,
+    miniscript,
     parse,
 )
 from bip32_descriptors.descriptors.miniscript import P2WSH, TAPSCRIPT, Miniscript
@@ -535,10 +536,11 @@ def test_a_key_is_as_big_as_what_its_hash_reads(spelling: int) -> None:
     its origin each time, and reads its path and its participants each
     time too where no hash of a tuple is cached. The pairs are those of
     the edge of `test_the_bounds_of_a_conjunction`, one key in place of
-    its quorums: thirteen parts are within the bound, fourteen past it.
+    its quorums' twelve: twelve parts are within the bound, thirteen past
+    it.
     """
     seconds = _any_older(4194305, 126)
-    for size, refused in ((13, False), (14, True)):
+    for size, refused in ((12, False), (13, True)):
         key = _key_of_size(size, spelling)
         blocks = f"and_v(v:{_preimage_thresh(5, 12, 8)},and_v(v:pk({key}),older(10)))"
         node = parse_miniscript(f"and_v(v:{blocks},{seconds})", TAPSCRIPT)
@@ -576,6 +578,66 @@ def test_the_work_of_a_conjunction_is_its_pairs_times_their_paths(
     with pytest.raises(BTClibValueError, match=WORK):
         _ = node.spending_paths
     assert read[0] < 792 * 126
+
+
+def _joined(paths: str, links: int) -> str:
+    """Return the paths joined `links` times in turn with 126 older().
+
+    Which give the paths again where theirs is an older() of 126 or more.
+    """
+    for _ in range(links):
+        paths = f"and_v(v:{paths},{_any_older(1, 126)})"
+    return paths
+
+
+@pytest.mark.parametrize("quorums", [0, 6])
+def test_the_work_of_a_call_is_bounded_however_often_its_paths_are_joined(
+    monkeypatch: pytest.MonkeyPatch, quorums: int
+) -> None:
+    """The same paths joined again and again add up to one bound.
+
+    Issue btclib-org/bip32-descriptors#367: the choices of five of twelve
+    preimages, with no quorum or with six, joined forty times in turn
+    with lock times that give the same paths again. Each conjunction is
+    within every bound of its own. The call is refused once they add up
+    past the bound, having joined at most half as many pairs, each pair
+    reading two paths at least.
+    """
+    paths = f"and_v(v:{_preimage_thresh(5, 12, 11)},{_either_key(quorums, 1000)})"
+    node = parse_miniscript(_joined(paths, 40), TAPSCRIPT)
+    joined = [0]
+    path_and = miniscript._path_and
+
+    def counted(*args: Any) -> SpendingPath | None:
+        joined[0] += 1
+        return path_and(*args)
+
+    monkeypatch.setattr(miniscript, "_path_and", counted)
+    with pytest.raises(BTClibValueError, match=WORK):
+        _ = node.spending_paths
+    assert joined[0] <= 2000000 // 2
+
+
+def test_the_leaves_of_a_tr_share_the_bound_on_the_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two leaves each within the bound are past it together.
+
+    A leaf of a tr() is sane, and the shapes above are not, so the bound
+    is set to what one leaf reads.
+    """
+    leaves = [
+        f"or_d(pk({one[2:]}),and_v(v:pk({other[2:]}),older(144)))"
+        for one, other in ((B, C), (D, E))
+    ]
+    work = miniscript._Work()
+    _ = miniscript._miniscript_paths(parse_miniscript(leaves[0], TAPSCRIPT), work)
+    monkeypatch.setattr(miniscript, "_MAX_PATH_WORK", work.read)
+    for leaf in leaves:
+        assert len(parse(f"tr({A[2:]},{leaf})").spending_paths) == 3
+    descriptor = parse(f"tr({A[2:]},{{{leaves[0]},{leaves[1]}}})")
+    with pytest.raises(BTClibValueError, match=f"more than {work.read} keys"):
+        _ = descriptor.spending_paths
 
 
 # (descriptor, its paths): the fragments that are not a miniscript

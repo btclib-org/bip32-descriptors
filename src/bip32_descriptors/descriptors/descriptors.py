@@ -267,10 +267,12 @@ from bip32_descriptors.descriptors.miniscript import (
     _assert_sane,
     _assert_sane_script,
     _has_raw_key_hash,
+    _miniscript_paths,
     _multisig_context_fault,
     _read_unclosed_multisig_keys,
     _script_number,
     _tree_eval,
+    _Work,
 )
 from bip32_descriptors.descriptors.miniscript import (
     from_script as _miniscript_from_script,
@@ -757,12 +759,15 @@ def _leaf_keys(leaf: DescriptorLeaf) -> tuple[KeyExpression, ...]:
     return () if isinstance(leaf, RawLeaf) else (leaf,)
 
 
-def _tree_leaf_paths(leaf: DescriptorLeaf) -> tuple[SpendingPath, ...]:
-    """Return the spending paths of one leaf, refusing a `RawLeaf`'s."""
+def _tree_leaf_paths(leaf: DescriptorLeaf, work: _Work) -> tuple[SpendingPath, ...]:
+    """Return the spending paths of one leaf, refusing a `RawLeaf`'s.
+
+    A miniscript's reads are added to `work`, which the leaves share.
+    """
     if isinstance(leaf, MultiA):
         return (SpendingPath((Quorum(leaf.threshold, leaf.keys),)),)
     if isinstance(leaf, Miniscript):
-        return leaf.spending_paths
+        return _miniscript_paths(leaf, work)
     if isinstance(leaf, RawLeaf):
         err_msg = "a tr() with a rawleaf() does not name every key a spend needs"
         raise BTClibValueError(err_msg)
@@ -1549,9 +1554,10 @@ class Descriptor(ABC):
         need: an ``addr()``, a ``raw()``, a ``rawpkh()``, and a ``tr()``
         with a ``rawnode()`` or a ``rawleaf()``. Refused too where
         `Miniscript.spending_paths` refuses a miniscript it holds, as past
-        its bounds on the paths and on the work of a conjunction, and where
-        a ``tr()``'s paths, its leaves' together, pass this library's bound
-        on the number of paths.
+        its bounds on the paths and on the work of a call, and where a
+        ``tr()``'s paths, its leaves' together, pass this library's bound
+        on the number of paths, or what its leaves read together passes the
+        bound on the work.
         """
         return self._spending_paths()
 
@@ -3049,8 +3055,9 @@ class TrDescriptor(Descriptor):
         if _has_raw_node(self.tree):
             err_msg = "a tr() with a rawnode() does not name every key a spend needs"
             raise BTClibValueError(err_msg)
+        work = _Work()
         for number, leaf in enumerate(_tree_leaves(self.tree)):
-            leaf_paths = _tree_leaf_paths(leaf)
+            leaf_paths = _tree_leaf_paths(leaf, work)
             _assert_path_count(len(paths) + len(leaf_paths))
             paths += [replace(path, leaf=number) for path in leaf_paths]
         return tuple(paths)

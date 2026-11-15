@@ -1484,25 +1484,13 @@ class Miniscript:
         which names its key by its hash alone; and past this library's
         bounds, which the refusal states: on the number of paths, which
         conjoined disjunctions multiply; on the pairs of paths a
-        conjunction joins; and on the keys and hashes those pairs read, a
-        path holding every quorum and hash conjoined into it. A
-        conjunction counts its pairs, and what they read, before it joins
-        the first, so one past either bound is refused before its work.
+        conjunction joins; and on the keys and hashes the whole call
+        reads, a path holding every quorum and hash conjoined into it.
+        Each conjunction counts its pairs and what they read, and each
+        disjunction the paths it reads, before reading them, so a call
+        past a bound is refused before that work.
         """
-        _assert_shapes(self)
-        _assert_derived(self)
-        if not self.is_valid:
-            raise BTClibValueError(f"invalid miniscript: {self}")
-
-        order = _Order(self)
-
-        def up(
-            _state: None, node: Miniscript, subs: list[list[SpendingPath]]
-        ) -> list[SpendingPath]:
-            return _computed_paths(node, subs, order)
-
-        paths: list[SpendingPath] = _tree_eval(self, None, lambda *_: None, up)
-        return tuple(paths)
+        return _miniscript_paths(self, _Work())
 
     @property
     def max_ops(self) -> int | None:
@@ -4208,11 +4196,12 @@ _MAX_SPENDING_PATHS = 1000
 # give rather than a thousand
 _MAX_PATH_PAIRS = 100_000
 
-# the most a conjunction's pairs read, each pair at most its two paths,
-# as `_path_size` counts one: the work the bound on the pairs does not
-# cap, since a path grows with every quorum and hash conjoined into it.
-# It lets as many pairs as the bound on the paths join two paths of a
-# thousand each, a multi_a() of its most keys being one
+# the most one call of `Miniscript.spending_paths` reads, or a tr()'s
+# leaves together, as `_Work` counts it: the work the bounds on the paths
+# and on the pairs do not cap, since a path grows with every quorum and
+# hash conjoined into it, and the same paths can be joined again and
+# again. It lets as many pairs as the bound on the paths join two paths
+# of a thousand each, a multi_a() of its most keys being one
 _MAX_PATH_WORK = 2_000_000
 
 
@@ -4272,6 +4261,45 @@ def _joined_after(first: int | None, second: int | None) -> tuple[bool, int | No
     return True, max(first, second)
 
 
+class _Work:
+    """What one call reads of its spending paths, against `_MAX_PATH_WORK`.
+
+    In `_path_size`'s units. A conjunction adds what its pairs read, and a
+    disjunction the paths it asks, each before reading them. A ``tr()``'s
+    leaves share one, so that the bound is on the call and not on a leaf.
+    """
+
+    def __init__(self) -> None:
+        self.read = 0
+
+    def add(self, size: int) -> None:
+        """Count what is about to be read, refusing past the bound."""
+        self.read += size
+        if self.read > _MAX_PATH_WORK:
+            err_msg = (
+                f"more than {_MAX_PATH_WORK} keys and hashes of spending paths to read"
+            )
+            raise BTClibValueError(err_msg)
+
+
+def _miniscript_paths(root: Miniscript, work: _Work) -> tuple[SpendingPath, ...]:
+    """Return `Miniscript.spending_paths`, counting what it reads in `work`."""
+    _assert_shapes(root)
+    _assert_derived(root)
+    if not root.is_valid:
+        raise BTClibValueError(f"invalid miniscript: {root}")
+
+    order = _Order(root, work)
+
+    def up(
+        _state: None, node: Miniscript, subs: list[list[SpendingPath]]
+    ) -> list[SpendingPath]:
+        return _computed_paths(node, subs, order)
+
+    paths: list[SpendingPath] = _tree_eval(root, None, lambda *_: None, up)
+    return tuple(paths)
+
+
 class _Order:
     """Where each key and each hash of an expression first stands.
 
@@ -4281,9 +4309,13 @@ class _Order:
     hashes in the order the expression first names them. Two ways to one
     path are then one path, which the bounds count once, and the form is
     already the order a caller reads.
+
+    `work` is what the call has read, which every conjunction and
+    disjunction of the expression adds to.
     """
 
-    def __init__(self, root: Miniscript) -> None:
+    def __init__(self, root: Miniscript, work: _Work) -> None:
+        self.work = work
         self.keys: dict[KeyExpression, int] = {}
         for index, key in enumerate(root.key_expressions):
             self.keys.setdefault(key, index)
@@ -4374,24 +4406,21 @@ def _paths_and(
     The bound on the paths is on those that come out: a pair no
     transaction can take is none, and the same path reached twice is one.
     The work is bounded apart, before the first pair is joined: the
-    pairs, by `_MAX_PATH_PAIRS`, and what they read, by `_MAX_PATH_WORK`.
-    A pair joins the locks, the quorums and the hashes of its two paths,
-    and hashes the path they give, no bigger than the two together: its
-    work is at most in proportion to their `_path_size` together. Each
-    path of one side is in a pair with each path of the other, so the
-    work of the pairs is at most in proportion to each side's sizes times
-    the other side's paths, which is what is bounded.
+    pairs, by `_MAX_PATH_PAIRS`, and what they read, added to the call's
+    `_Work`. A pair joins the locks, the quorums and the hashes of its two
+    paths, and hashes the path they give, no bigger than the two
+    together: its work is at most in proportion to their `_path_size`
+    together. Each path of one side is in a pair with each path of the
+    other, so the work of the pairs is at most in proportion to each
+    side's sizes times the other side's paths, which is what is added.
     """
     if len(first) * len(second) > _MAX_PATH_PAIRS:
         err_msg = f"more than {_MAX_PATH_PAIRS} pairs of spending paths to join"
         raise BTClibValueError(err_msg)
-    work = len(second) * sum(map(_path_size, first))
-    work += len(first) * sum(map(_path_size, second))
-    if work > _MAX_PATH_WORK:
-        err_msg = (
-            f"more than {_MAX_PATH_WORK} keys and hashes of spending paths to join"
-        )
-        raise BTClibValueError(err_msg)
+    order.work.add(
+        len(second) * sum(map(_path_size, first))
+        + len(first) * sum(map(_path_size, second))
+    )
     # a dict for its order and its keys: the same path reached twice is
     # one path
     paths: dict[SpendingPath, None] = {}
@@ -4482,6 +4511,8 @@ class _Union:
                     merged = self.order.path(
                         quorums, owned.older, owned.after, owned.hashes
                     )
+                    # asked again, as each path read was
+                    self.order.work.add(_path_size(merged))
                     self.drop(place)
                     self.drop(other)
                     if merged in self.places:
@@ -4509,8 +4540,11 @@ def _paths_or(
     are at most twice those read. Asking a path reads its quorums once,
     as `_rest_keys` says, and compares two paths whole only where their
     keys match: the work is the paths asked times their quorums, each
-    read by its keys, as big as `_key_size` says.
+    read by its keys, as big as `_key_size` says. Each path is added to
+    the call's `_Work` before it is asked: those read as they come in,
+    and each merged path as it is made.
     """
+    order.work.add(sum(map(_path_size, first)) + sum(map(_path_size, second)))
     union = _Union(order)
     work: deque[int] = deque()
     for path in (*first, *second):
