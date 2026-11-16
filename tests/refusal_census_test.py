@@ -19,16 +19,18 @@ shapes this package's sources do not, so that every branch of the
 census runs.
 
 It reads as an exception the package builds each call of a name ending in
-`Error` or `Exception`, or of a name an assignment or an import binds to
-such a class or to a class of the package that may be an exception: one
-deriving, through classes of the package, from a base that is neither one
-of them nor one of `_PLAIN_BASES`. It reads the exception of each `raise`
-too, but not what a function of the package returns, nor the exception
-an `except` around the `raise` binds, nor a name each value of which its
-scope assigns is `None`, such a call, or a call of a function of the
-package each of whose `return`s is one; a bare annotation assigns it
-nothing. Every argument of each has to be traced to values a refusal may
-print, and what the census cannot trace is a finding. It traces
+`Error` or `Exception`, or of a name a `class` statement, an assignment or
+an import binds to such a class or to a class of the package that may be
+an exception: one deriving, through classes of the package, from a base
+that is neither one of them nor one of `_PLAIN_BASES`. A parameter of the
+name, of any kind, binds it to what a caller passes, and a call of it is
+not read as building one. It reads the exception of each `raise` too, but
+not what a function of the package returns, nor the exception an `except`
+around the `raise` binds, nor a name each value of which its scope assigns
+is `None`, such a call, or a call of a function of the package each of
+whose `return`s is one; a bare annotation assigns it nothing. Every
+argument of each has to be traced to values a refusal may print, and what
+the census cannot trace is a finding. It traces
 
 - a literal, a comparison, a name bound by a `def`, a `class` or an
   import but one of `_PROCESS_INPUT`, a builtin of `_PURE_BUILTINS` or
@@ -108,21 +110,22 @@ An exception that is not one of the package's classes may hold the input,
 as a `UnicodeError` holds its bytes, so no refusal chains one or has it as
 context, and no `except` raises one again. A class is the package's where
 the scope that names it defines it, or imports it from a module of the
-package that does: one of another package is not, whatever its name. A
-`raise` inside an `except` of another class, or in a `finally`, is a
-finding, and so is a `raise ... from` anything but `None` or an exception
-of the package's classes. So is a call, inside such an `except` or a
-`finally`, that may reach a `raise` of the package: of a function of the
-package that holds one, or calls one that does, however far down, or of a
-callee the census cannot name, a parameter, a local or what is no name,
-there or in any function it reaches. There a method is every method of
-that name in the package, whatever object it is called on, except that a
-name called on a method's own object that the package assigns as an
-attribute and defines no method of is unknown; a class of the package
-called runs the `__init__`, `__new__` and `__post_init__` of it and of
-each class of the package it derives from; a builtin, or a name imported
-from outside the package, runs none of it. A call of `CLEANUPS`, each
-entry with its reason, is not a finding, and an entry no finding uses
+package that does: one of another package is not, whatever its name, nor
+is a parameter of the name, of any kind, through which a caller can pass
+any class. A `raise` inside an `except` of another class, or in a
+`finally`, is a finding, and so is a `raise ... from` anything but `None`
+or an exception of the package's classes. So is a call, inside such an
+`except` or a `finally`, that may reach a `raise` of the package: of a
+function of the package that holds one, or calls one that does, however
+far down, or of a callee the census cannot name, a parameter, a local or
+what is no name, there or in any function it reaches. There a method is
+every method of that name in the package, whatever object it is called on,
+except that a name called on a method's own object that the package
+assigns as an attribute and defines no method of is unknown; a class of
+the package called runs the `__init__`, `__new__` and `__post_init__` of
+it and of each class of the package it derives from; a builtin, or a name
+imported from outside the package, runs none of it. A call of `CLEANUPS`,
+each entry with its reason, is not a finding, and an entry no finding uses
 fails the census. A bare `raise`, or a `raise` of the name the `except`
 binds, is a finding unless the `except` catches the package's classes,
 `KeyboardInterrupt` and `SystemExit` alone, or is a cleanup: one that
@@ -131,10 +134,10 @@ it ends in. What a cleanup relays passes on as it would with no `try`
 around it. What a call outside the package raises, and an exception
 another package raises that none of the package's `except` catches, are
 not read by the census, nor a value attached to an exception with
-`add_note`. A `type()` is not traced, nor a `__name__` or a
-`__qualname__` of what is not: a class can be given any name, a key's
-hex among them, and a metaclass can answer either. A `len` is traced,
-though a class can answer it with any number.
+`add_note`. A `type()` is not traced, nor a `__name__` or a `__qualname__`
+of what is not: a class can be given any name, a key's hex among them, and
+a metaclass can answer either. A `len` is traced, though a class can
+answer it with any number.
 
 `_code` and `_hex_field` are helpers of btclib-org/btclib-wallet that
 this package does not define. The census trusts each describing helper
