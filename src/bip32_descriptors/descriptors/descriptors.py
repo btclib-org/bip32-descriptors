@@ -4262,9 +4262,10 @@ def _assert_raw_script(script: bytes) -> None:
 def _assert_raw_size(script: bytes, context: str) -> None:
     """Refuse a ``raw()`` script over the limit of what embeds it.
 
-    The size decided by is that of the octets `bytes_from_octets` answers,
-    which can be a caller's bytes subclass with a `__len__` of its own;
-    the size written is the one those bytes hold, as `_size` measures it.
+    The size the check decides by is that of the octets
+    `bytes_from_octets` answers, which can be a caller's bytes subclass
+    with a `__len__` of its own; the size written is the one those bytes
+    hold, as `_size` measures it.
     """
     limit = _EMBEDDED_SCRIPT_SIZE.get(context)
     octets = bytes_from_octets(script)

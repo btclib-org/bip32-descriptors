@@ -774,9 +774,11 @@ class _Census:
     def _builds_exception(self, func: ast.expr, module: _Module) -> bool:
         """Return whether a callee is an exception class or a name bound to one.
 
-        A name ending in `Error` or `Exception`, or a name an assignment or
-        an import binds to such a name or to an exception class of the
-        package, as `_exception_classes` finds them.
+        A name ending in `Error` or `Exception`, or a name a `class`
+        statement, an assignment or an import binds to such a name or to an
+        exception class of the package, as `_exception_classes` finds them.
+        A parameter of the name, of any kind, binds it to what a caller
+        passes, which the outer scopes do not say: it is not taken for one.
         """
         name = _called_name(func) or ""
         if name.endswith(("Error", "Exception")):
@@ -784,25 +786,33 @@ class _Census:
         if not isinstance(func, ast.Name):
             return False
         for scope in module.scopes(func):
-            for binding in self._scope_nodes(scope):
-                if isinstance(binding, (ast.Import, ast.ImportFrom)):
-                    if any(
-                        (a.asname or a.name) == name
-                        and (
-                            _names_exception(a.name)
-                            or a.name in self._exception_classes()
-                        )
-                        for a in binding.names
-                    ):
-                        return True
-                elif isinstance(binding, (ast.Assign, ast.AnnAssign)) and _binds(
-                    binding, name
-                ):
-                    source = _called_name(binding.value) if binding.value else None
-                    if source and (
-                        _names_exception(source) or source in self._exception_classes()
-                    ):
-                        return True
+            if isinstance(scope, _FUNCTION) and any(
+                arg.arg == name for arg in _arguments(scope)
+            ):
+                return False
+            if any(
+                self._binds_exception(binding, name)
+                for binding in self._scope_nodes(scope)
+            ):
+                return True
+        return False
+
+    def _binds_exception(self, binding: ast.AST, name: str) -> bool:
+        """Return whether a binding binds a name to an exception class."""
+        classes = self._exception_classes()
+        if isinstance(binding, ast.ClassDef):
+            return binding.name == name and name in classes
+        if isinstance(binding, (ast.Import, ast.ImportFrom)):
+            return any(
+                (a.asname or a.name) == name
+                and (_names_exception(a.name) or a.name in classes)
+                for a in binding.names
+            )
+        if isinstance(binding, (ast.Assign, ast.AnnAssign)) and _binds(binding, name):
+            source = _called_name(binding.value) if binding.value else None
+            return source is not None and (
+                _names_exception(source) or source in classes
+            )
         return False
 
     def _exception_classes(self) -> set[str]:
@@ -1255,7 +1265,8 @@ class _Census:
 
         A class is the package's where the scope that names it defines it,
         or imports it from a module of the package that does: a class of
-        another package is not, whatever its name.
+        another package is not, whatever its name. A parameter of the name,
+        of any kind, is a class a caller passes, which may be any.
         """
         if isinstance(caught, ast.Tuple):
             return all(self._own(each, module) for each in caught.elts)
@@ -1266,6 +1277,10 @@ class _Census:
         if not isinstance(caught, ast.Name):
             return False
         for scope in module.scopes(caught):
+            if isinstance(scope, _FUNCTION) and any(
+                arg.arg == caught.id for arg in _arguments(scope)
+            ):
+                return False
             if bindings := [
                 n for n in self._scope_nodes(scope) if _binds(n, caught.id)
             ]:
@@ -2999,6 +3014,43 @@ _SHAPES = {
             "def _make(key):\n    return key\n"
             "def f(key):\n    refusal = _make(key)\n    raise refusal"
         ),
+    ),
+    "exception class a function of the package returns": (
+        (
+            "class Refused(Exception):\n    pass\ndef _make(key):\n    return Refused('a')\n"
+            "def f(key):\n    raise _make(key)"
+        ),
+        (
+            "class Refused(Exception):\n    pass\ndef _make(key):\n    return Refused(key)\n"
+            "def f(key):\n    raise _make(key)"
+        ),
+    ),
+    "exception class a lambda's parameter shadows": (
+        (
+            "class Refused(Exception):\n    pass\ndef f(key):\n    build = lambda Refused: Refused(key)\n"
+            "    return build(str)"
+        ),
+        "class Refused(Exception):\n    pass\ndef f(key):\n    return Refused(key)",
+    ),
+    "class of the package a parameter shadows": (
+        "class Refused(Exception):\n    pass\ndef f(key):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+        "class Refused(Exception):\n    pass\ndef f(key, Refused):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+    ),
+    "class of the package a positional-only parameter shadows": (
+        "class Refused(Exception):\n    pass\ndef f(key):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+        "class Refused(Exception):\n    pass\ndef f(key, Refused, /):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+    ),
+    "class of the package a keyword-only parameter shadows": (
+        "class Refused(Exception):\n    pass\ndef f(key):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+        "class Refused(Exception):\n    pass\ndef f(key, *, Refused):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+    ),
+    "class of the package a starred parameter shadows": (
+        "class Refused(Exception):\n    pass\ndef f(key):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+        "class Refused(Exception):\n    pass\ndef f(key, *Refused):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+    ),
+    "class of the package a double-starred parameter shadows": (
+        "class Refused(Exception):\n    pass\ndef f(key):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+        "class Refused(Exception):\n    pass\ndef f(key, **Refused):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
     ),
     "exception handed to a function that raises it": (
         (
