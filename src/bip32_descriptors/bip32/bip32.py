@@ -1332,6 +1332,13 @@ def derive_from_account_range_(
     """
     account = key_data_from_bip32_key(mxkey)
     _assert_valid_branch(account, branch, branches_0_1_only, max_index)
+    # an iterator would be used up by the checks and derive nothing, so it
+    # is refused as the type the signature does not declare; a sequence is
+    # read once, and the indexes checked are the ones derived
+    if not isinstance(address_indexes, Sequence):
+        err_msg = f"invalid address_indexes type: {_type_name(address_indexes)}"  # type: ignore[unreachable]
+        raise BTClibTypeError(err_msg)
+    address_indexes = tuple(address_indexes)
     for address_index in address_indexes:
         _assert_valid_address_index(address_index, max_index)
 
