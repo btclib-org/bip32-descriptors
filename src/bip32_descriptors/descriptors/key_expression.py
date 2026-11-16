@@ -511,7 +511,7 @@ class KeyExpression:
         if self.origin is not None:
             assert_type(self.origin, BIP32KeyOrigin, "origin")
             self.origin.assert_valid()
-        if self.pub_key is None and not (self.xkey or self.participants):
+        if self.pub_key is None and not self.xkey and not self.participants:
             raise BTClibValueError(_NO_KEY)
         if not self.xkey or _PLACEHOLDER.fullmatch(self.xkey):
             return
