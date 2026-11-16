@@ -29,10 +29,12 @@ from __future__ import annotations
 
 import re
 import string
+import weakref
 from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
+from types import MemberDescriptorType
 from typing import Any, TypeVar
 
 from base58_bech32.base58 import b58decode_check
@@ -106,6 +108,89 @@ def _assert_prv_keys(prv_keys: object) -> None:
     `AttributeError` of its missing `get`.
     """
     assert_type(prv_keys, (Mapping, type(None)), "prv_keys")
+
+
+def _init_fields(obj: Any) -> set[str]:
+    """Return the names of the fields the `__init__` of `obj` takes."""
+    return {item.name for item in fields(obj) if item.init}
+
+
+def _is_instance_lacking_fields(value: object) -> bool:
+    """Answer whether the dataclass object `value` lacks a field it takes."""
+    # a field is in a slot where its class gives it one, else in
+    # `__dict__`: an unset slot answers nothing, while a field missing
+    # from `__dict__` answers with its default, a class attribute
+    held = getattr(value, "__dict__", {})
+    return not all(
+        hasattr(value, name)
+        if isinstance(getattr(type(value), name, None), MemberDescriptorType)
+        else name in held
+        for name in _init_fields(value)
+    )
+
+
+# each object `_checked_state` restored, by its `id`: its state was read
+# whole when it was, so a later state reaching it reads no further
+_RESTORED: weakref.WeakValueDictionary[int, Any] = weakref.WeakValueDictionary()
+
+
+def _checked_state(obj: Any, state: object) -> None:
+    """Set what pickle restores on `obj`, then check it as the build does.
+
+    `state` is the instance dictionary the default pickling writes: each
+    field `__init__` takes, and none that is no field of a dataclass the
+    class of `obj` derives from, as a leaf of two classes holds the
+    fields of both. Once the fields are set, `obj.__post_init__` runs,
+    as CONTRIBUTING.md's *The public surface* says of what `pickle.loads`
+    restores. A refusal of the state quotes no value it holds.
+
+    The default pickling restores `obj` without fields first and sets
+    them here once; a second state for an object holding its fields is
+    refused. A state reaching `obj` itself, or an object not restored
+    yet, through tuples, lists and the fields of the objects it holds,
+    is refused: a node a forged pickle makes its own subexpression,
+    directly or through another, would leave readers that never end.
+    The walk reads each object once, as a pickle can hold one through
+    many others, and stops at one restored here, whose state it read
+    then: an object it reached held its fields, so no later state is
+    set on it.
+
+    A pickle with no state never calls `__setstate__`, so nothing here
+    asks it, as CONTRIBUTING.md's *The public surface* says.
+    """
+    if not isinstance(state, dict):
+        raise BTClibTypeError(f"invalid pickle state type: {type(state).__name__}")
+    held = {
+        item.name
+        for cls in type(obj).__mro__
+        if is_dataclass(cls)
+        for item in fields(cls)
+    }
+    if not _init_fields(obj) <= state.keys() <= held:
+        err_msg = f"invalid pickle state: not the fields of {type(obj).__name__}"
+        raise BTClibValueError(err_msg)
+    if held & vars(obj).keys():
+        raise BTClibValueError("invalid pickle state: an object restored already")
+    seen: set[int] = set()
+    stack = list(state.values())
+    while stack:
+        value = stack.pop()
+        if value is obj:
+            raise BTClibValueError("invalid pickle state: an object holding itself")
+        if id(value) in seen or _RESTORED.get(id(value)) is value:
+            continue
+        if isinstance(value, (tuple, list)):
+            seen.add(id(value))
+            stack += value
+        elif is_dataclass(value) and not isinstance(value, type):
+            if _is_instance_lacking_fields(value):
+                err_msg = "invalid pickle state: an object not restored yet"
+                raise BTClibValueError(err_msg)
+            seen.add(id(value))
+            stack += (getattr(value, item.name, None) for item in fields(value))
+    obj.__dict__.update(state)
+    obj.__post_init__()
+    _RESTORED[id(obj)] = obj
 
 
 def _assert_index_range(index: int) -> None:
@@ -391,11 +476,13 @@ class KeyExpression:
         """Check key fields, `der_path`, `wildcard` and `hardening`.
 
         A `pub_key` is SEC bytes, checked as `_assert_pub_key` says, and
-        the whole key: no `xkey`, `participants`, `der_path` or `wildcard`
-        beside it. `x_only` takes a 0x02 `pub_key` of 33 bytes.
-        `participants` make a ``musig()`` as `_assert_musig` says.
-        `wildcard` is None, 0 or 2**31. `hardening` is one of the two
-        symbols BIP380 allows. A refusal quotes no key, beyond the prefix
+        the whole key: no `xkey`, `participants`, `der_path` or
+        `wildcard` beside it. `x_only` takes a 0x02 `pub_key` of 33
+        bytes. `participants` make a ``musig()`` as `_assert_musig`
+        says. `wildcard` is None, 0 or 2**31. `hardening` is one of the
+        two symbols BIP380 allows. `origin` is None or a
+        `BIP32KeyOrigin` that `assert_valid` passes, as every origin
+        `parse` builds is. A refusal quotes no key, beyond the prefix
         byte of a `pub_key`.
 
         An `xkey` is an extended public key of any version btclib decodes,
@@ -421,6 +508,9 @@ class KeyExpression:
         if not isinstance(self.xkey, str):
             err_msg = f"invalid xkey type: {type(self.xkey).__name__}"  # type: ignore[unreachable]
             raise BTClibTypeError(err_msg)
+        if self.origin is not None:
+            assert_type(self.origin, BIP32KeyOrigin, "origin")
+            self.origin.assert_valid()
         if not (self.pub_key or self.xkey or self.participants):
             raise BTClibValueError(_NO_KEY)
         if not self.xkey or _PLACEHOLDER.fullmatch(self.xkey):
@@ -435,6 +525,16 @@ class KeyExpression:
         if is_private:
             err_msg = "an extended private key is no xkey: pass its xpub"
             raise BTClibValueError(err_msg)
+
+    def __setstate__(self, state: object) -> None:
+        """Refuse a pickle holding a field the build refuses.
+
+        As `_checked_state` says. A key that is no point is taken, as
+        `miniscript.from_script` builds one, and a descriptor holding it
+        refuses it.
+        """
+        with _script_keys():
+            _checked_state(self, state)
 
     @property
     def is_ranged(self) -> bool:
@@ -993,15 +1093,20 @@ def _assert_musig(key: KeyExpression) -> None:
     if not participants:
         return
     _assert_participant_types(participants)
+    _assert_musig_fields(key)
+    _assert_participants(participants)
+    if key.der_path or key.wildcard is not None:
+        _assert_musig_path(key)
+
+
+def _assert_musig_fields(key: KeyExpression) -> None:
+    """Refuse the `xkey`, `origin` or `hardening` `_assert_musig` refuses."""
     if key.xkey:
         raise BTClibValueError("a musig() takes no xkey")
     if key.origin is not None:
         raise BTClibValueError(_MUSIG_IN_ORIGIN)
     if key.hardening != _HARDENING:
         raise BTClibValueError("invalid musig() hardening symbol: h expected")
-    _assert_participants(participants)
-    if key.der_path or key.wildcard is not None:
-        _assert_musig_path(key)
 
 
 def _assert_participant_types(participants: tuple[KeyExpression, ...]) -> None:

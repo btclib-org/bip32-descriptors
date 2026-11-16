@@ -20,16 +20,17 @@ place the answer lives, which is what *Topics* and *Publishing* say of
 them.
 
 Each section carries the command that sets its setting and the command
-that reads it back. **Only the read-back under *Branch protection* has
-its answer recorded**: the file was written before the repository was
-created, so every other block carries its command and no answer, and an
-id the commands need — a ruleset's, a run's — stands as a placeholder.
+that reads it back. **Only the read-backs under *Branch protection* and
+*Merge methods* have their answers recorded**: the file was written
+before the repository was created, so every other block carries its
+command and no answer, and an id the commands need — a ruleset's, a
+run's — stands as a placeholder.
 Section 16's step after creation runs each read-back and writes what it
-printed under it, as `#` lines with the date; the answers about a
-release are read again once the first one is out. Section 11 makes such
-an answer documentation, with a reader as its check: nothing re-runs
-these commands, so an answer that differs later is a change made since
-the date beside it.
+printed in a fence of its own below it, with the date; the answers
+about a release are read again once the first one is out. Section 11
+makes such an answer documentation, with a reader as its check: nothing
+re-runs these commands, so an answer that differs later is a change
+made since the date beside it.
 
 ## Creating the repository
 
@@ -56,15 +57,15 @@ gh api -X PATCH repos/btclib-org/bip32-descriptors -f default_branch=main
 
 Then the switches section 11 turns off or on at the repository level, in
 one call — the projects board and the wiki off, the tracker on, squash as
-the only merge method with auto-merge, the head branch deleted on merge,
-and the squash commit's title and body — together with the `.homepage`,
-section 3's page on btclib.org:
+the only merge method with auto-merge off, the head branch deleted on
+merge, and the squash commit's title and body — together with the
+`.homepage`, section 3's page on btclib.org:
 
 ```shell
 gh api -X PATCH repos/btclib-org/bip32-descriptors \
   -F has_issues=true -F has_wiki=false -F has_projects=false \
   -F allow_squash_merge=true -F allow_merge_commit=false \
-  -F allow_rebase_merge=false -F allow_auto_merge=true \
+  -F allow_rebase_merge=false -F allow_auto_merge=false \
   -F delete_branch_on_merge=true \
   -f squash_merge_commit_title=COMMIT_OR_PR_TITLE \
   -f squash_merge_commit_message=COMMIT_MESSAGES \
@@ -194,18 +195,21 @@ gh api repos/btclib-org/bip32-descriptors/branches/main/protection \
          force_pushes: .allow_force_pushes.enabled,
          deletions: .allow_deletions.enabled,
          conversation: .required_conversation_resolution.enabled}'
-# {"checks":[["test: every job passed",15368],
-#   ["docs / Build the documentation",15368],
-#   ["lint / Lint and type-check",15368],
-#   ["lint / Dependency review",15368],
-#   ["lint / Sign-off",15368],
-#   ["regtest / Regtest against Bitcoin Core",15368],
-#   ["sourcery / Sourcery",15368]],
-#  "conversation":true,"deletions":false,"enforce_admins":false,
-#  "force_pushes":false,"linear":true,
-#  "reviews":{"dismiss_stale_reviews":true,
-#   "required_approving_review_count":1},
-#  "strict":false}
+```
+
+```json
+{"checks":[["test: every job passed",15368],
+  ["docs / Build the documentation",15368],
+  ["lint / Lint and type-check",15368],
+  ["lint / Dependency review",15368],
+  ["lint / Sign-off",15368],
+  ["regtest / Regtest against Bitcoin Core",15368],
+  ["sourcery / Sourcery",15368]],
+ "conversation":true,"deletions":false,"enforce_admins":false,
+ "force_pushes":false,"linear":true,
+ "reviews":{"dismiss_stale_reviews":true,
+  "required_approving_review_count":1},
+ "strict":false}
 ```
 
 Read on 2026-11-05T07:18Z, after a `PATCH` of `required_status_checks`
@@ -370,9 +374,10 @@ gh api repos/<owner>/<repo>/git/tags/<sha> --jq .verification
 
 ## Merge methods
 
-**Squash is the only method GitHub can be asked for**, and auto-merge
-presses it once the review and the checks are in; the call is the one
-under *Creating the repository*. Read back:
+**Squash is the only method GitHub can be asked for**, and auto-merge is
+off, [for the reason section 11
+gives](https://github.com/btclib-org/.github#merge-method); the call is
+the one under *Creating the repository*. Read back:
 
 ```shell
 gh api repos/btclib-org/bip32-descriptors \
@@ -380,6 +385,16 @@ gh api repos/btclib-org/bip32-descriptors \
          allow_auto_merge, squash_merge_commit_title,
          squash_merge_commit_message, delete_branch_on_merge}'
 ```
+
+```json
+{"allow_auto_merge":false,"allow_merge_commit":false,
+ "allow_rebase_merge":false,"allow_squash_merge":true,
+ "delete_branch_on_merge":true,
+ "squash_merge_commit_message":"COMMIT_MESSAGES",
+ "squash_merge_commit_title":"COMMIT_OR_PR_TITLE"}
+```
+
+Read on 2026-11-14T16:30Z.
 
 `COMMIT_OR_PR_TITLE` is the subject: the pull request title with its
 number, or the subject of the single commit where a branch has one.

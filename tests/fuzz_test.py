@@ -31,7 +31,7 @@ from bip32_descriptors import descriptors
 from bip32_descriptors.bip32.bip32 import BIP32KeyData, rootxprv_from_seed
 from bip32_descriptors.bip32.der_path import indexes_from_der_path
 from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
-from bip32_descriptors.descriptors import miniscript
+from bip32_descriptors.descriptors import compiler, miniscript
 from tests import module_names, public_classes_with
 from tests.exception_family_test import RUNTIME_ERRORS, TYPE_ERRORS, VALUE_ERRORS
 
@@ -58,7 +58,8 @@ BINARY_PARSERS: dict[str, Callable[[bytes], Any]] = {
 
 
 # The same contract, for what a user pastes rather than what a peer
-# sends: an extended key, a derivation path, a descriptor.
+# sends: an extended key, a derivation path, a descriptor, a spending
+# policy.
 #
 # The base58 wrapper is here rather than above, and is a parser of its
 # own: `b58decode` decodes and then hands the bytes to `parse`, so what it
@@ -69,6 +70,7 @@ TEXT_PARSERS: dict[str, Callable[[str], Any]] = {
     "descriptors.parse": descriptors.parse,
     "miniscript.parse": miniscript.parse,
     "der_path.indexes_from_der_path": indexes_from_der_path,
+    "compiler.compile_policy": compiler.compile_policy,
 }
 
 
@@ -214,6 +216,9 @@ LONG_NUMBER_TEXTS = [(miniscript.parse, text) for text in _MINISCRIPT_TEXTS] + [
     (descriptors.parse, f"wsh({_MINISCRIPT_TEXTS[1]})"),
     (descriptors.parse, f"wsh({_MINISCRIPT_TEXTS[2]})"),
     (descriptors.parse, f"wpkh({_XPUB}/{{n}})"),
+    (compiler.compile_policy, f"and(pk({_KEY}),after({{n}}))"),
+    (compiler.compile_policy, f"thresh({{n}},pk({_KEY}))"),
+    (compiler.compile_policy, f"or({{n}}@pk({_KEY}),pk({_KEY}))"),
 ]
 
 

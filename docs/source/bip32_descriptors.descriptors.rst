@@ -4,6 +4,13 @@ bip32\_descriptors.descriptors package
 Submodules
 ----------
 
+bip32\_descriptors.descriptors.compiler module
+-----------------------------------------------
+
+.. automodule:: bip32_descriptors.descriptors.compiler
+   :members:
+   :show-inheritance:
+
 bip32\_descriptors.descriptors.descriptors module
 -------------------------------------------------
 
