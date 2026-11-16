@@ -2777,6 +2777,96 @@ def test_the_keys_of_a_multi_are_refused_before_its_function(
         wrap(multi)
 
 
+@pytest.mark.parametrize(
+    "wrapper,keys,refusal",
+    [
+        (
+            ShDescriptor,
+            _KEYS[:16],
+            (
+                "multi() inside sh() is a 547-byte redeem script,"
+                " over the 520-byte push limit"
+            ),
+        ),
+        (WshDescriptor, (_U_KEY,), f"key 0: {_UNCOMPRESSED_HERE}"),
+    ],
+    ids=["sh", "wsh"],
+)
+def test_a_raw_holding_multi_fields_is_wrapped_as_the_raw_it_writes(
+    wrapper: type[ShDescriptor | WshDescriptor],
+    keys: tuple[KeyExpression, ...],
+    refusal: str,
+) -> None:
+    """Its ``multi()`` fields are not refused, only a real ``multi()``'s.
+
+    Issue btclib-org/bip32-descriptors#337.
+    """
+    raw = _RawThenMulti(threshold=1, keys=keys, script=b"\x51")
+    assert str(raw) == "raw(51)"
+    wrapped = wrapper(raw)
+    expected = wrapper(RawDescriptor(b"\x51"))
+    assert str(wrapped) == str(expected)
+    assert wrapped.script_pub_key().script == expected.script_pub_key().script
+    multi = _MultiThenRaw(threshold=1, keys=keys, script=b"\x51")
+    assert str(multi) == str(MultiDescriptor(1, keys))
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(refusal)}$"):
+        wrapper(multi)
+
+
+@dataclass(frozen=True)
+class _OwnStrMulti(MultiDescriptor):
+    """A ``multi()`` whose `str` is its own and writes the ``multi()``."""
+
+    @override
+    def __str__(self) -> str:
+        return super().__str__()
+
+
+@dataclass(frozen=True)
+class _OwnScriptsMulti(MultiDescriptor):
+    """A ``multi()`` whose scripts are its own and embed the ``multi()``."""
+
+    @override
+    def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
+        return super()._scripts(index, prv_keys)
+
+
+@pytest.mark.parametrize("cls", [_OwnStrMulti, _OwnScriptsMulti])
+@pytest.mark.parametrize(
+    "wrapper,keys,refusal",
+    [
+        (
+            ShDescriptor,
+            _KEYS[:16],
+            (
+                "multi() inside sh() is a 547-byte redeem script,"
+                " over the 520-byte push limit"
+            ),
+        ),
+        (WshDescriptor, (_U_KEY,), f"key 0: {_UNCOMPRESSED_HERE}"),
+    ],
+    ids=["sh", "wsh"],
+)
+def test_a_multi_overriding_its_str_or_scripts_keeps_the_multi_checks(
+    cls: type[MultiDescriptor],
+    wrapper: type[ShDescriptor | WshDescriptor],
+    keys: tuple[KeyExpression, ...],
+    refusal: str,
+) -> None:
+    """Only `RawDescriptor`'s own `str` and scripts skip them.
+
+    Issue btclib-org/bip32-descriptors#337.
+    """
+    valid = wrapper(cls(1, _KEYS[:2]))
+    expected = wrapper(MultiDescriptor(1, _KEYS[:2]))
+    assert str(valid) == str(expected)
+    assert valid.script_pub_key().script == expected.script_pub_key().script
+    multi = cls(1, keys)
+    assert str(multi) == str(MultiDescriptor(1, keys))
+    with pytest.raises(BTClibValueError, match=f"^{re.escape(refusal)}$"):
+        wrapper(multi)
+
+
 def _with_network(inner: Descriptor, network: object) -> Descriptor:
     """Return a copy of `inner` holding `network`.
 
