@@ -1960,7 +1960,10 @@ class _Census:
 
 
 def _method(func: ast.AST, module: _Module) -> bool:
-    """Return whether a function is a method: one a class body defines."""
+    """Return whether a function is a method with a positional parameter.
+
+    A method here is a function a class body defines.
+    """
     positional = [*func.args.posonlyargs, *func.args.args]  # type: ignore[attr-defined]
     return bool(positional) and isinstance(module.parents.get(func), ast.ClassDef)
 
