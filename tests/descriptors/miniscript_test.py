@@ -1099,9 +1099,9 @@ G = bytes.fromhex(
 def test_a_supplied_tapscript_key_is_refused_by_its_own_length(key: bytes) -> None:
     """Refuse a pk_h() key of the wrong length by the length it has.
 
-    The even-y lift puts a byte before what it is given, so a key checked
-    after it was refused as one byte longer, or for a prefix it never had;
-    a pushed key was already named by its own length.
+    The even-y lift puts a byte before what it is given, so the length is
+    checked before it, as a pushed key's is, and the refusal names the
+    bytes the caller supplied.
     """
     script = b"\x76\xa9\x14" + hash160(key) + b"\x88\xac"
     message = f"^not a tapscript public key: {len(key)} bytes$"
