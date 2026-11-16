@@ -3566,10 +3566,12 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     whatever its position, with the message `_assert_key_types` gives: a
     forged argument escapes that check of its own too.
 
-    The checks of a ``multi()`` are run on an argument whose class writes
-    its text and makes its script with `MultiDescriptor`'s own `str` and
-    scripts. A class deriving from `RawDescriptor` before `MultiDescriptor`
-    writes and embeds a ``raw()``, and is refused as one.
+    The checks of a ``multi()`` are run on every `MultiDescriptor`
+    argument except one whose class takes both `str` and its scripts from
+    `RawDescriptor`, as a class deriving from `RawDescriptor` before
+    `MultiDescriptor` does: it writes and embeds a ``raw()``, and is
+    refused as one. A class that overrides either keeps the checks, since
+    what it embeds is not known without deriving its keys.
 
     A `RawDescriptor` argument has a script over the limit of `context`
     refused by these rules, in this order, each with `parse`'s message:
@@ -3598,10 +3600,11 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
 
     for key in inner.key_expressions:
         assert_type(key, KeyExpression, "key")
-    if (
-        isinstance(inner, MultiDescriptor)
-        and type(inner).__str__ is MultiDescriptor.__str__
-        and type(inner)._scripts is MultiDescriptor._scripts
+    # typed as a Descriptor, so that mypy reads the identity tests below
+    # as ones that can hold on a MultiDescriptor
+    cls: type[Descriptor] = type(inner)
+    if isinstance(inner, MultiDescriptor) and not (
+        cls.__str__ is RawDescriptor.__str__ and cls._scripts is RawDescriptor._scripts
     ):
         _assert_multi_embedded(inner, context, check)
     else:
