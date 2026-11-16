@@ -186,21 +186,29 @@ def test_text_after_a_comma_is_not_the_miniscript_fault(descriptor: str) -> None
     "expression,context,message",
     [
         ("foo(1)", P2WSH, "^unknown miniscript fragment$"),
-        (f"thresh(0,pk({K}))", P2WSH, r"^invalid thresh\(\) threshold: 0$"),
-        (f"thresh(2,pk({X}))", TAPSCRIPT, r"^invalid thresh\(\) threshold: 2 of 1$"),
+        (
+            f"thresh(0,pk({K}))",
+            P2WSH,
+            r"^invalid thresh\(\) threshold: an int of 0 bits$",
+        ),
+        (
+            f"thresh(2,pk({X}))",
+            TAPSCRIPT,
+            r"^invalid thresh\(\) threshold: an int of 2 bits of 1$",
+        ),
         (f"vv:pk({K})", P2WSH, "^invalid miniscript wrappers: vv:$"),
         (f"and_v(v:pk({K}),sha256(00))", P2WSH, "^invalid size: 1 bytes instead"),
         (
             f"and_v(v:pk({K}),thresh(99999999999,pk({K2})))",
             P2WSH,
-            r"^invalid thresh\(\) threshold: 99999999999 of 1$",
+            r"^invalid thresh\(\) threshold: an int of 37 bits of 1$",
         ),
         (
             f"thresh(9223372036854775808,pk({K}))",
             P2WSH,
             r"^invalid thresh\(\) threshold: past an int64_t$",
         ),
-        (f"multi(0,{K})", P2WSH, "^invalid k in k-of-n multi: 0$"),
+        (f"multi(0,{K})", P2WSH, "^invalid k in k-of-n multi: an int of 0 bits$"),
     ],
 )
 def test_the_standalone_parser_keeps_its_diagnostic(
@@ -215,6 +223,6 @@ def test_a_hand_built_thresh_is_refused_past_its_arguments() -> None:
     """The node bounds a threshold that parse refuses before building it."""
     key = parse_miniscript(f"pk({K})")
     with pytest.raises(
-        BTClibValueError, match=r"^invalid thresh\(\) threshold: 2 of 1$"
+        BTClibValueError, match=r"^invalid thresh\(\) threshold: an int of 2 bits of 1$"
     ):
         Miniscript("thresh", P2WSH, (key,), threshold=2)

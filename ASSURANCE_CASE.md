@@ -132,8 +132,10 @@ to, and what counters each.
   rule is section 7's *A refusal carries no secret* in the
   [organization's standard](https://github.com/btclib-org/.github#a-refusal-carries-no-secret);
   its helper, `assert_secret_free` in `tests/secret_free/__init__.py`, is
-  called by the tests of `tests/bip32/` and `tests/descriptors/` that feed
-  a secret, and reads each exception the refusal chains.
+  called by the tests of `tests/bip32/`, `tests/descriptors/` and
+  `tests/refusal_test.py` that feed a secret, and reads each exception the
+  refusal chains. `tests/refusal_census_test.py` reads the package's
+  sources and fails on a refusal formatting a value it cannot trace.
 - **Type confusion (CWE-843).** mypy runs with `strict = true` over the
   package and the suite, as a hook of the lint gate.
 - **Code that is wrong and still passes.** Line and branch coverage is

@@ -25,6 +25,8 @@ from btclib.alias import Octets
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.utils import assert_type, is_integer
 
+from bip32_descriptors._refusal import _quoted, _size, _type_name
+
 __all__ = [
     "HARDENED_OFFSET",
     "DerPath",
@@ -141,7 +143,7 @@ def _assert_valid_index(i: int) -> None:
     anything, and `str(True)` is "True" where a path step wants "1".
     """
     if not is_integer(i):
-        raise BTClibTypeError(f"invalid derivation index type: {type(i).__name__}")
+        raise BTClibTypeError(f"invalid derivation index type: {_type_name(i)}")
     if not 0 <= i <= 0xFFFFFFFF:
         raise BTClibValueError("invalid index: not in 0..2**32-1")
 
@@ -170,7 +172,7 @@ def str_from_index_int(i: int, hardening: str = _HARDENING) -> str:
     parsers refuse, so this writes no path a descriptor cannot hold.
     """
     if hardening not in _BIP380_HARDENINGS:
-        raise BTClibValueError(f"invalid hardening symbol: {hardening}")
+        raise BTClibValueError(f"invalid hardening symbol: {_quoted(hardening)}")
     _assert_valid_index(i)
     # int() of an int, because a subclass of int may define a str() that
     # is not the number -- its *name*, "Sighash.ALL" where a path step
@@ -206,7 +208,7 @@ def _pairs_from_der_path_str(
     ]
 
     if len(pairs) > 255:
-        err_msg = f"depth greater than 255: {len(pairs)}"
+        err_msg = f"depth greater than 255: {_size(pairs)}"
         raise BTClibValueError(err_msg)
     return [index for index, _ in pairs], [hardening for _, hardening in pairs]
 
@@ -282,7 +284,7 @@ def _indexes_from_der_path(
     # byte: `Sequence[int]` below is for a genuine sequence of indexes
     if isinstance(der_path, (bytes, bytearray, memoryview)):
         if len(der_path) % 4 != 0:
-            err_msg = f"index are not a multiple of 4-bytes: {len(der_path)}"
+            err_msg = f"index are not a multiple of 4-bytes: {_size(der_path)}"
             raise BTClibValueError(err_msg)
         return [
             int.from_bytes(der_path[n : n + 4], byteorder="little", signed=False)
@@ -327,7 +329,7 @@ def str_from_der_path(
         if len(first_element) != 8:
             # the length only: the value is not shown
             err_msg = "invalid master fingerprint length: "
-            err_msg += f"{len(first_element)} characters instead of 8 hex digits"
+            err_msg += f"{_size(first_element)} characters instead of 8 hex digits"
             raise BTClibValueError(err_msg)
     else:
         first_element = "m"

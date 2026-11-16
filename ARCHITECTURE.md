@@ -3,12 +3,17 @@
 The package is two subpackages, layered bottom-up, on top of
 [btclib](https://github.com/btclib-org/btclib),
 [base58-bech32](https://github.com/btclib-org/base58-bech32) and
-[ecc](https://github.com/btclib-org/ecc).
+[ecc](https://github.com/btclib-org/ecc), and a private module both
+import.
 
-`bip32` is the base and imports nothing else of the package. Within it,
-`der_path` is the derivation path codec; `bip32` holds the extended key,
-its serialization and its derivation, and `key_origin` the fingerprint
-and path of a key's origin, each importing `der_path`.
+`_refusal` says how a refusal shows the value it refuses, and imports
+nothing else of the package.
+
+`bip32` is the base and imports nothing else of the package but
+`_refusal`. Within it, `der_path` is the derivation path codec; `bip32`
+holds the extended key, its serialization and its derivation, and
+`key_origin` the fingerprint and path of a key's origin, each importing
+`der_path`.
 
 `descriptors` builds on `bip32`. `key_expression` is BIP380's key
 expression: a key, its origin and its derivation steps. `miniscript` is
@@ -23,8 +28,8 @@ psbt updater.
 it, and imports `key_expression` and `miniscript`.
 
 `__init__` imports no module of the package: it loads one when it is
-first asked for.
+first asked for, and `_refusal` when it refuses a name.
 
 `tests/imports_test.py` holds this rule. Its `_ALLOWED_UNITS` table is the
-list of what each subpackage may import of the other, read against the
+list of what each unit may import of the others, read against the
 import statements of every file in `src/bip32_descriptors/`.

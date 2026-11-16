@@ -24,6 +24,7 @@ from btclib.utils import (
 from ecc.curves import sec_point
 from typing_extensions import override
 
+from bip32_descriptors._refusal import _size, _type_name
 from bip32_descriptors.bip32.der_path import (
     DerPath,
     bytes_from_der_path,
@@ -87,7 +88,7 @@ class BIP32KeyOrigin:
         value it holds.
         """
         if not isinstance(state, dict):
-            err_msg = f"invalid pickle state type: {type(state).__name__}"
+            err_msg = f"invalid pickle state type: {_type_name(state)}"
             raise BTClibTypeError(err_msg)
         if state.keys() != {"master_fingerprint", "der_path"}:
             err_msg = "invalid pickle state: not the fields of BIP32KeyOrigin"
@@ -114,14 +115,14 @@ class BIP32KeyOrigin:
         assert_type(self.der_path, tuple, "der_path")
         for index in self.der_path:
             if not is_integer(index):
-                err_msg = f"invalid der_path element type: {type(index).__name__}"
+                err_msg = f"invalid der_path element type: {_type_name(index)}"
                 raise BTClibTypeError(err_msg)
         if len(self.master_fingerprint) != 4:
             err_msg = "invalid master fingerprint length: "
-            err_msg += f"{len(self.master_fingerprint)}"
+            err_msg += f"{_size(self.master_fingerprint)}"
             raise BTClibValueError(err_msg)
         if len(self) > 255:
-            raise BTClibValueError(f"invalid der_path size: {len(self.der_path)}")
+            raise BTClibValueError(f"invalid der_path size: {_size(self.der_path)}")
         if any(not 0 <= i <= 0xFFFFFFFF for i in self.der_path):
             raise BTClibValueError("invalid der_path element")
 
@@ -229,7 +230,7 @@ def assert_valid_hd_key_paths(hd_key_paths: Mapping[bytes, BIP32KeyOrigin]) -> N
         raise BTClibValueError("Duplicated key origin values in hd_key_paths")
     for pub_key, key_origin in hd_key_paths.items():
         if len(pub_key) not in {78, 33, 65}:
-            err_msg = f"invalid public key length: {len(pub_key)}"
+            err_msg = f"invalid public key length: {_size(pub_key)}"
             raise BTClibValueError(err_msg)
         # a 78-octet key belongs in a psbt's global map, where
         # btclib-wallet's `psbt.py` checks its point; in an input's or an

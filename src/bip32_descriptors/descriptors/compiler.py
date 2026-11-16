@@ -57,6 +57,7 @@ from dataclasses import dataclass
 from btclib.exceptions import BTClibValueError
 from btclib.utils import assert_type
 
+from bip32_descriptors._refusal import _label, _position, _quoted, _size
 from bip32_descriptors.bip32.der_path import _int_from_digits
 from bip32_descriptors.descriptors.key_expression import (
     KeyExpression,
@@ -95,6 +96,9 @@ _MAX_STEPS = 500_000
 
 # the hash locks, and the size of the digest each takes
 _HASHES = {"sha256": 32, "hash256": 32, "ripemd160": 20, "hash160": 20}
+
+# the calls a policy is written with, which a refusal prints by `_label`
+_CALLS = frozenset(("pk", "after", "older", "and", "or", "thresh")) | frozenset(_HASHES)
 
 # the largest weight of an or() branch, where sipa caps it
 _MAX_PROBABILITY = 0xFFFF
@@ -135,8 +139,10 @@ def _call(text: str) -> tuple[str, str]:
 def _number(name: str, argument: str) -> int:
     """Return the number a lock time or a threshold is, as digits."""
     if not argument.isascii() or not argument.isdigit():
-        raise BTClibValueError(f"invalid {name}() number: digits expected")
-    return _int_from_digits(argument, f"{name}() number")
+        raise BTClibValueError(
+            f"invalid {_label(name, _CALLS)}() number: digits expected"
+        )
+    return _int_from_digits(argument, f"{_label(name, _CALLS)}() number")
 
 
 def _weighted(argument: str) -> tuple[int, str]:
@@ -179,12 +185,15 @@ def _parse_leaf(name: str, inner: str) -> _Policy:
     if name in {"after", "older"}:
         number = _number(name, inner)
         if not 1 <= number < _MAX_TIMELOCK:
-            raise BTClibValueError(f"invalid {name}() value: {number}")
+            err_msg = f"invalid {_label(name, _CALLS)}() value: {_quoted(number)}"
+            raise BTClibValueError(err_msg)
         return _Policy(name, (), (), number, None, b"")
     if name in _HASHES:
         size = _HASHES[name]
         if len(inner) != 2 * size or not _is_hex(inner):
-            raise BTClibValueError(f"invalid {name}() digest: {size} bytes of hex")
+            err_msg = f"invalid {_label(name, _CALLS)}() digest:"
+            err_msg += f" {_position(size)} bytes of hex"
+            raise BTClibValueError(err_msg)
         return _Policy(name, (), (), 0, None, bytes.fromhex(inner))
     raise BTClibValueError("invalid policy: unknown call")
 
@@ -194,7 +203,7 @@ def _parse_combination(name: str, inner: str) -> _Policy:
     if name in {"and", "or"}:
         arguments = _split_arguments(inner)
         if len(arguments) != 2:
-            raise BTClibValueError(f"{name}() takes two arguments")
+            raise BTClibValueError(f"{_label(name, _CALLS)}() takes two arguments")
         if name == "and":
             subs = tuple(_parse(sub) for sub in arguments)
             return _Policy("and", subs, (), 0, None, b"")
@@ -208,7 +217,7 @@ def _parse_combination(name: str, inner: str) -> _Policy:
         err_msg = f"thresh() takes 1 to {_MAX_THRESH_ARGUMENTS} arguments"
         raise BTClibValueError(err_msg)
     if not 1 <= number <= len(arguments):
-        err_msg = f"invalid thresh() threshold: {number} of {len(arguments)}"
+        err_msg = f"invalid thresh() threshold: {_quoted(number)} of {_size(arguments)}"
         raise BTClibValueError(err_msg)
     subs = tuple(_parse(sub) for sub in arguments)
     return _Policy("thresh", subs, (), number, None, b"")

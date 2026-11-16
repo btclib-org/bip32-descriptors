@@ -500,7 +500,7 @@ REFUSED_HERE = [
     (
         "unliftable_miniscript",
         "wsh(0)",
-        "0 is not satisfiable",
+        "the miniscript is not satisfiable",
     ),
 ]
 

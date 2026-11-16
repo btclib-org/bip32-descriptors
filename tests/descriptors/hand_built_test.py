@@ -552,7 +552,7 @@ _MULTI_A_TREE = MultiA(2, (_KEY, _KEY2))
             None,
             {"threshold": 0},
             BTClibValueError,
-            "invalid k in k-of-n multi_a: 0",
+            "invalid k in k-of-n multi_a: an int of 0 bits",
         ),
         (_MULTI_A_TREE, None, {"keys": (5,)}, BTClibTypeError, "invalid key type: int"),
     ],
@@ -627,8 +627,16 @@ def _hybrid_leaf(cls: type[Any]) -> Any:
 @pytest.mark.parametrize(
     "cls,changes,refusal",
     [
-        (_RawLeafMultiA, {"threshold": 0}, "invalid k in k-of-n multi_a: 0"),
-        (_MultiARawLeaf, {"threshold": 0}, "invalid k in k-of-n multi_a: 0"),
+        (
+            _RawLeafMultiA,
+            {"threshold": 0},
+            "invalid k in k-of-n multi_a: an int of 0 bits",
+        ),
+        (
+            _MultiARawLeaf,
+            {"threshold": 0},
+            "invalid k in k-of-n multi_a: an int of 0 bits",
+        ),
         (_MultiARawLeaf, {"script": b""}, "Leaf Script is not hex"),
         (_RawLeafMultiA, {"script": b"", "threshold": 0}, "Leaf Script is not hex"),
     ],
@@ -1255,7 +1263,7 @@ def test_a_miniscript_parse_refuses_is_refused_when_built(
     [
         (
             miniscript.Miniscript("pk_k", keys=(parse(f"pk({_C})").key_expressions)),
-            rf"^not a miniscript script: pk_k\({_C}\) is a K, not a B$",
+            r"^not a miniscript script: a 'K', not a B$",
         ),
         (
             miniscript.Miniscript(
@@ -1341,13 +1349,14 @@ def test_normalized_refuses_what_repeats_a_key_once_derived() -> None:
 
 
 def test_a_refusal_when_built_names_no_private_key() -> None:
-    """A leaf read from an xprv holds its xpub, which is what is named."""
+    """A leaf read from an xprv holds its xpub, and neither is named."""
     prv_keys: dict[str, str] = {}
     expression = f"and_v(v:pk({_XPRV}/1),pk({_XPRV}/1))"
     leaf = miniscript.parse(expression, miniscript.TAPSCRIPT, prv_keys)
-    with pytest.raises(BTClibValueError, match=rf"pk\({_XPUB}/1\)\) is not sane") as e:
+    err_msg = "^a sub-expression is not sane: it repeats a public key$"
+    with pytest.raises(BTClibValueError, match=err_msg) as e:
         TrDescriptor(_KEY, leaf)
-    assert_secret_free(e.value, [_XPRV, bytes.fromhex(_RANDOM_HEX)])
+    assert_secret_free(e.value, [_XPRV, _XPUB, bytes.fromhex(_RANDOM_HEX)])
 
 
 @pytest.mark.parametrize("sort", [False, True])
@@ -1394,7 +1403,7 @@ def test_a_multi_a_threshold_out_of_range_is_refused(
 ) -> None:
     """From 1 to the number of keys, named as `parse` names the function."""
     name = "sortedmulti_a" if sort else "multi_a"
-    err_msg = f"^invalid k in k-of-n {name}: {threshold}$"
+    err_msg = f"^invalid k in k-of-n {name}: an int of {threshold.bit_length()} bits$"
     with pytest.raises(BTClibValueError, match=err_msg):
         MultiA(threshold, keys, sort=sort)
 
@@ -2408,8 +2417,8 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
     *(
         (wrapper, holding(_unpickled_multi_with(threshold=threshold)), refusal)
         for threshold, refusal in (
-            (3, "invalid k in k-of-n multi: 3"),
-            (0, "invalid k in k-of-n multi: 0"),
+            (3, "invalid k in k-of-n multi: an int of 2 bits"),
+            (0, "invalid k in k-of-n multi: an int of 0 bits"),
             (2**32, _OVER_UINT32),
             (-1, _NEGATIVE),
         )
@@ -2423,7 +2432,7 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
     (
         ShDescriptor,
         _unpickled_multi_with(threshold=3, sort=True),
-        "invalid k in k-of-n sortedmulti: 3",
+        "invalid k in k-of-n sortedmulti: an int of 2 bits",
     ),
     (
         WshDescriptor,
@@ -2433,7 +2442,7 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
     (
         ShDescriptor,
         _unpickled_multi_with(threshold=3, keys=(_C_KEY, _U_KEY)),
-        "invalid k in k-of-n multi: 3",
+        "invalid k in k-of-n multi: an int of 2 bits",
     ),
     (WshDescriptor, _unpickled_multi_with(threshold=2, keys=(_MUSIG,)), _MUSIG_0),
     (
@@ -2444,7 +2453,7 @@ _REFUSED_INSIDE: list[tuple[type[ShDescriptor | WshDescriptor], Descriptor, str]
     (
         ShDescriptor,
         _unpickled_multi_with(threshold=17, keys=_KEYS[:16]),
-        "invalid k in k-of-n multi: 17",
+        "invalid k in k-of-n multi: an int of 5 bits",
     ),
     (WshDescriptor, _unpickled_multi_with(threshold=0, keys=()), _NO_KEYS),
     *(
@@ -2696,7 +2705,9 @@ def test_an_unpickled_sh_or_wsh_is_refused_by_position_without_its_text(
 def test_an_sh_that_is_a_wsh_too_is_refused_for_its_argument_inside_sh() -> None:
     """As `ShDescriptor` refuses the argument of a ``wsh()`` argument, first."""
     inner = _unpickled_holding(_ShAndWsh, _keyless_pk_k())
-    with pytest.raises(BTClibValueError, match="^invalid number of keys in pk_k: 0$"):
+    with pytest.raises(
+        BTClibValueError, match="^invalid number of keys in pk_k: an int of 0 bits$"
+    ):
         ShDescriptor(inner)
 
 
@@ -3822,15 +3833,15 @@ _MULTI_WRAPPERS: list[tuple[Callable[[Descriptor], Descriptor], str]] = [
 @pytest.mark.parametrize(
     "threshold,keys,sort,refusal",
     [
-        (0, _KEYS[:1], False, "invalid k in k-of-n multi: 0"),
-        (2, _KEYS[:1], False, "invalid k in k-of-n multi: 2"),
-        (0, _KEYS[:1], True, "invalid k in k-of-n sortedmulti: 0"),
+        (0, _KEYS[:1], False, "invalid k in k-of-n multi: an int of 0 bits"),
+        (2, _KEYS[:1], False, "invalid k in k-of-n multi: an int of 2 bits"),
+        (0, _KEYS[:1], True, "invalid k in k-of-n sortedmulti: an int of 0 bits"),
         (2**32, _KEYS[:1], False, "invalid multi() threshold: not in 0..2**32-1"),
         (1, _KEYS, False, "multi() takes at most 20 keys, 21 given"),
         (1, _KEYS, True, "sortedmulti() takes at most 20 keys, 21 given"),
         (0, _KEYS, False, "multi() takes at most 20 keys, 21 given"),
-        (0, _KEYS[:16], False, "invalid k in k-of-n multi: 0"),
-        (17, _KEYS[:16], False, "invalid k in k-of-n multi: 17"),
+        (0, _KEYS[:16], False, "invalid k in k-of-n multi: an int of 0 bits"),
+        (17, _KEYS[:16], False, "invalid k in k-of-n multi: an int of 5 bits"),
         (1, (), False, "multi() takes a threshold and at least one key"),
         (0, (), True, "sortedmulti() takes a threshold and at least one key"),
     ],
@@ -3978,7 +3989,7 @@ def test_a_multi_some_position_takes_is_built(
             f"wsh(multi(3,{_C_KEY},{_U_KEY}))",
             f"key 1: {_UNCOMPRESSED_HERE}",
             lambda: WshDescriptor(MultiDescriptor(3, (_C_KEY, _U_KEY))),
-            "invalid k in k-of-n multi: 3",
+            "invalid k in k-of-n multi: an int of 2 bits",
         ),
         (
             f"wsh(wpkh({_U_KEY}))",
@@ -3990,7 +4001,7 @@ def test_a_multi_some_position_takes_is_built(
             f"sh(sh(multi(0,{_C_KEY})))",
             "sh() is not allowed inside sh()",
             lambda: ShDescriptor(ShDescriptor(MultiDescriptor(0, (_C_KEY,)))),
-            "invalid k in k-of-n multi: 0",
+            "invalid k in k-of-n multi: an int of 0 bits",
         ),
     ],
     ids=["wsh-multi-key", "wsh-wpkh-function", "sh-sh-function"],
@@ -4693,7 +4704,7 @@ def test_a_miniscript_that_is_a_raw_is_refused_for_its_nodes_first(
     inner: _MiniscriptThenRaw = pickle.loads(pickle.dumps(built))  # noqa: S301
     first = _first_key_node(inner.node)
     object.__setattr__(first, "keys", ())
-    err_msg = f"^invalid number of keys in {first.fragment}: 0$"
+    err_msg = f"^invalid number of keys in {first.fragment}: an int of 0 bits$"
     with pytest.raises(BTClibValueError, match=err_msg):
         wrap(inner)
 
@@ -4995,7 +5006,7 @@ def test_a_node_holding_a_number_of_keys_its_fragment_does_not_take_is_refused(
             else "multi_a() is only allowed in a tapscript"
         )
     else:
-        err_msg = f"invalid number of keys in {fragment}: {len(keys)}"
+        err_msg = f"invalid number of keys in {fragment}: an int of {len(keys).bit_length()} bits"
     root = _holding(fragment, context, keys)
     node = _node_at(root, _HOLDING[fragment][3])
     with pytest.raises(BTClibValueError, match=f"^{re.escape(err_msg)}$"):
@@ -5199,7 +5210,9 @@ def test_a_pk_k_holding_no_key_is_refused_beside_an_uncompressed_key(
     context, wrap = _WRAPPED[wrapped]
     root = _holding("pk_k", context, ())
     object.__setattr__(_node_at(root, (0, 0, 0)), "keys", (_U_KEY,))
-    with pytest.raises(BTClibValueError, match="^invalid number of keys in pk_k: 0$"):
+    with pytest.raises(
+        BTClibValueError, match="^invalid number of keys in pk_k: an int of 0 bits$"
+    ):
         wrap(root)
 
 
@@ -5214,12 +5227,12 @@ _UNPICKLED_FAULTS: dict[
     "no-key": (
         [(_FIRST, "keys", ())],
         BTClibValueError,
-        "invalid number of keys in pk_k: 0",
+        "invalid number of keys in pk_k: an int of 0 bits",
     ),
     "two-keys": (
         [(_FIRST, "keys", _C_KEYS[:2])],
         BTClibValueError,
-        "invalid number of keys in pk_k: 2",
+        "invalid number of keys in pk_k: an int of 2 bits",
     ),
     "list-fragment": (
         [(_SECOND, "fragment", ["pk_k"])],
@@ -5381,7 +5394,9 @@ def test_a_node_of_a_fragment_holding_no_key_is_refused_holding_one() -> None:
     """
     root = _unpickled(miniscript.parse(f"and_v(v:pk({_X}),older(1))", _TAPSCRIPT))
     object.__setattr__(root.subs[1], "keys", (_KEY2,))
-    with pytest.raises(BTClibValueError, match="^invalid number of keys in older: 1$"):
+    with pytest.raises(
+        BTClibValueError, match="^invalid number of keys in older: an int of 1 bits$"
+    ):
         TrDescriptor(_KEY, root)
     object.__setattr__(root.subs[1], "fragment", _RANDOM_HEX)
     with pytest.raises(BTClibValueError, match="^unknown miniscript fragment$") as e:
@@ -5509,8 +5524,8 @@ def test_an_unpickled_multi_a_leaf_holding_keys_of_another_type_is_refused(
 @pytest.mark.parametrize(
     "threshold,keys,fault",
     [
-        (0, (_KEY, _KEY2), "k in k-of-n {}: 0"),
-        (3, (_KEY, _KEY2), "k in k-of-n {}: 3"),
+        (0, (_KEY, _KEY2), "k in k-of-n {}: an int of 0 bits"),
+        (3, (_KEY, _KEY2), "k in k-of-n {}: an int of 2 bits"),
         (1, (_KEY2,) * 1000, "n in k-of-n {}: 1000"),
         (0, (_KEY2,) * 1000, "n in k-of-n {}: 1000"),
     ],
@@ -5616,7 +5631,12 @@ def _first_key_node(root: miniscript.Miniscript) -> miniscript.Miniscript:
 # `_assert_wsh_argument` before it writes the text, with that node's
 # fragment for {}
 _BEFORE_THE_TEXT: dict[str, tuple[str, object, type[Exception], str]] = {
-    "no-key": ("keys", (), BTClibValueError, "invalid number of keys in {}: 0"),
+    "no-key": (
+        "keys",
+        (),
+        BTClibValueError,
+        "invalid number of keys in {}: an int of 0 bits",
+    ),
     "list-fragment": (
         "fragment",
         ["pk_k"],
@@ -5862,7 +5882,7 @@ _BESIDE_THE_SUB_NUMBER: dict[
         "keys",
         lambda c: (_X_KEYS if c == _TAPSCRIPT else _C_KEYS)[2:4],
         BTClibValueError,
-        "invalid number of keys in {fragment}: 2",
+        "invalid number of keys in {fragment}: an int of 2 bits",
     ),
 }
 # where each of them is named before the number of subexpressions
@@ -6040,7 +6060,7 @@ def test_a_multisig_of_no_key_is_refused_beside_an_uncompressed_key(
         err_msg = f"^key 0: {_UNCOMPRESSED_HERE}$"
     else:
         fragment = _node_at(root, (0, 0)).fragment
-        err_msg = f"^invalid number of keys in {fragment}: 0$"
+        err_msg = f"^invalid number of keys in {fragment}: an int of 0 bits$"
     with pytest.raises(BTClibValueError, match=err_msg):
         _outermost(wrapped, root)
 
@@ -6079,8 +6099,8 @@ def test_a_node_above_a_multisig_of_too_many_keys_is_asked_its_type_and_bounds(
 @pytest.mark.parametrize(
     "threshold, refusal",
     [
-        (0, BTClibValueError("invalid thresh() threshold: 0")),
-        (3, BTClibValueError("invalid thresh() threshold: 3 of 2")),
+        (0, BTClibValueError("invalid thresh() threshold: an int of 0 bits")),
+        (3, BTClibValueError("invalid thresh() threshold: an int of 2 bits of 2")),
         ("2", BTClibTypeError("invalid threshold type: str")),
     ],
 )
@@ -6118,13 +6138,13 @@ _THRESHOLD_FAULTS: dict[str, tuple[str, tuple[int, ...], object, Exception]] = {
         _THRESH_TEXT,
         (),
         3,
-        BTClibValueError("invalid thresh() threshold: 3 of 2"),
+        BTClibValueError("invalid thresh() threshold: an int of 2 bits of 2"),
     ),
     "thresh-0": (
         _THRESH_TEXT,
         (),
         0,
-        BTClibValueError("invalid thresh() threshold: 0"),
+        BTClibValueError("invalid thresh() threshold: an int of 0 bits"),
     ),
     "thresh-str": (
         _THRESH_TEXT,
@@ -6132,14 +6152,24 @@ _THRESHOLD_FAULTS: dict[str, tuple[str, tuple[int, ...], object, Exception]] = {
         "2",
         BTClibTypeError("invalid threshold type: str"),
     ),
-    "older-0": (_OLDER_TEXT, (1, 1), 0, BTClibValueError("invalid older() value: 0")),
+    "older-0": (
+        _OLDER_TEXT,
+        (1, 1),
+        0,
+        BTClibValueError("invalid older() value: an int of 0 bits"),
+    ),
     "older-2**31": (
         _OLDER_TEXT,
         (1, 1),
         2**31,
-        BTClibValueError("invalid older() value: 2147483648"),
+        BTClibValueError("invalid older() value: an int of 32 bits"),
     ),
-    "after-0": (_AFTER_TEXT, (1, 1), 0, BTClibValueError("invalid after() value: 0")),
+    "after-0": (
+        _AFTER_TEXT,
+        (1, 1),
+        0,
+        BTClibValueError("invalid after() value: an int of 0 bits"),
+    ),
 }
 
 

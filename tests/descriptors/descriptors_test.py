@@ -754,7 +754,7 @@ def test_multipath_refuses_a_fingerprint_before_the_origin_path(origin: str) -> 
         ),
         (
             "pkh({xpub}/<0;0>/<1;2>)",
-            "key 0: Duplicated key path value 0 in multipath specifier",
+            "key 0: Duplicated key path value in multipath specifier",
         ),
         ("pkh({xpub}/<0;x>/<1;2>)", "key 0: invalid derivation index"),
         (
@@ -984,7 +984,7 @@ def test_multipath_and_parse_name_the_fault_core_reads_first(
         ),
         (
             "multi(1,{xpub}/<0;1>,{xpub}/<2;2>)",
-            "key 1: Duplicated key path value 2 in multipath specifier",
+            "key 1: Duplicated key path value in multipath specifier",
         ),
         (
             "multi(1,{xpub}/<0;1>,{xpub}/<2>)",
@@ -1055,9 +1055,7 @@ def test_multipath_reads_the_keys_in_the_network_it_is_given() -> None:
     for network in (None, "testnet"):
         expanded = multipath_descriptors(descriptor, network)
         assert [strip_checksum(d) for d in expanded] == expansions
-    with pytest.raises(
-        BTClibValueError, match="^key 0: not a mainnet key: version 0x043587cf$"
-    ):
+    with pytest.raises(BTClibValueError, match="^key 0: not a mainnet key: version$"):
         multipath_descriptors(descriptor, "mainnet")
 
 
@@ -1874,7 +1872,7 @@ def test_wallet_policy_pair_refuses_what_cannot_pair() -> None:
         wallet_policy(parse(f"wpkh({xpub}/0/*)"), parse(f"wpkh({other}/1/*)"))
     # a musig() participant that differs between the two sides
     with pytest.raises(
-        BTClibValueError, match="disagree on a musig[(][)] participant:"
+        BTClibValueError, match="disagree on a musig[(][)] participant$"
     ):
         wallet_policy(
             parse(f"tr(musig({xpub},{other})/0/*)"),
@@ -2041,7 +2039,7 @@ def test_network() -> None:
     assert script_pub_key.network == "testnet"
     assert script_pub_key.address.startswith("tb1")
     assert ScriptPubKey.from_address(script_pub_key.address) == script_pub_key
-    with pytest.raises(BTClibValueError, match="not a mainnet key: version "):
+    with pytest.raises(BTClibValueError, match="^key 0: not a mainnet key: version$"):
         parse(descriptor)
 
 
@@ -2665,11 +2663,11 @@ CORE_UNPARSABLE = [
     # Core: musig() participants with multipath steps of different lengths
     (
         "tr(musig(xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc/<0;1>,xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y/<0;1;2>))",
-        r"^key 2: multipath steps of different length: \[2, 3\]$",
+        "^key 2: multipath steps of different length$",
     ),
     (
         "tr(musig(xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL/<0;1>,xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y/<0;1;2>))",
-        r"^key 2: multipath steps of different length: \[2, 3\]$",
+        "^key 2: multipath steps of different length$",
     ),
     # Core: multi() inside tr()
     (
@@ -2799,15 +2797,15 @@ B_KEY = MUSIG_XPUB_B
         ),
         (
             "tr(musig({x}/<0;1>,{x}/<0;1;2>),pk(x))",
-            "key 2: multipath steps of different length: [2, 3]",
+            "key 2: multipath steps of different length",
         ),
         (
             "tr({xo},{{pk(musig({x}/<0;1>,{x}/<0;1;2>)),pk(x)}})",
-            "key 3: multipath steps of different length: [2, 3]",
+            "key 3: multipath steps of different length",
         ),
         (
             "tr({xo},{{and_v(v:pk(musig({x}/<0;1>,{x}/<0;1;2>)),pk(x)),pk(x)}})",
-            "key 3: multipath steps of different length: [2, 3]",
+            "key 3: multipath steps of different length",
         ),
         (
             "tr({xo},{{multi_a(1,musig({x}/<0;1>,{k}),{x}/<0;1;2>),pk(x)}})",
@@ -2819,7 +2817,7 @@ B_KEY = MUSIG_XPUB_B
         ),
         (
             "tr(musig({x},{x})/<0;1>,{{pk(musig({x}/<0;1>,{x}/<0;1;2>)),pk(x)}})",
-            "key 5: multipath steps of different length: [2, 3]",
+            "key 5: multipath steps of different length",
         ),
         (
             "wsh(multi(1,{x}/<0;1>,{x}/<0;1;2>))",
@@ -2838,10 +2836,13 @@ B_KEY = MUSIG_XPUB_B
             "multipath steps of different length: [2, 3]",
         ),
         # what Core reads in the call before it compares the lengths
-        ("wsh(multi(3,{x}/<0;1>,{x}/<0;1;2>))", "invalid k in k-of-n multi: 3"),
+        (
+            "wsh(multi(3,{x}/<0;1>,{x}/<0;1;2>))",
+            "invalid k in k-of-n multi: an int of 2 bits",
+        ),
         (
             "tr({xo},{{sortedmulti_a(3,{x}/<0;1>,{x}/<0;1;2>),pk(x)}})",
-            "invalid k in k-of-n sortedmulti_a: 3",
+            "invalid k in k-of-n sortedmulti_a: an int of 2 bits",
         ),
         ("wsh(multi(1,{x}/<0;1>,{x}/<0;1;2>,x))", "key 2: invalid key expression"),
         (
@@ -2885,7 +2886,7 @@ B_KEY = MUSIG_XPUB_B
         ),
         (
             "tr(musig({y}/<0;1;2>,{y}/<0;1>,{y})x)",
-            "key 3: multipath steps of different length: [2, 3]",
+            "key 3: multipath steps of different length",
         ),
         (
             "tr({xo},{{multi_a(1,{x}/<0;1>,{y}/<0;1;2>),pk({y})}}x)",
@@ -3602,7 +3603,9 @@ def test_a_multi_a_of_1000_keys_is_refused_for_its_count_before_its_threshold(
     with pytest.raises(BTClibValueError, match=count_err):
         MultiA(threshold, (key,) * 1000, sort=name == "sortedmulti_a")
     allowed = ",".join([XONLY] * 999)
-    threshold_err = rf"^invalid k in k-of-n {name}: {threshold}$"
+    threshold_err = (
+        rf"^invalid k in k-of-n {name}: an int of {threshold.bit_length()} bits$"
+    )
     with pytest.raises(BTClibValueError, match=threshold_err):
         parse(f"tr({XONLY},{name}({threshold},{allowed}))")
 
@@ -3613,7 +3616,7 @@ def test_an_impossible_multi_a_threshold_is_refused_at_parse_and_at_build(
     name: str, threshold: int
 ) -> None:
     """BIP387 lists both as invalid; a leaf built by hand is refused too."""
-    err_msg = rf"^invalid k in k-of-n {name}: {threshold}$"
+    err_msg = rf"^invalid k in k-of-n {name}: an int of {threshold.bit_length()} bits$"
     with pytest.raises(BTClibValueError, match=err_msg):
         parse(f"tr({XONLY},{name}({threshold},{XONLY},{XONLY}))")
     (key,) = parse(f"tr({XONLY})").key_expressions
@@ -4047,9 +4050,10 @@ def test_unsatisfiable(
 
 
 def test_the_missing_keys_are_named() -> None:
-    """Which key has not signed is the whole content of the refusal."""
-    with pytest.raises(BTClibValueError, match=f"missing {KEY_B}, {KEY_C}"):
+    """Which key has not signed is named by its position, not its bytes."""
+    with pytest.raises(BTClibValueError) as e:
         parse(f"wsh({MULTI})").satisfy({KEY_A: SIGNATURES[KEY_A]})
+    assert str(e.value) == "1 signatures of 2, missing for keys 1, 2"
 
 
 def test_only_a_script_is_embeddable() -> None:
@@ -5043,7 +5047,7 @@ def test_an_impossible_multisig_threshold_is_refused_at_parse(
     threshold: int, name: str, wrap: str
 ) -> None:
     """BIP383 lists a threshold of zero or above the key count as invalid."""
-    err_msg = rf"^invalid k in k-of-n {name}: {threshold}$"
+    err_msg = rf"^invalid k in k-of-n {name}: an int of {threshold.bit_length()} bits$"
     with pytest.raises(BTClibValueError, match=err_msg):
         parse(wrap.format(f"{name}({threshold},{KEY})"))
 
@@ -5065,7 +5069,7 @@ def test_an_impossible_multisig_threshold_beats_position_limits(
     """
     threshold = key_count + 1 if above else 0
     keys = ",".join([KEY] * key_count)
-    err_msg = rf"^invalid k in k-of-n {name}: {threshold}$"
+    err_msg = rf"^invalid k in k-of-n {name}: an int of {threshold.bit_length()} bits$"
     with pytest.raises(BTClibValueError, match=err_msg):
         parse(wrap.format(f"{name}({threshold},{keys})"))
 
@@ -5271,8 +5275,8 @@ NETWORK_KEYS = [
         "WIF prefix",
         id="testnet-wif-on-mainnet",
     ),
-    pytest.param(XPUB, "regtest", "version 0x0488b21e", id="xpub-on-regtest"),
-    pytest.param(TESTNET_XPUB, "mainnet", "version 0x043587cf", id="tpub-on-mainnet"),
+    pytest.param(XPUB, "regtest", "version", id="xpub-on-regtest"),
+    pytest.param(TESTNET_XPUB, "mainnet", "version", id="tpub-on-mainnet"),
     pytest.param(xpub_from_xprv(XPRV_ROOT), "signet", "version", id="xpub-on-signet"),
 ]
 
@@ -5298,7 +5302,7 @@ def test_parse_refuses_a_key_of_another_network(
     """
     descriptor = template.format(key=key, xonly=XONLY, sec=SEC_KEYS[1])
     with pytest.raises(
-        BTClibValueError, match=f"^key [0-9]+: not a {network} key: .*{message}"
+        BTClibValueError, match=f"^key [0-9]+: not a {network} key: {message}$"
     ):
         parse(descriptor, network)
 

@@ -131,25 +131,25 @@ def test_the_three_key_reads_answer_for_one_half_each() -> None:
 
     # the version bytes say which network claims the key, so a network
     # the caller names has to be that one
-    err_msg = "not a testnet key: version "
+    err_msg = "^not a testnet key$"
     with pytest.raises(BTClibValueError, match=err_msg):
         prv_keyinfo_from_xprv(xprv, "testnet")
     with pytest.raises(BTClibValueError, match=err_msg):
         pub_keyinfo_from_xpub(xpub, "testnet")
 
-    # and each public read refuses the private half by its prefix
+    # and each public read refuses the private half by its prefix,
     # compared whole: a search would still find this text in a message
-    # quoting the scalar's first byte after the prefix
+    # quoting a byte of the key
     for read in (pub_keyinfo_from_xpub, point_from_xpub):
         with pytest.raises(BTClibValueError) as excinfo:
             read(xprv)
-        assert str(excinfo.value) == "not a public key: prefix 0x00"
+        assert str(excinfo.value) == "not a public key"
+        assert_secret_free(excinfo.value, [xprv])
     # and the private read refuses the public half by its prefix, the
     # message compared whole for the same reason
-    prefix = BIP32KeyData.b58decode(xpub).key[:1].hex()
     with pytest.raises(BTClibValueError) as excinfo:
         prv_keyinfo_from_xprv(xpub)
-    assert str(excinfo.value) == f"not a private key: prefix 0x{prefix}"
+    assert str(excinfo.value) == "not a private key"
 
 
 def test_point_from_xkey_takes_either_half() -> None:
@@ -168,7 +168,7 @@ def test_point_from_xkey_takes_either_half() -> None:
     assert point_from_xkey(BIP32KeyData.b58decode(xprv)) == mult(q)
     with pytest.raises(BTClibValueError) as excinfo:
         point_from_xpub(xprv)
-    assert str(excinfo.value) == "not a public key: prefix 0x00"
+    assert str(excinfo.value) == "not a public key"
 
 
 def test_the_key_data_is_the_object_one_works_with() -> None:
@@ -199,7 +199,7 @@ def test_the_key_data_is_the_object_one_works_with() -> None:
     # and has no scalar, refused as `prv_keyinfo_from_xprv` refuses it
     with pytest.raises(InvalidPrvKeyError) as excinfo:
         _ = pub.q
-    assert str(excinfo.value) == f"not a private key: prefix 0x{pub.key[:1].hex()}"
+    assert str(excinfo.value) == "not a private key"
 
     # `version` is `rootxprv_from_seed_`'s
     tprv = NETWORKS["testnet"].bip32_prv
@@ -221,7 +221,7 @@ def test_the_key_data_reads_validate_the_key(private: bool) -> None:
     if not private:
         k = k.xpub
     bad = replace_unchecked(k, index=1)
-    err_msg = "zero depth with non-zero index: 1"
+    err_msg = "^zero depth with non-zero index: an int of 1 bits$"
     with pytest.raises(BTClibValueError, match=err_msg):
         bad.derive("m/0")
     for read in ("q", "sec", "point_var", "xpub"):
@@ -250,7 +250,7 @@ def test_exceptions() -> None:
         xpub_from_xprv(xpub)
 
     seed = "5b56c417303faa3fcba7e57400e120a0"
-    with pytest.raises(BTClibValueError, match="unknown extended key version: "):
+    with pytest.raises(BTClibValueError, match="^unknown extended key version$"):
         version = b"\x04\x88\xad\xe5"
         rootxprv_from_seed(seed, version)
 
@@ -289,7 +289,7 @@ def test_a_codec_refusal_is_raised_whole_and_unchained() -> None:
 
     with pytest.raises(BTClibValueError) as e:
         BIP32KeyData.b58decode("1" * 200)
-    assert str(e.value) == "too many base58 characters: 200, max is 112"
+    assert str(e.value) == "too many base58 characters"
     assert e.value.__context__ is None
 
 
@@ -363,12 +363,14 @@ def test_assert_valid2() -> None:
 
     xkey_data = BIP32KeyData.b58decode(xkey)
     object.__setattr__(xkey_data, "depth", -1)
-    with pytest.raises(BTClibValueError, match="invalid depth: "):
+    with pytest.raises(
+        BTClibValueError, match="^invalid depth: a negative int of 1 bits$"
+    ):
         xkey_data.assert_valid()
 
     xkey_data = BIP32KeyData.b58decode(xkey)
     object.__setattr__(xkey_data, "depth", 256)
-    with pytest.raises(BTClibValueError, match="invalid depth: "):
+    with pytest.raises(BTClibValueError, match="^invalid depth: an int of 9 bits$"):
         xkey_data.assert_valid()
 
     xkey_data = BIP32KeyData.b58decode(xkey)
@@ -390,12 +392,14 @@ def test_assert_valid2() -> None:
 
     xkey_data = BIP32KeyData.b58decode(xkey)
     object.__setattr__(xkey_data, "index", -1)
-    with pytest.raises(BTClibValueError, match="invalid index: "):
+    with pytest.raises(
+        BTClibValueError, match="^invalid index: a negative int of 1 bits$"
+    ):
         xkey_data.assert_valid()
 
     xkey_data = BIP32KeyData.b58decode(xkey)
     object.__setattr__(xkey_data, "index", 0xFFFFFFFF + 1)
-    with pytest.raises(BTClibValueError, match="invalid index: "):
+    with pytest.raises(BTClibValueError, match="^invalid index: an int of 33 bits$"):
         xkey_data.assert_valid()
 
     xkey_data = BIP32KeyData.b58decode(xkey)
@@ -427,13 +431,14 @@ def test_assert_valid2() -> None:
 
     xkey_data = BIP32KeyData.b58decode(xkey)
     object.__setattr__(xkey_data, "parent_fingerprint", bytes.fromhex("deadbeef"))
-    err_msg = "zero depth with non-zero parent fingerprint: "
+    err_msg = "^zero depth with non-zero parent fingerprint$"
     with pytest.raises(BTClibValueError, match=err_msg):
         xkey_data.b58encode()
 
     xkey_data = BIP32KeyData.b58decode(xkey)
     object.__setattr__(xkey_data, "index", 1)
-    with pytest.raises(BTClibValueError, match="zero depth with non-zero index: "):
+    err_msg = "^zero depth with non-zero index: an int of 1 bits$"
+    with pytest.raises(BTClibValueError, match=err_msg):
         xkey_data.b58encode()
 
 
@@ -575,7 +580,7 @@ def test_public_key_validation_does_not_lift(
     bad_xpub = b58encode_check(
         decoded[:45] + b"\x02" + (7).to_bytes(32, "big"), in_size=78
     )
-    err_msg = "^invalid public key: not a point, prefix 0x02$"
+    err_msg = "^invalid public key: not a point$"
     with pytest.raises(BTClibValueError, match=err_msg) as excinfo:
         BIP32KeyData.b58decode(bad_xpub)
     # a predicate has no exception to chain: the message is the whole error
@@ -733,7 +738,7 @@ def test_derive_validates_before_it_changes_the_depth() -> None:
     raw[9:13] = (7).to_bytes(4, "big")  # a non-zero index at depth zero
     bad = b58encode_check(bytes(raw), in_size=78)
 
-    err_msg = "zero depth with non-zero index: 7"
+    err_msg = "^zero depth with non-zero index: an int of 3 bits$"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive(bad, "m/0/1")
     with pytest.raises(BTClibValueError, match=err_msg):
@@ -819,14 +824,14 @@ def test_derive_exceptions() -> None:
 
     temp = b58decode_check(rootxprv)
     bad_xprv = b58encode_check(temp[:45] + b"\x02" + temp[46:], in_size=78)
-    err_msg = "invalid private key prefix: "
+    err_msg = "^invalid private key prefix$"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive(bad_xprv, 0x80000000)
 
     xpub = xpub_from_xprv(rootxprv)
     temp = b58decode_check(xpub)
     bad_xpub = b58encode_check(temp[:45] + b"\x00" + temp[46:], in_size=78)
-    err_msg = r"invalid public key prefix not in \(0x02, 0x03\): "
+    err_msg = r"^invalid public key prefix not in \(0x02, 0x03\)$"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive(bad_xpub, 0x80000000)
 
@@ -861,11 +866,11 @@ def test_derive_from_account() -> None:
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account(mxpub, 0x80000000, 0, True)
 
-    err_msg = "invalid branch number: 65536"
+    err_msg = r"^invalid branch number: an int of 17 bits is higher than 65535\.$"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account(mxpub, 0xFFFF + 1, 0, branches_0_1_only=False)
 
-    err_msg = "invalid branch number: 2"
+    err_msg = r"^invalid branch number: an int of 2 bits not in \(0, 1\)$"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account(mxpub, 2, 0)
     # derive_from_account_ carries a default of its own
@@ -876,7 +881,7 @@ def test_derive_from_account() -> None:
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account(mxpub, 0, 0x80000000, max_index=0xFFFFFFFF)
 
-    err_msg = "invalid address index: 65536"
+    err_msg = r"^invalid address index: an int of 17 bits is higher than 65535\.$"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account(mxpub, 0, 0xFFFF + 1)
 
@@ -921,11 +926,11 @@ def test_crack() -> None:
     )
     assert xpub_from_xprv(parent_xprv) == parent_xpub
 
-    err_msg = "extended parent key is not a public key: "
+    err_msg = "^extended parent key is not a public key$"
     with pytest.raises(BTClibValueError, match=err_msg):
         crack_prv_key(parent_xprv, child_xprv)
 
-    err_msg = "extended child key is not a private key: "
+    err_msg = "^extended child key is not a private key$"
     with pytest.raises(BTClibValueError, match=err_msg):
         crack_prv_key(parent_xpub, parent_xpub)
 
@@ -1019,9 +1024,9 @@ def test_no_key_material_in_repr_or_exceptions() -> None:
 
     # an xprv passed where an xpub is expected must not be echoed
     child_xprv = derive(xprv, "m/0")
-    with pytest.raises(BTClibValueError, match="not a public key: ") as excinfo:
+    with pytest.raises(BTClibValueError, match="not a public key$") as excinfo:
         crack_prv_key(xprv, child_xprv)
-    assert xprv not in str(excinfo.value)
+    assert_secret_free(excinfo.value, [xprv])
 
 
 def test_the_repr_of_an_empty_key_masks_nothing() -> None:
@@ -1539,13 +1544,13 @@ def test_assert_valid_refuses_each_field_one_byte_too_long(field: str) -> None:
     assert str(excinfo.value) == err_msg
 
 
-def test_invalid_key_prefix_messages_show_exactly_one_byte() -> None:
-    """The hex in each prefix-refusal message is one byte, not a slice past it.
+def test_invalid_key_prefix_messages_show_no_byte() -> None:
+    """Each prefix refusal is its fixed text, with no byte of the key.
 
-    `key[:1].hex()` widened to `key[:2]` still contains the same text as
-    a leading substring, so only an exact match on the whole message --
-    not `pytest.raises(match=...)`'s search -- tells the two spellings
-    apart.
+    Section 7 of the btclib-org standard, *A refusal carries no secret*:
+    a key with a wrong prefix may be a private key in the wrong place, so
+    the whole message is compared, and not searched as
+    `pytest.raises(match=...)` searches it.
     """
     root = BIP32KeyData.b58decode(XKEY)
 
@@ -1554,7 +1559,8 @@ def test_invalid_key_prefix_messages_show_exactly_one_byte() -> None:
     )
     with pytest.raises(BTClibValueError) as excinfo:
         bad_prv.assert_valid()
-    assert str(excinfo.value) == "invalid private key prefix: 0x05"
+    assert str(excinfo.value) == "invalid private key prefix"
+    assert_secret_free(excinfo.value, [bad_prv.key])
 
     xpub = BIP32KeyData.b58decode(xpub_from_xprv(XKEY))
     bad_pub = replace_unchecked(
@@ -1562,7 +1568,8 @@ def test_invalid_key_prefix_messages_show_exactly_one_byte() -> None:
     )
     with pytest.raises(BTClibValueError) as excinfo:
         bad_pub.assert_valid()
-    assert str(excinfo.value) == "invalid public key prefix not in (0x02, 0x03): 0x05"
+    assert str(excinfo.value) == "invalid public key prefix not in (0x02, 0x03)"
+    assert_secret_free(excinfo.value, [bad_pub.key])
 
     # a valid xpub, not the malformed key above: `xpub_from_xprv`
     # validates what it is given before handing it to `_xpub_from_xprv`,
@@ -1571,16 +1578,11 @@ def test_invalid_key_prefix_messages_show_exactly_one_byte() -> None:
     # really provokes it
     with pytest.raises(BTClibValueError) as excinfo:
         xpub_from_xprv(xpub)
-    assert str(excinfo.value) == f"not a private key: prefix 0x{xpub.key[:1].hex()}"
+    assert str(excinfo.value) == "not a private key"
 
-    child_xpub_data = BIP32KeyData.b58decode(xpub_from_xprv(XKEY))
-    prefix = f"0x{child_xpub_data.key[:1].hex()}"
     with pytest.raises(BTClibValueError) as excinfo:
         crack_prv_key(xpub_from_xprv(XKEY), xpub_from_xprv(XKEY))
-    assert (
-        str(excinfo.value)
-        == f"extended child key is not a private key: prefix {prefix}"
-    )
+    assert str(excinfo.value) == "extended child key is not a private key"
 
 
 def test_pub_key_derivation_tweaks_are_32_bytes_each() -> None:
@@ -1698,7 +1700,7 @@ def test_check_validity_defaults_to_true() -> None:
         key=root.key,
         check_validity=False,
     )
-    err_msg = "zero depth with non-zero parent fingerprint: "
+    err_msg = "^zero depth with non-zero parent fingerprint$"
 
     with pytest.raises(BTClibValueError, match=err_msg):
         BIP32KeyData(
@@ -1979,7 +1981,7 @@ def test_derive_from_account_range_refuses_before_it_walks() -> None:
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account_range_(mxpub, 0x80000000, range(3))
 
-    err_msg = "invalid branch number: 2"
+    err_msg = r"^invalid branch number: an int of 2 bits not in \(0, 1\)$"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account_range_(mxpub, 2, range(3))
 
@@ -1987,14 +1989,17 @@ def test_derive_from_account_range_refuses_before_it_walks() -> None:
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account_range_(mxpub, 0, [0, 0x80000000], max_index=0xFFFFFFFF)
 
-    err_msg = "invalid address index: 65536"
+    err_msg = r"^invalid address index: an int of 17 bits is higher than 65535\.$"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account_range_(mxpub, 0, [0, 1, 0xFFFF + 1])
 
     # the text spelling carries defaults of its own, held to the same
     # branches and the same bound: max_index's top accepted, one past it
     # refused
-    with pytest.raises(BTClibValueError, match="invalid branch number: 2"):
+    with pytest.raises(
+        BTClibValueError,
+        match=r"^invalid branch number: an int of 2 bits not in \(0, 1\)$",
+    ):
         derive_from_account_range(mxpub, 2, [0])
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account_range(mxpub, 0, [0xFFFF + 1])
@@ -2036,15 +2041,13 @@ def test_fingerprint_is_the_children_parent_fingerprint() -> None:
 
 
 def test_pub_key_derivation_tweaks_does_not_quote_a_private_key() -> None:
-    """Handed a private key's bytes, the refusal shows at most the prefix."""
+    """Handed a private key's bytes, the refusal shows none of them."""
     prv = b"\x00" + bytes(range(1, 33))
     with pytest.raises(BTClibValueError, match="^invalid public key: ") as e:
         pub_key_derivation_tweaks(prv, b"\x01" * 32, [0])
-    # compared whole: "prefix 0x0001" would still match the search above
-    assert str(e.value) == "invalid public key: not a point, prefix 0x00"
-    text = chained_text(e.value)
-    assert prv[1:].hex() not in text
-    assert prv[1:5].hex() not in text
+    # compared whole: a byte of the key would still match the search above
+    assert str(e.value) == "invalid public key: not a point"
+    assert_secret_free(e.value, [prv])
 
 
 def test_an_xpub_key_that_is_not_a_point_is_refused_without_its_bytes() -> None:
@@ -2064,5 +2067,5 @@ def test_an_xpub_key_that_is_not_a_point_is_refused_without_its_bytes() -> None:
             chain_code=bytes(32),
             key=key,
         )
-    assert str(e.value) == "invalid public key: not a point, prefix 0x02"
+    assert str(e.value) == "invalid public key: not a point"
     assert_secret_free(e.value, [key])

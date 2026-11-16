@@ -36,7 +36,7 @@ _PRV_KEY = 0xC2E58B0C21FC8C9765C9E2B474B2A8A35F59B2588BBF2D258045FD36BB016246
 # of the network parse reads by default
 WIF = wif_from_prv_key(_PRV_KEY, "mainnet")
 _KEY_FAULT = "^key [0-9]+: invalid key expression$"
-_ILL_TYPED = "^ill-typed miniscript: and_v over Bdekmnosu, Bdekmnosu$"
+_ILL_TYPED = "^ill-typed miniscript: and_v over 'Bdekmnosu', 'Bdekmnosu'$"
 
 # and_v() takes a V first: over two B it has no type
 BAD = "and_v(pk(K),pk(K2))"
@@ -166,7 +166,7 @@ def test_a_private_key_is_not_echoed() -> None:
     "expression,message",
     [
         ("and_v(BAD,foo(1))", "^unknown miniscript fragment$"),
-        ("thresh(2,BAD)", r"^invalid thresh\(\) threshold: 2 of 1$"),
+        ("thresh(2,BAD)", r"^invalid thresh\(\) threshold: an int of 2 bits of 1$"),
         ("and_v(BAD,pk(K3))x", "^trailing characters after the miniscript$"),
     ],
 )

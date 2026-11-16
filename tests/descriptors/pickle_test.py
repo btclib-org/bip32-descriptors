@@ -534,15 +534,23 @@ class _SlottedBesideDict(_Plain):
     value: int = 0
 
 
-@pytest.mark.parametrize("cls", [_Slotted, _SlottedBesideDict])
+@pytest.mark.parametrize(
+    "cls, name",
+    [
+        (_Slotted, "_Slotted"),
+        (_SlottedBesideDict, "a type whose name has 18 characters"),
+    ],
+    ids=["_Slotted", "_SlottedBesideDict"],
+)
 def test_a_pickle_holding_an_object_of_slots_is_refused_by_the_build(
-    cls: type,
+    cls: type, name: str
 ) -> None:
     """Which the check of what is restored reads in its slots.
 
     A ``musig()`` participant that is no `KeyExpression`, with or
     without a `__dict__`, with the build's refusal, at every protocol.
-    One whose slot is unset is refused as an object not restored yet.
+    One whose slot is unset is refused as an object not restored yet. A
+    type's name longer than 16 characters is not printed.
     """
     key = _tr(f"musig({_XPUB},{_XPUB2})").internal_key
     state = {**vars(key), "participants": (_Pickled(cls, None),)}
@@ -554,7 +562,7 @@ def test_a_pickle_holding_an_object_of_slots_is_refused_by_the_build(
     for protocol in _PROTOCOLS:
         forged = pickle.dumps(key, protocol)
         with pytest.raises(
-            BTClibTypeError, match=f"^invalid participant type: {cls.__name__}$"
+            BTClibTypeError, match=f"^invalid participant type: {name}$"
         ):
             pickle.loads(forged)  # noqa: S301
 

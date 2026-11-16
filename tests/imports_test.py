@@ -187,8 +187,9 @@ def test_no_module_imports_a_unit_by_btclibs_name(root: str) -> None:
 # what each unit may import of the package besides itself, as
 # ARCHITECTURE.md describes
 _ALLOWED_UNITS = {
-    "bip32": frozenset(),
-    "descriptors": frozenset({"bip32"}),
+    "_refusal": frozenset(),
+    "bip32": frozenset({"_refusal"}),
+    "descriptors": frozenset({"_refusal", "bip32"}),
 }
 
 
@@ -295,6 +296,11 @@ def _plant(src: Path, relative: str, line: str) -> None:
             "from bip32_descriptors import psbt",
             {"psbt"},
         ),
+        (
+            "bip32_descriptors/_refusal.py",
+            "from bip32_descriptors.bip32 import der_path",
+            {"bip32"},
+        ),
     ],
 )
 def test_the_layer_scan_finds_a_planted_import(
@@ -319,6 +325,11 @@ def test_the_layer_scan_finds_a_planted_import(
             "from .key_expression import x",
         ),
         ("bip32_descriptors/__init__.py", "from bip32_descriptors import descriptors"),
+        (
+            "bip32_descriptors/bip32/der_path.py",
+            "from bip32_descriptors._refusal import _quoted",
+        ),
+        ("bip32_descriptors/descriptors/compiler.py", "from .._refusal import _label"),
     ],
 )
 def test_the_layer_scan_admits_the_allowed_imports(
@@ -330,7 +341,7 @@ def test_the_layer_scan_admits_the_allowed_imports(
 
 
 def test_each_unit_imports_only_the_units_below_it() -> None:
-    """Keep `bip32` and `descriptors` to `_ALLOWED_UNITS`."""
+    """Keep `_refusal`, `bip32` and `descriptors` to `_ALLOWED_UNITS`."""
     assert _layer_violations(Path(bip32_descriptors.__path__[0]).parent) == {}
 
 
