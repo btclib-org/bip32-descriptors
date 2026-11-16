@@ -139,10 +139,10 @@ made of -- `DescriptorTree` and the `MultiA`, `RawLeaf` and `RawNode` a
 tree may hold among them, all being names a caller reads off
 `TrDescriptor.tree`.
 `KeyExpression`, `PrvKeys` and `Wifs` are `key_expression`'s, and
-`Preimages` and the `Miniscript` a `MiniscriptDescriptor` holds are
+`Preimages`, the `Miniscript` a `MiniscriptDescriptor` holds and the
+`SpendingPath` and `Quorum` of `Descriptor.spending_paths` are
 `miniscript`'s; the package `__init__` re-exports them, being what a
-caller reads off `Descriptor.key_expressions` and annotates a mapping
-with.
+caller reads off a descriptor and annotates a mapping with.
 `INPUT_CHARSET`, `CHECKSUM_CHARSET` and `GENERATOR` stay out: they are the
 three tables BIP380's checksum is computed from, which is what `checksum`,
 `add_checksum` and `strip_checksum` answer.
@@ -196,6 +196,7 @@ from ecc.ssa import point_from_bip340pub_key_var
 from typing_extensions import override
 
 from bip32_descriptors.bip32.bip32 import (
+    BIP32KeyData,
     _derive,
     _xpub_from_xprv,
     fingerprint,
@@ -211,6 +212,7 @@ from bip32_descriptors.bip32.der_path import (
 from bip32_descriptors.bip32.key_origin import BIP32KeyOrigin
 from bip32_descriptors.descriptors import miniscript
 from bip32_descriptors.descriptors.key_expression import (
+    _PLACEHOLDER,
     _PRINTED_PRV_KEYS,
     _PRINTED_WIFS,
     KeyExpression,
@@ -231,6 +233,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _assert_prv_keys,
     _assert_pub_key,
     _assert_wildcard,
+    _checked_state,
     _derived_once,
     _expression,
     _filed_wifs,
@@ -255,17 +258,22 @@ from bip32_descriptors.descriptors.miniscript import (
     _PRINTED_PREIMAGES,
     Miniscript,
     Preimages,
+    Quorum,
     SpendContext,
+    SpendingPath,
     _assert_derived,
     _assert_fragment_type,
     _assert_key_number,
+    _assert_path_count,
     _assert_sane,
     _assert_sane_script,
     _has_raw_key_hash,
+    _miniscript_paths,
     _multisig_context_fault,
     _read_unclosed_multisig_keys,
     _script_number,
     _tree_eval,
+    _Work,
 )
 from bip32_descriptors.descriptors.miniscript import (
     from_script as _miniscript_from_script,
@@ -411,6 +419,13 @@ def from_address(address: str) -> str:
 # the tapscript leaf version, which is the only one a BIP386 tree has
 _TAPSCRIPT_LEAF_VERSION = 0xC0
 
+# the x coordinate of BIP341's H, the point nobody knows the discrete
+# logarithm of: a key path to it, or to a key derived from it, is one
+# nobody can sign for
+_UNSPENDABLE_X = bytes.fromhex(
+    "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
+)
+
 # where a SCRIPT expression sits. BIP381 to BIP386 give each function a
 # position rule -- sh() is top level only, wpkh() is top level or inside
 # sh(), and so on -- so the context is an argument of the parser, and
@@ -528,6 +543,13 @@ class MultiA:
             _assert_point(key)
         _assert_multi_a_numbers(self)
 
+    def __setstate__(self, state: object) -> None:
+        """Refuse a pickle holding a field the build refuses.
+
+        As `_checked_state` says.
+        """
+        _checked_state(self, state)
+
     @override
     def __str__(self) -> str:
         """Return the ``multi_a()`` or ``sortedmulti_a()`` leaf as text."""
@@ -629,20 +651,15 @@ class RawLeaf:
     bare: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
-        """Refuse a version `parse` refuses, and a ``raw()`` leaf not of c0.
+        """Refuse what `_assert_raw_leaf_fields` refuses."""
+        _assert_raw_leaf_fields(self)
 
-        A version is one byte, and an even one: the low bit of a control
-        block's first byte is the parity of the output key.
+    def __setstate__(self, state: object) -> None:
+        """Refuse a pickle holding a field the build refuses.
+
+        As `_checked_state` says.
         """
-        assert_type(self.script, bytes, "leaf script")
-        if not is_integer(self.version):
-            err_msg = f"invalid leaf version type: {type(self.version).__name__}"
-            raise BTClibTypeError(err_msg)
-        assert_type(self.bare, bool, "bare")
-        if not 0 <= self.version <= 0xFF or self.version & 1:
-            raise BTClibValueError("Leaf Version is invalid")
-        if self.bare and self.version != _TAPSCRIPT_LEAF_VERSION:
-            raise BTClibValueError("a raw() leaf has the leaf version c0")
+        _checked_state(self, state)
 
     @override
     def __str__(self) -> str:
@@ -667,13 +684,70 @@ class RawNode:
     digest: bytes
 
     def __post_init__(self) -> None:
-        """Refuse a hash that is not bytes; `_tree_walk` refuses its size."""
-        assert_type(self.digest, bytes, "node hash")
+        """Refuse what `_assert_raw_node_fields` refuses."""
+        _assert_raw_node_fields(self)
+
+    def __setstate__(self, state: object) -> None:
+        """Refuse a pickle holding a field the build refuses.
+
+        As `_checked_state` says.
+        """
+        _checked_state(self, state)
 
     @override
     def __str__(self) -> str:
         """Return the node as ``rawnode(HEX)``."""
         return _expression("rawnode", self.digest.hex())
+
+
+_LEAF_NOT_HEX = "Leaf Script is not hex"
+_RAWNODE_NOT_HEX = "Rawnode hash is not hex"
+
+
+def _assert_raw_leaf_fields(leaf: RawLeaf) -> None:
+    """Refuse a field of the wrong type, then what `parse` refuses in a leaf.
+
+    With `parse`'s messages, an empty script, which `parse` reads as no
+    hex in ``raw()`` or in ``rawleaf()``, then a version over one byte,
+    then an odd one. A version is one byte, and an even one: the low bit
+    of a control block's first byte is the parity of the output key. A
+    negative version, which no text writes, is refused as an odd one is.
+    Last, a ``raw()`` leaf not of c0, whose text `parse` reads as a leaf
+    of c0. The script's length is that of its bytes, which no subclass's
+    `__len__` answers.
+
+    `_assert_tree_leaf` calls it too, for a forged leaf.
+    """
+    assert_type(leaf.script, bytes, "leaf script")
+    if not is_integer(leaf.version):
+        err_msg = f"invalid leaf version type: {type(leaf.version).__name__}"
+        raise BTClibTypeError(err_msg)
+    assert_type(leaf.bare, bool, "bare")
+    if bytes.__len__(leaf.script) == 0:
+        raise BTClibValueError(_RAW_NOT_HEX if leaf.bare else _LEAF_NOT_HEX)
+    if leaf.version > 0xFF:
+        raise BTClibValueError("Leaf Version is too large")
+    if leaf.version < 0 or leaf.version & 1:
+        raise BTClibValueError("Leaf Version is invalid")
+    if leaf.bare and leaf.version != _TAPSCRIPT_LEAF_VERSION:
+        raise BTClibValueError("a raw() leaf has the leaf version c0")
+
+
+def _assert_raw_node_fields(node: RawNode) -> None:
+    """Refuse a hash of the wrong type, then one `parse` refuses.
+
+    With `parse`'s messages: an empty one, as `_hex_bytes` refuses empty
+    hex, then a size other than 32 bytes, by the length of its bytes.
+
+    `_assert_tree_leaf` calls it too, for the reason
+    `_assert_raw_leaf_fields` gives.
+    """
+    assert_type(node.digest, bytes, "node hash")
+    size = bytes.__len__(node.digest)
+    if size == 0:
+        raise BTClibValueError(_RAWNODE_NOT_HEX)
+    if size != _NODE_HASH_SIZE:
+        raise BTClibValueError("256 bits digest expected")
 
 
 def _tree_expression(tree: DescriptorTree) -> str:
@@ -705,6 +779,39 @@ def _leaf_keys(leaf: DescriptorLeaf) -> tuple[KeyExpression, ...]:
     if isinstance(leaf, Miniscript):
         return leaf.key_expressions
     return () if isinstance(leaf, RawLeaf) else (leaf,)
+
+
+def _tree_leaf_paths(leaf: DescriptorLeaf, work: _Work) -> tuple[SpendingPath, ...]:
+    """Return the spending paths of one leaf, refusing a `RawLeaf`'s.
+
+    A miniscript's reads are added to `work`, which the leaves share.
+    """
+    if isinstance(leaf, MultiA):
+        return (SpendingPath((Quorum(leaf.threshold, leaf.keys),)),)
+    if isinstance(leaf, Miniscript):
+        return _miniscript_paths(leaf, work)
+    if isinstance(leaf, RawLeaf):
+        err_msg = "a tr() with a rawleaf() does not name every key a spend needs"
+        raise BTClibValueError(err_msg)
+    return (SpendingPath((Quorum(1, (leaf,)),)),)
+
+
+def _is_unspendable(key: KeyExpression) -> bool:
+    """Answer whether the key is BIP341's H, or an extended key of it.
+
+    By its x coordinate, so that either parity of H is H. A ``musig()``
+    and a wallet-policy placeholder are neither.
+    """
+    if key.pub_key is not None:
+        # asked again, for a forged key
+        assert_type(key.pub_key, bytes, "pub_key")
+        return key.pub_key[1:33] == _UNSPENDABLE_X
+    if not key.xkey:
+        return False
+    assert_type(key.xkey, str, "xkey")
+    if _PLACEHOLDER.fullmatch(key.xkey):
+        return False
+    return BIP32KeyData.b58decode(key.xkey).key[1:] == _UNSPENDABLE_X
 
 
 def _tree_leaves(tree: DescriptorTree) -> tuple[DescriptorLeaf, ...]:
@@ -754,8 +861,8 @@ def _leaf_version(leaf: DescriptorLeaf) -> int:
 def _named_fragment(node: Miniscript) -> str:
     """Return the node's fragment where the library defines it, else "a node".
 
-    An unpickled node skips `Miniscript`'s own checks, so its fragment
-    can be any value, and a refusal names only the library's own.
+    A forged node escapes `Miniscript`'s own checks, so its fragment can
+    be any value, and a refusal names only the library's own.
     """
     fragment = node.fragment
     return fragment if _is_known_fragment(fragment) else "a node"
@@ -769,7 +876,7 @@ def _is_known_fragment(fragment: object) -> bool:
 def _assert_known_fragment(node: Miniscript) -> None:
     """Refuse a node whose fragment the library does not define.
 
-    `Miniscript` refuses it when it is built, but an unpickled node skips
+    `Miniscript` refuses it when it is built, but a forged node escapes
     that check, and its text is one `parse` refuses. The fragment is any
     value, so the refusal echoes none.
     """
@@ -784,8 +891,8 @@ def _assert_key_numbers(
 
     Each root and every node below it, which `_assert_tree` or
     `_assert_p2wsh` has already walked; `keys` are the keys the nodes
-    hold, and in ``tr()`` those of its other leaves. An unpickled node
-    skips `Miniscript`'s own check, and the text of a ``pk_k`` or
+    hold, and in ``tr()`` those of its other leaves. A forged node
+    escapes `Miniscript`'s own check, and the text of a ``pk_k`` or
     ``pk_h`` reads only its first key. A fragment the library does not
     define is refused by that walk first.
 
@@ -838,16 +945,16 @@ def _sane_by_parse() -> Iterator[None]:
 def _tapscript_node(node: object) -> Miniscript:
     """Return a miniscript node of a tr() leaf, refusing what is none.
 
-    A node that skipped `Miniscript`'s own checks, as an unpickled one
-    does, holds any value as a subexpression, a context or a fragment, so
-    only the library's own context is named, a refusal echoing no value
-    it holds. Once its context passes, its fragment is refused as
+    A node that escaped `Miniscript`'s own checks, as a forged one does,
+    holds any value as a subexpression, a context or a fragment, so only
+    the library's own context is named, a refusal echoing no value it
+    holds. Once its context passes, its fragment is refused as
     `_assert_fragment_type` says, and then as `_assert_known_fragment`
-    says. Its subexpressions are then refused where they are no tuple, or
-    of a number its fragment does not take, as `Miniscript._assert_arity`
-    says, its keys as `_assert_key_types` says, its number as
-    `Miniscript._assert_number_read` says, and a ``multi()`` for its
-    context, as `Miniscript` refuses it when built.
+    says. Its subexpressions are then refused where they are no tuple,
+    or of a number its fragment does not take, as
+    `Miniscript._assert_arity` says, its keys as `_assert_key_types`
+    says, its number as `Miniscript._assert_number_read` says, and a
+    ``multi()`` for its context, as `Miniscript` refuses it when built.
     """
     assert_type(node, Miniscript, "miniscript node")
     node = cast("Miniscript", node)
@@ -869,8 +976,8 @@ def _tapscript_node(node: object) -> Miniscript:
 def _assert_key_types(node: Miniscript | MultiA) -> None:
     """Refuse a node whose keys are not a tuple of KEY expressions.
 
-    `Miniscript` and `MultiA` refuse them when they are built, but an
-    unpickled one skips that check. A walk calls this where it reaches
+    `Miniscript` and `MultiA` refuse them when they are built, but a
+    forged one escapes that check. A walk calls this where it reaches
     the node, before anything reads a key, so the refusal comes before a
     fault of any node the walk reaches later.
     """
@@ -915,16 +1022,29 @@ def _assert_multi_a_numbers(leaf: MultiA) -> None:
 
 
 def _assert_tree_leaf(node: object) -> None:
-    """Refuse a tree node of the wrong type, and a `MultiA` leaf's keys and k.
+    """Refuse a tree node of the wrong type, then the fields some nodes hold.
 
-    A `MultiA` leaf is refused where `_assert_key_types` refuses its keys,
-    then for the type of its threshold, then as `_assert_multi_a_threshold`
-    and `_assert_multi_a_numbers` say: an unpickled leaf skips its own
-    build's checks. Its keys are
-    refused for what `parse` refuses in them once the tree passes, as
-    `TrDescriptor` says.
+    A `MultiA` leaf is refused where `_assert_key_types` refuses its
+    keys, then for the type of its threshold, then as
+    `_assert_multi_a_threshold` and `_assert_multi_a_numbers` say: a
+    forged leaf escapes its own build's checks. Its keys are refused for
+    what `parse` refuses in them once the tree passes, as `TrDescriptor`
+    says. A `RawLeaf` and a `RawNode` are refused as their own builds
+    refuse them. A KEY expression leaf is asked its type alone here.
+
+    A node of a class deriving from several of these is refused for the
+    fields of each, a `RawLeaf`'s, then a `RawNode`'s, then a `MultiA`'s:
+    its build may run one base's checks alone, and `_leaf_script` may
+    read it as another.
+
+    `_tree_walk` calls it again, for a forged ``tr()``, which escapes
+    its own build.
     """
     assert_type(node, _TREE_NODE_TYPES, "script tree node")
+    if isinstance(node, RawLeaf):
+        _assert_raw_leaf_fields(node)
+    if isinstance(node, RawNode):
+        _assert_raw_node_fields(node)
     if isinstance(node, MultiA):
         _assert_key_types(node)
         _assert_threshold_type(node.threshold)
@@ -969,8 +1089,8 @@ def _assert_tree(tree: DescriptorTree) -> list[Miniscript]:
     leaves: list[Miniscript] = []
     while stack:
         node, depth, in_leaf = stack.pop()
-        # under a leaf every node is a miniscript one, whatever an
-        # unpickled leaf holds there
+        # under a leaf every node is a miniscript one, whatever a forged
+        # leaf holds there
         if in_leaf or isinstance(node, Miniscript):
             node = _tapscript_node(node)
             if not in_leaf:
@@ -1054,9 +1174,9 @@ def _tree_walk(
         leaves += [replace(leaf, path=leaf.path + left_hash) for leaf in right]
         low, high = sorted((left_hash, right_hash))
         return leaves, tagged_hash(b"TapBranch", low + high)
+    # refused again, for a forged tr()
+    _assert_tree_leaf(tree)
     if isinstance(tree, RawNode):
-        if len(tree.digest) != _NODE_HASH_SIZE:
-            raise BTClibValueError("256 bits digest expected")
         return [], tree.digest
     script = _leaf_script(tree, index, network, prv_keys)
     version = _leaf_version(tree)
@@ -1387,6 +1507,14 @@ class Descriptor(ABC):
         assert_type(self.network, str, "network")
         object.__setattr__(self, "network", normalized_network_name(self.network))
 
+    def __setstate__(self, state: object) -> None:
+        """Refuse a pickle holding a field the build refuses.
+
+        As `_checked_state` says, with the checks of the fragment's own
+        `__post_init__`.
+        """
+        _checked_state(self, state)
+
     @property
     @abstractmethod
     def key_expressions(self) -> tuple[KeyExpression, ...]:
@@ -1425,6 +1553,47 @@ class Descriptor(ABC):
     def is_ranged(self) -> bool:
         """Return True if the descriptor describes a range of scripts."""
         return any(key.is_ranged for key in self.key_expressions)
+
+    @property
+    def spending_paths(self) -> tuple[SpendingPath, ...]:
+        """Return every way to spend the script, as `SpendingPath`.
+
+        The KEY expressions each path needs signatures of, and the lock
+        times and the preimages it waits for: what a wallet shows of a
+        recovery or an inheritance policy, and builds each spend from.
+
+        A fragment of one key has one path, a quorum of that key, and a
+        ``multi()`` or a ``sortedmulti()`` one, its threshold of its keys in
+        the order the descriptor writes them. A ``sh()`` and a ``wsh()`` have
+        their argument's, a miniscript the paths `Miniscript.spending_paths`
+        lists, and an ``unused()`` none, having no script.
+
+        A ``tr()`` lists its key path, then the paths of each leaf in turn,
+        each marked with its leaf's number. The key path is left out where
+        the internal key is BIP341's unspendable point H, or an extended key
+        of it, as Liana writes one: H + tG, the key any derivation from it
+        gives, is one nobody can sign for either. A ``rawtr()`` of such a
+        key has no path.
+
+        Each fragment's fields are asked their type, as its build asks
+        them, before they are read: a forged descriptor escaped its
+        build.
+
+        Refused where the descriptor does not name every key a spend may
+        need: an ``addr()``, a ``raw()``, a ``rawpkh()``, and a ``tr()``
+        with a ``rawnode()`` or a ``rawleaf()``. Refused too where
+        `Miniscript.spending_paths` refuses a miniscript it holds, as past
+        its bounds on the paths and on the work of a call, and where a
+        ``tr()``'s paths, its leaves' together, pass this library's bound
+        on the number of paths, or what its leaves read together passes the
+        bound on the work.
+        """
+        return self._spending_paths()
+
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        """Refuse: the fragments that know their paths override this."""
+        err_msg = f"{type(self).__name__} names no key a spending path needs"
+        raise BTClibValueError(err_msg)
 
     def _assert_index(self, index: int) -> None:
         """Refuse a non-integer or out-of-range index, or one with no script.
@@ -1532,9 +1701,9 @@ class Descriptor(ABC):
         somewhere else, which is why this is one method and not two.
         Answered by the fragments that are a script another one embeds
         -- ``pk``, ``pkh``, ``wpkh``, ``multi`` -- and refused by the
-        rest. `parse`, and ``sh()`` and ``wsh()`` when built, refuse those
-        in an embedding position too, so what this answers is a
-        descriptor that skipped its build, as an unpickled one does.
+        rest. `parse`, and ``sh()`` and ``wsh()`` when built, refuse
+        those in an embedding position too, so what this answers is a
+        descriptor that escaped its build, as a forged one does.
         """
         err_msg = f"{type(self).__name__} is not a script another one embeds"
         raise BTClibValueError(err_msg)
@@ -1782,10 +1951,10 @@ def _assert_taproot_key(key: KeyExpression) -> None:
     An uncompressed key that is no ``musig()``. A ``musig()`` whose own
     fields or participants `KeyExpression` refuses when built, with its
     messages and in its order, but for the path and the wildcard, which
-    `_assert_keys` refuses last, as `_assert_musig_path_fields` says: an
-    unpickled key skips that check. A participant is refused as a
-    `_ParticipantError`, as `_participant_fault` says, for `_assert_keys`
-    to name it by its own position.
+    `_assert_keys` refuses last, as `_assert_musig_path_fields` says: a
+    forged key escapes that check. A participant is refused as a
+    `_ParticipantError`, as `_participant_fault` says, for
+    `_assert_keys` to name it by its own position.
     """
     if not key.participants:
         _assert_compressed(key)
@@ -1807,9 +1976,9 @@ def _assert_taproot_key(key: KeyExpression) -> None:
 def _assert_musig_path_fields(key: KeyExpression) -> None:
     """Refuse the path or wildcard of a ``musig()`` its build refuses.
 
-    A step or a wildcard `KeyExpression` refuses for any key, then a path
-    or wildcard as `_assert_musig_path` says: an unpickled key skips those
-    checks.
+    A step or a wildcard `KeyExpression` refuses for any key, then a
+    path or wildcard as `_assert_musig_path` says: a forged key escapes
+    those checks.
     """
     for step in key.der_path:
         _assert_valid_index(step)
@@ -1838,6 +2007,12 @@ class PkDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the one KEY expression, as the base class's tuple."""
         return (self.key,)
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        assert_type(self.key, KeyExpression, "key")
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -1882,6 +2057,12 @@ class PkhDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the one KEY expression, as the base class's tuple."""
         return (self.key,)
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        assert_type(self.key, KeyExpression, "key")
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -1929,6 +2110,12 @@ class WpkhDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the one KEY expression, as the base class's tuple."""
         return (self.key,)
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        assert_type(self.key, KeyExpression, "key")
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -1987,14 +2174,14 @@ class ShDescriptor(Descriptor):
 
     The argument of a ``wsh()`` argument is refused as `WshDescriptor`
     refuses it, a value of the wrong type included, and its function
-    before its keys, as `parse` reads them: an unpickled ``wsh()`` skips
+    before its keys, as `parse` reads them: a forged ``wsh()`` escapes
     that check of its own. A miniscript there is refused as
     `WshDescriptor` refuses one, before ``sh()`` writes its text.
 
-    An unpickled ``multi()`` argument is refused for a field of the
-    wrong type and for its threshold, a ``raw()`` or ``rawpkh()`` one for
-    its bytes, and a ``rawpkh()`` one for the size of its hash, as
-    `WshDescriptor` says.
+    A forged ``multi()`` argument is refused for a field of the wrong
+    type and for its threshold, a ``raw()`` or ``rawpkh()`` one for its
+    bytes, a ``raw()`` one for an empty script, and a ``rawpkh()`` one
+    for the size of its hash, as `WshDescriptor` says.
     """
 
     inner: Descriptor
@@ -2023,6 +2210,13 @@ class ShDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the wrapped SCRIPT's KEY expressions."""
         return self.inner.key_expressions
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        assert_type(self.inner, Descriptor, "inner descriptor")
+        _assert_inner(self.inner, _P2SH)
+        return self.inner._spending_paths()
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -2082,30 +2276,29 @@ class WshDescriptor(Descriptor):
 
     A `ShDescriptor` or `WshDescriptor` argument whose class writes its
     text with that class's own `str` is refused for its position without
-    writing what it holds, as `_assert_inner` says: an unpickled one
-    skips its own check, and what it holds need not be written without
+    writing what it holds, as `_assert_inner` says: a forged one escapes
+    its own check, and what it holds need not be written without
     raising.
 
     A miniscript argument is refused before its text is written: for its
-    nodes as `_assert_p2wsh` says, then for its keys as above, then for a
-    node holding a number of keys its fragment does not take, with
-    `MiniscriptDescriptor`'s message, as `parse` reads the keys of a node
-    before it counts them. An unpickled one skips its own check, and its
-    text need not be written without raising.
+    nodes as `_assert_p2wsh` says, then for its keys as above, then for
+    a node holding a number of keys its fragment does not take, with
+    `MiniscriptDescriptor`'s message, as `parse` reads the keys of a
+    node before it counts them. A forged one escapes its own check, and
+    its text need not be written without raising.
 
     Once those pass, a miniscript argument whose text `parse` reads as a
-    descriptor function, such as ``pk()``, then one a node of which holds
-    a type or bounds its build does not compute, and then one that is not
-    sane, is refused with `MiniscriptDescriptor`'s message: an unpickled
-    one skips that check of its own too.
+    descriptor function, such as ``pk()``, then one a node of which
+    holds a type or bounds its build does not compute, and then one that
+    is not sane, is refused with `MiniscriptDescriptor`'s message: a
+    forged one escapes that check of its own too.
 
-    An unpickled ``multi()`` argument skips its own check. A field of
-    the wrong type is refused as `_assert_multi_types` says, and a
-    threshold out of range whose text can be written in `parse`'s order,
-    as `_assert_embedded` says. A ``raw()`` script or a ``rawpkh()`` key
-    hash that is no bytes is refused as `_assert_script_only_types`
-    says, and a ``rawpkh()`` key hash of other than 20 bytes as
-    `_assert_inner` says.
+    A forged ``multi()`` argument escapes its own check. A field of the
+    wrong type is refused as `_assert_multi_types` says, and a threshold
+    out of range whose text can be written in `parse`'s order, as
+    `_assert_embedded` says. A ``raw()`` script that is no bytes or is
+    empty, and a ``rawpkh()`` key hash that is no bytes or of other than
+    20 bytes, are refused as `_assert_inner` says.
     """
 
     inner: Descriptor
@@ -2125,6 +2318,13 @@ class WshDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the wrapped SCRIPT's KEY expressions."""
         return self.inner.key_expressions
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        assert_type(self.inner, Descriptor, "inner descriptor")
+        _assert_inner(self.inner, _P2WSH)
+        return self.inner._spending_paths()
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -2187,7 +2387,7 @@ def _assert_p2wsh(node: Miniscript) -> None:
     Each node writes its keys in its own context, so a node of another
     one would put keys of the wrong size in the script. `Miniscript`
     refuses a subexpression of its parent's other context when it is
-    built, but an unpickled node skips that check and holds any context,
+    built, but a forged node escapes that check and holds any context,
     so every node is walked, and only the library's own context and
     fragments are named.
 
@@ -2268,16 +2468,16 @@ class MiniscriptDescriptor(Descriptor):
     ``pk()``, ``pkh()`` or ``multi()``: it would parse back as that
     function.
 
-    A node holding a number of keys its fragment does not take, as an
-    unpickled one can, is refused before its text is written: as above
+    A node holding a number of keys its fragment does not take, as a
+    forged one can, is refused before its text is written: as above
     where it is a ``multi_a()``, and otherwise for its number of keys,
     unless the miniscript holds an uncompressed key and the node holds a
-    key: the node is then left to the checks above and below, and the key
-    to ``wsh()``, which refuses it by its position.
+    key: the node is then left to the checks above and below, and the
+    key to ``wsh()``, which refuses it by its position.
 
-    A node holding a type or bounds its build does not compute, as an
-    unpickled one can, is refused before the sanity check reads them, and so
-    is one of a threshold or lock time its fragment does not take, of
+    A node holding a type or bounds its build does not compute, as a
+    forged one can, is refused before the sanity check reads them, and
+    so is one of a threshold or lock time its fragment does not take, of
     another type included.
 
     `parse` takes one only inside ``wsh()``. The refusal of a top-level one
@@ -2296,8 +2496,8 @@ class MiniscriptDescriptor(Descriptor):
         super().__post_init__()
         assert_type(self.node, Miniscript, "miniscript")
         _assert_p2wsh(self.node)
-        # `Miniscript` refuses these keys in a P2WSH node when it is built,
-        # and an unpickled node skips that check
+        # `Miniscript` refuses these keys in a P2WSH node when it is
+        # built, and a forged node escapes that check
         _assert_keys_outside_taproot(self.node.key_expressions)
         _assert_key_numbers([self.node], self.node.key_expressions)
         _assert_miniscript_read(self.node)
@@ -2311,6 +2511,13 @@ class MiniscriptDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the KEY expressions of the fragments, left to right."""
         return self.node.key_expressions
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        assert_type(self.node, Miniscript, "miniscript")
+        _assert_p2wsh(self.node)
+        return self.node.spending_paths
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -2399,6 +2606,12 @@ class MultiDescriptor(Descriptor):
         """Return the KEY expressions, in descriptor order."""
         return self.keys
 
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        _assert_multi_types(self)
+        return (SpendingPath((Quorum(self.threshold, self.keys),)),)
+
     def _pub_keys(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         """Return the keys in the order the script holds them.
 
@@ -2457,8 +2670,8 @@ class MultiDescriptor(Descriptor):
 def _assert_multi_types(multi: MultiDescriptor) -> None:
     """Refuse a field of a ``multi()`` of the wrong type.
 
-    The threshold, the keys, each key and the sort, in that order. An
-    unpickled ``multi()`` skips this check of its own, so `_assert_inner`
+    The threshold, the keys, each key and the sort, in that order. A
+    forged ``multi()`` escapes this check of its own, so `_assert_inner`
     calls it too, before its function: `str` writes each field, and a
     value of the wrong type need not write itself without raising.
     """
@@ -2497,6 +2710,12 @@ class ComboDescriptor(Descriptor):
     def key_expressions(self) -> tuple[KeyExpression, ...]:
         """Return the one KEY expression, as the base class's tuple."""
         return (self.key,)
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        assert_type(self.key, KeyExpression, "key")
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
@@ -2599,14 +2818,17 @@ class AddrDescriptor(Descriptor):
 
 @dataclass(frozen=True)
 class RawDescriptor(Descriptor):
-    """``raw(HEX)``: the script those bytes are, BIP385."""
+    """``raw(HEX)``: the script those bytes are, BIP385.
+
+    An empty script is refused when built, with `parse`'s message.
+    """
 
     script: bytes
 
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
-        _assert_script_only_types(self)
+        _assert_raw_fields(self)
 
     @override
     def __str__(self) -> str:
@@ -2682,8 +2904,7 @@ class RawPkhDescriptor(Descriptor):
     @override
     def __post_init__(self) -> None:
         super().__post_init__()
-        _assert_script_only_types(self)
-        _assert_key_hash_size(self.key_hash)
+        _assert_rawpkh_fields(self)
 
     @override
     def __str__(self) -> str:
@@ -2697,11 +2918,14 @@ class RawPkhDescriptor(Descriptor):
 
     @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
-        # refused again: unpickling builds one without `__post_init__`
-        _assert_key_hash_size(self.key_hash)
+        # refused again, for a forged one
+        _assert_rawpkh_fields(self)
+        # the bytes it holds, which its text writes: `serialize` sizes a
+        # push by its `__len__`, and `bytes()` copies through `__bytes__`
+        key_hash = _plain(self.key_hash)
         return [
             serialize(
-                ["OP_DUP", "OP_HASH160", self.key_hash, "OP_EQUALVERIFY", "OP_CHECKSIG"]
+                ["OP_DUP", "OP_HASH160", key_hash, "OP_EQUALVERIFY", "OP_CHECKSIG"]
             )
         ]
 
@@ -2738,16 +2962,33 @@ class RawPkhDescriptor(Descriptor):
 _SCRIPT_ONLY = (RawDescriptor, RawPkhDescriptor)
 
 
-def _assert_script_only_types(inner: RawDescriptor | RawPkhDescriptor) -> None:
-    """Refuse a ``raw()`` script or a ``rawpkh()`` key hash that is no bytes.
+def _assert_raw_fields(raw: RawDescriptor) -> None:
+    """Refuse a ``raw()`` script that is no bytes, then an empty one.
 
     `_assert_inner` calls it too, for the reason `_assert_multi_types`
     gives.
     """
-    if isinstance(inner, RawDescriptor):
-        assert_type(inner.script, bytes, "script")
-    else:
-        assert_type(inner.key_hash, bytes, "key hash")
+    assert_type(raw.script, bytes, "script")
+    _assert_raw_script(raw.script)
+
+
+def _assert_rawpkh_fields(rawpkh: RawPkhDescriptor) -> None:
+    """Refuse a ``rawpkh()`` key hash that is no bytes, then its size.
+
+    `_assert_inner` calls it too, for the reason `_assert_multi_types`
+    gives.
+    """
+    assert_type(rawpkh.key_hash, bytes, "key hash")
+    _assert_key_hash_size(rawpkh.key_hash)
+
+
+# the check of its own fields each fragment's build runs, which
+# `_assert_inner` runs again on an argument that may have skipped it
+_OWN_CHECKS: dict[type[Descriptor], Callable[[Any], None]] = {
+    MultiDescriptor: _assert_multi_types,
+    RawDescriptor: _assert_raw_fields,
+    RawPkhDescriptor: _assert_rawpkh_fields,
+}
 
 
 def _embedded(
@@ -2756,8 +2997,8 @@ def _embedded(
     """Return the script a ``sh()`` or a ``wsh()`` embeds.
 
     Refused where the descriptor has no script for it, so that one over
-    the size limit answers nothing else either: unpickling builds one
-    without the refusal of `__post_init__`.
+    the size limit answers nothing else either: a forged one escapes the
+    refusal of `__post_init__`.
     """
     descriptor._scripts(index, prv_keys)
     return descriptor.inner.redeem_script(index, prv_keys)
@@ -2808,7 +3049,7 @@ class TrDescriptor(Descriptor):
         _assert_keys((self.internal_key,), _assert_taproot_key)
         if self.tree is not None:
             leaves = _assert_tree(self.tree)
-            # a pk() leaf is a bare key, and an unpickled leaf skipped its
+            # a pk() leaf is a bare key, and a forged leaf escaped its
             # own check
             _assert_keys(self.key_expressions, _assert_taproot_key)
             _assert_leaves_read(leaves)
@@ -2827,6 +3068,28 @@ class TrDescriptor(Descriptor):
         if self.tree is None:
             return (self.internal_key,)
         return (self.internal_key, *_tree_keys(self.tree))
+
+    @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        """Return the key path, unless it is H's, then each leaf's paths."""
+        # asked again, for a forged one
+        assert_type(self.internal_key, KeyExpression, "internal key")
+        if self.tree is not None:
+            _assert_tree(self.tree)
+        paths: list[SpendingPath] = []
+        if not _is_unspendable(self.internal_key):
+            paths.append(SpendingPath((Quorum(1, (self.internal_key,)),)))
+        if self.tree is None:
+            return tuple(paths)
+        if _has_raw_node(self.tree):
+            err_msg = "a tr() with a rawnode() does not name every key a spend needs"
+            raise BTClibValueError(err_msg)
+        work = _Work()
+        for number, leaf in enumerate(_tree_leaves(self.tree)):
+            leaf_paths = _tree_leaf_paths(leaf, work)
+            _assert_path_count(len(paths) + len(leaf_paths))
+            paths += [replace(path, leaf=number) for path in leaf_paths]
+        return tuple(paths)
 
     def _tree(
         self, index: int, prv_keys: PrvKeys | None
@@ -3087,6 +3350,14 @@ class RawTrDescriptor(Descriptor):
         return (self.key,)
 
     @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        assert_type(self.key, KeyExpression, "key")
+        if _is_unspendable(self.key):
+            return ()
+        return (SpendingPath((Quorum(1, (self.key,)),)),)
+
+    @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         # not ScriptPubKey.p2tr, which computes an output key from an
         # internal one: here the key already is the output key, and
@@ -3185,6 +3456,12 @@ class UnusedDescriptor(Descriptor):
         return (self.key,)
 
     @override
+    def _spending_paths(self) -> tuple[SpendingPath, ...]:
+        # asked again, for a forged one
+        assert_type(self.key, KeyExpression, "key")
+        return ()
+
+    @override
     def _scripts(self, index: int, prv_keys: PrvKeys | None) -> list[bytes]:
         # the key is derived and no script made of it, as in Core, which
         # refuses a key that cannot derive here too
@@ -3228,28 +3505,24 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     is any value, a key included.
 
     A network that is no `str` is refused first, with `Descriptor`'s
-    message: an unpickled argument skips that check of its own, and the
-    scripts of the ``sh()`` or ``wsh()`` are made with it. A field of the
-    wrong type that `_assert_multi_types` or `_assert_script_only_types`
-    checks is refused next, as those functions say. This is the order of
-    the argument's own build, which checks its network before its fields.
-
-    The hash of a ``rawpkh()`` is then refused for its size, with
-    `_assert_key_hash_size`'s message, before its position: an unpickled
-    ``rawpkh()`` skips that check of its own, which its build runs after
-    the type of the hash.
+    message: a forged argument escapes that check of its own, and the
+    scripts of the ``sh()`` or ``wsh()`` are made with it. Each fragment
+    `_OWN_CHECKS` names that the argument is an instance of then has its
+    fields refused by the check named for it, which that fragment's
+    build runs too, before the argument's position: the base class
+    first, as each build calls its parent's before its own checks. This
+    is the order of the argument's own build, which checks its network
+    before its fields; a forged argument escapes all of it.
 
     A `ShDescriptor` or a `WshDescriptor` whose class writes its text
-    with that class's own `str` is named without writing that text: an
-    unpickled one can hold an argument whose text cannot be written.
+    with that class's own `str` is named without writing that text: a
+    forged one can hold an argument whose text cannot be written.
     """
     assert_type(inner.network, str, "network")
-    if isinstance(inner, MultiDescriptor):
-        _assert_multi_types(inner)
-    elif isinstance(inner, _SCRIPT_ONLY):
-        _assert_script_only_types(inner)
-        if isinstance(inner, RawPkhDescriptor):
-            _assert_key_hash_size(inner.key_hash)
+    for cls in reversed(type(inner).__mro__):
+        own_check = _OWN_CHECKS.get(cls)
+        if own_check is not None:
+            own_check(inner)
     if isinstance(inner, MiniscriptDescriptor):
         if context not in _MINISCRIPT_CONTEXTS:
             raise BTClibValueError(_MINISCRIPT_OUTSIDE)
@@ -3278,26 +3551,43 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
     outside 1 to n, and the size of its script, in `parse`'s order and
     with its messages: key by key, each refused for its taproot spelling
     before its compression, and a negative threshold as `parse` refuses
-    the ``-`` that `str` writes. An unpickled argument skips its own
-    check of the keys and of the threshold. A threshold of more digits
-    than Python writes as text is not reached: `_assert_inner` raises
-    Python's `ValueError` writing it.
-    ``sh()`` and ``wsh()`` hold no key of their own, so a key's position
-    in `inner`, counted as `_assert_keys` counts it, is the one `parse`
-    names.
+    the ``-`` that `str` writes. A forged argument escapes its own check
+    of the keys and of the threshold. A threshold of more digits than
+    Python writes as text is not reached: `_assert_inner` raises
+    Python's `ValueError` writing it. ``sh()`` and ``wsh()`` hold no key
+    of their own, so a key's position in `inner`, counted as
+    `_assert_keys` counts it, is the one `parse` names.
 
     The key of a ``wpkh()`` argument is refused uncompressed in any
-    context, because `parse` reads it compressed only: an unpickled
-    ``wpkh()`` skips its own check of it.
+    context, because `parse` reads it compressed only: a forged
+    ``wpkh()`` escapes its own check of it.
 
     A key that is no `KeyExpression` is refused before any of these,
-    whatever its position, with the message `_assert_key_types` gives:
-    an unpickled argument skips that check of its own too.
+    whatever its position, with the message `_assert_key_types` gives: a
+    forged argument escapes that check of its own too.
 
     The checks of a ``multi()`` are run on an argument whose class writes
     its text and makes its script with `MultiDescriptor`'s own `str` and
     scripts. A class deriving from `RawDescriptor` before `MultiDescriptor`
     writes and embeds a ``raw()``, and is refused as one.
+
+    A `RawDescriptor` argument has a script over the limit of `context`
+    refused by these rules, in this order, each with `parse`'s message:
+
+    - where it writes ``raw()`` text, the script that text holds, read
+      as `parse` reads it;
+    - where it holds no key expression, each script its `_scripts` gives
+      at index 0 with no private key: the call `redeem_script` makes
+      before `ScriptPubKey` reads the network, which need not be one a
+      hand-built descriptor names;
+    - where it is no `MultiDescriptor`, its `script` field.
+
+    The rules on its text and its scripts are not asked of a miniscript,
+    whose text and scripts are not computed before its nodes pass, as
+    `_assert_wsh_argument` says. One that holds a key expression may need
+    a private key for its scripts, and a ``multi()`` that is a ``raw()``
+    too writes and embeds the ``multi()`` script, which the checks above
+    bound.
     """
     no_uncompressed = _no_uncompressed(context) or isinstance(inner, WpkhDescriptor)
 
@@ -3314,10 +3604,23 @@ def _assert_embedded(inner: Descriptor, context: str) -> None:
         and type(inner)._scripts is MultiDescriptor._scripts
     ):
         _assert_multi_embedded(inner, context, check)
-        return
-    _assert_keys(inner.key_expressions, check)
+    else:
+        _assert_keys(inner.key_expressions, check)
     if isinstance(inner, RawDescriptor):
-        _assert_raw_size(inner.script, context)
+        _assert_raw_embedded(inner, context)
+
+
+def _assert_raw_embedded(raw: RawDescriptor, context: str) -> None:
+    """Refuse a ``raw()`` script by the rules `_assert_embedded` gives."""
+    if not isinstance(raw, MiniscriptDescriptor):
+        text = str(raw)
+        if text.partition("(")[0] == "raw":
+            _parse_expression(text, context, raw.network, {})
+        if not raw.key_expressions:
+            for script in raw._scripts(0, None):
+                _assert_raw_size(script, context)
+    if not isinstance(raw, MultiDescriptor):
+        _assert_raw_size(raw.script, context)
 
 
 def _assert_multi_embedded(
@@ -3874,16 +4177,34 @@ _EMBEDDED_SCRIPT_SIZE = {_P2SH: MAX_SCRIPT_ELEMENT_SIZE, _P2WSH: MAX_SCRIPT_SIZE
 def _parse_raw(
     args: list[str], context: str, network: str, prv_keys: MutableMapping[str, str]
 ) -> Descriptor:
-    script = _hex_bytes(_one_argument(args, "raw"), "Raw script is not hex")
+    script = _hex_bytes(_one_argument(args, "raw"), _RAW_NOT_HEX)
     _assert_raw_size(script, context)
     return RawDescriptor(script, network=network)
 
 
+_RAW_NOT_HEX = "Raw script is not hex"
+
+
+def _assert_raw_script(script: bytes) -> None:
+    """Refuse an empty script, as `_hex_bytes` refuses empty hex.
+
+    By the length of its bytes, which no subclass's `__len__` or
+    `__bool__` answers.
+    """
+    if bytes.__len__(script) == 0:
+        raise BTClibValueError(_RAW_NOT_HEX)
+
+
 def _assert_raw_size(script: bytes, context: str) -> None:
-    """Refuse a ``raw()`` script over the limit of what embeds it."""
+    """Refuse a ``raw()`` script over the limit of what embeds it.
+
+    The size is that of the octets `ScriptPubKey` embeds, which no
+    subclass's `__len__` answers.
+    """
     limit = _EMBEDDED_SCRIPT_SIZE.get(context)
-    if limit is not None and len(script) > limit:
-        err_msg = f"raw() inside {context} is {len(script)} bytes"
+    size = len(bytes_from_octets(script))
+    if limit is not None and size > limit:
+        err_msg = f"raw() inside {context} is {size} bytes"
         raise BTClibValueError(f"{err_msg}, over the {limit}-byte limit")
 
 
@@ -3901,26 +4222,25 @@ def _assert_key_hash_size(key_hash: bytes) -> None:
     """Refuse a hash `parse` refuses, with its message.
 
     An empty one as `_hex_bytes` refuses empty hex, then a size other
-    than 20 bytes.
+    than 20 bytes. By the length of its bytes, which no subclass's
+    `__len__` or `__bool__` answers.
     """
-    if not key_hash:
+    size = bytes.__len__(key_hash)
+    if size == 0:
         raise BTClibValueError(_RAWPKH_NOT_HEX)
-    if len(key_hash) != _KEY_HASH_SIZE:
+    if size != _KEY_HASH_SIZE:
         raise BTClibValueError("160 bits digest expected")
 
 
 def _parse_bare_leaf(args: list[str]) -> RawLeaf:
     """Return the leaf of a ``raw(HEX)`` inside a tree: version c0."""
-    script = _hex_bytes(_one_argument(args, "raw"), "Raw script is not hex")
+    script = _hex_bytes(_one_argument(args, "raw"), _RAW_NOT_HEX)
     return RawLeaf(script, bare=True)
 
 
 def _parse_rawnode(args: list[str]) -> RawNode:
-    """Return the node of a ``rawnode(HEX)``: 32 bytes."""
-    digest = _hex_bytes(_one_argument(args, "rawnode"), "Rawnode hash is not hex")
-    if len(digest) != _NODE_HASH_SIZE:
-        raise BTClibValueError("256 bits digest expected")
-    return RawNode(digest)
+    """Return the node of a ``rawnode(HEX)``, whose build refuses its size."""
+    return RawNode(_hex_bytes(_one_argument(args, "rawnode"), _RAWNODE_NOT_HEX))
 
 
 def _parse_rawleaf(args: list[str]) -> RawLeaf:
@@ -3937,7 +4257,7 @@ def _parse_rawleaf(args: list[str]) -> RawLeaf:
     starting with 51, or with 50 when an annex follows, and BIP341 rules it
     out of a script tree only in a footnote.
     """
-    script = _hex_bytes(args[0], "Leaf Script is not hex")
+    script = _hex_bytes(args[0], _LEAF_NOT_HEX)
     if len(args) == 1:
         return RawLeaf(script)
     text = args[1]
@@ -4723,19 +5043,45 @@ class _Known:
 
     @classmethod
     def of(cls, provider: Provider) -> _Known:
+        """Index a provider `_assert_provider` passed, as plain bytes.
+
+        Each entry is read as the bytes it holds, with `_plain`: a
+        subclass of bytes can answer any truth, length or copy, and the
+        inference then reads none of them.
+        """
+        keys = {_plain(sec): origin for sec, origin in provider.keys.items()}
         by_hash: dict[bytes, bytes] = {}
         by_x_only_hash: dict[bytes, bytes] = {}
-        for sec in provider.keys:
+        for sec in keys:
             by_hash.setdefault(hash160(sec), sec)
             if len(sec) == 33:
                 by_x_only_hash.setdefault(hash160(sec[1:]), sec)
+        scripts = [_plain(script) for script in reversed(provider.scripts)]
+        trees = {
+            _plain(output_key): (
+                _plain(internal_key),
+                _plain(merkle_root),
+                {
+                    _plain(control): (_plain(script), version)
+                    for control, (script, version) in leaf_scripts.items()
+                },
+            )
+            for output_key, (internal_key, merkle_root, leaf_scripts) in (
+                provider.trees.items()
+            )
+        }
         return cls(
-            provider.keys,
-            {hash160(script): script for script in reversed(provider.scripts)},
+            keys,
+            {hash160(script): script for script in scripts},
             by_hash,
             by_x_only_hash,
-            provider.trees,
+            trees,
         )
+
+
+def _plain(octets: bytes) -> bytes:
+    """Return the bytes a bytes object holds, through none of its methods."""
+    return bytes.__getitem__(octets, slice(None))
 
 
 def _inferred_key(sec: bytes, context: str, known: _Known) -> KeyExpression | None:
@@ -5183,7 +5529,12 @@ def _assert_provider(provider: Provider) -> None:
         assert_type(internal_key, bytes, "taproot internal key")
         assert_type(merkle_root, bytes, "taproot merkle root")
         assert_type(leaf_scripts, Mapping, "taproot leaf scripts")
-        sizes = (len(output_key), len(internal_key), len(merkle_root) or 32)
+        # the size of the bytes held, which `_Known.of` copies
+        sizes = (
+            bytes.__len__(output_key),
+            bytes.__len__(internal_key),
+            bytes.__len__(merkle_root) or 32,
+        )
         if sizes != (_X_ONLY_SIZE,) * 3:
             raise BTClibValueError("invalid taproot key or merkle root size")
         for control, leaf in leaf_scripts.items():
@@ -5246,6 +5597,9 @@ def infer_descriptor(
     script = bytes_from_octets(script)
     _assert_provider(provider)
     network = validated_network_name(network)
+    if not script:
+        # Core's answer, which `RawDescriptor` refuses to build
+        return add_checksum("raw()")
     inferred = str(_inferred(script, _TOP, _Known.of(provider), network))
     if not _parses_to(inferred, script, network):
         inferred = str(_addr_or_raw(script, _solved(script)[0], network))

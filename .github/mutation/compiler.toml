@@ -1,0 +1,14 @@
+# A shard of the descriptors profile: compiler.py, the policy compiler, every
+# operator. descriptors.toml is the profile: what it mutates and why, the
+# shards, the test command and the timeout copied here, and the triage of the
+# survivors.
+
+[cosmic-ray]
+module-path = "src/bip32_descriptors/descriptors/compiler.py"
+test-command = "python -m pytest -x -q -n0 -p no:randomly tests/descriptors"
+timeout = 300
+excluded-modules = []
+
+# one mutant at a time, in this working tree: see btclib's sig_hash.toml
+[cosmic-ray.distributor]
+name = "local"

@@ -1,0 +1,25 @@
+# A shard of the descriptors profile: descriptors.py, the operators no other
+# descriptors-py-*.toml runs. descriptors.toml is the profile: what it mutates
+# and why, the shards, the test command and the timeout copied here, and the
+# triage of the survivors.
+
+[cosmic-ray]
+module-path = "src/bip32_descriptors/descriptors/descriptors.py"
+test-command = "python -m pytest -x -q -n0 -p no:randomly tests/descriptors"
+timeout = 300
+excluded-modules = []
+
+# skips the operators the numbered shards of this module run, and only those
+[cosmic-ray.filters.operators-filter]
+exclude-operators = [
+    'core/ReplaceBinaryOperator_BitOr_',
+    'core/ReplaceBinaryOperator_Add_',
+    'core/ReplaceComparisonOperator_',
+    'core/NumberReplacer$',
+    'core/AddNot$',
+    'core/ReplaceBinaryOperator_Sub_',
+]
+
+# one mutant at a time, in this working tree: see btclib's sig_hash.toml
+[cosmic-ray.distributor]
+name = "local"
