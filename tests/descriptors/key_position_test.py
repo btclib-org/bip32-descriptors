@@ -89,7 +89,7 @@ def test_a_point_off_the_curve_keeps_its_class() -> None:
         (f"wsh(multi(1,{K},{TPRV}/0h/x))", "key 1: invalid derivation index"),
         (
             f"tr({X},pk(musig({K},{TPRV})))",
-            "key 2: not a mainnet key: version 0x043587cf",
+            "key 2: not a mainnet key: version",
         ),
     ],
 )
@@ -140,5 +140,5 @@ def test_a_wallet_policy_key_is_named_by_its_place_and_not_its_number() -> None:
     ]
     with pytest.raises(BTClibValueError) as e:
         wallet_policy_descriptor("wsh(multi(1,@1/**,@0/**))", key_info)
-    assert str(e.value) == "key 0: not a mainnet key: version 0x043587cf"
+    assert str(e.value) == "key 0: not a mainnet key: version"
     assert_secret_free(e.value, [TPRV])

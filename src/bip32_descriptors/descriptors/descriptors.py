@@ -195,6 +195,14 @@ from ecc.hashes import tagged_hash
 from ecc.ssa import point_from_bip340pub_key_var
 from typing_extensions import override
 
+from bip32_descriptors._refusal import (
+    _QUOTED_MAX,
+    _label,
+    _position,
+    _quoted,
+    _size,
+    _type_name,
+)
 from bip32_descriptors.bip32.bip32 import (
     BIP32KeyData,
     _derive,
@@ -236,6 +244,7 @@ from bip32_descriptors.descriptors.key_expression import (
     _checked_state,
     _derived_once,
     _expression,
+    _fault,
     _filed_wifs,
     _keys_counted,
     _keys_read_again,
@@ -274,6 +283,9 @@ from bip32_descriptors.descriptors.miniscript import (
     _script_number,
     _tree_eval,
     _Work,
+)
+from bip32_descriptors.descriptors.miniscript import (
+    _NAMES as _MINISCRIPT_NAMES,
 )
 from bip32_descriptors.descriptors.miniscript import (
     from_script as _miniscript_from_script,
@@ -356,10 +368,11 @@ def __descsum_expand(descriptor_string: str) -> list[int]:
     """Perform the character to symbol expansion."""
     groups: list[int] = []
     symbols: list[int] = []
-    for char in descriptor_string:
+    for position, char in enumerate(descriptor_string):
         index = _INPUT_INDEX.get(char, -1)
         if index == -1:
-            raise BTClibValueError(f"invalid descriptor character: {char!r}")
+            err_msg = f"invalid descriptor character at position {position}"
+            raise BTClibValueError(err_msg)
         symbols.append(index & 31)
         groups.append(index >> 5)
         if len(groups) == 3:
@@ -389,10 +402,16 @@ def strip_checksum(descriptor: str) -> str:
     """
     body, separator, given_checksum = descriptor.partition("#")
     if "#" in given_checksum:
-        position = len(body) + 1 + given_checksum.index("#")
-        raise BTClibValueError(
-            f"more than one '#' in the descriptor at position {position}"
-        )
+        err_msg = "more than one '#' in the descriptor"
+        # counted on an exact copy: a str subclass can answer `partition`,
+        # `len` and `index` with numbers of its own
+        if issubclass(type(descriptor), str):
+            text = str.__add__(descriptor, "")
+            rest = text.partition("#")[2]
+            if "#" in rest:
+                position = len(text) - len(rest) + rest.index("#")
+                err_msg += f" at position {_position(position)}"
+        raise BTClibValueError(err_msg)
     # computed before the comparison, and whether or not there is one to
     # compare against: it is also what refuses a character outside
     # INPUT_CHARSET, which is an error in a descriptor with no checksum
@@ -434,6 +453,8 @@ _TOP = "top level"
 _P2SH = "sh()"
 _P2WSH = "wsh()"
 _P2TR = "tr()"
+# the places an expression may be, which a refusal prints by `_label`
+_CONTEXTS = (_TOP, _P2SH, _P2WSH, _P2TR)
 
 # where a miniscript may be written, and which of BIP379's two contexts
 # that position is: inside wsh() and inside a tr() leaf, and nowhere else,
@@ -446,10 +467,6 @@ _MINISCRIPT_CONTEXTS = {_P2WSH: miniscript.P2WSH, _P2TR: miniscript.TAPSCRIPT}
 # stack element per key, and a script whose spend would push more than the
 # 1000 elements BIP342 allows is one nobody can spend
 _MAX_MULTI_A_KEYS = 999
-
-# `parse`'s refusal of a multisig function with no key, formatted with its
-# name
-_MULTI_NO_KEYS = "{name}() takes a threshold and at least one key"
 
 # the keys a multi() or sortedmulti() may hold as a bare output script:
 # Bitcoin Core's IsStandard refuses a bare multisig of more, and its
@@ -720,7 +737,7 @@ def _assert_raw_leaf_fields(leaf: RawLeaf) -> None:
     """
     assert_type(leaf.script, bytes, "leaf script")
     if not is_integer(leaf.version):
-        err_msg = f"invalid leaf version type: {type(leaf.version).__name__}"
+        err_msg = f"invalid leaf version type: {_type_name(leaf.version)}"
         raise BTClibTypeError(err_msg)
     assert_type(leaf.bare, bool, "bare")
     if bytes.__len__(leaf.script) == 0:
@@ -865,7 +882,7 @@ def _named_fragment(node: Miniscript) -> str:
     be any value, and a refusal names only the library's own.
     """
     fragment = node.fragment
-    return fragment if _is_known_fragment(fragment) else "a node"
+    return _label(fragment, _NAMES) if _is_known_fragment(fragment) else "a node"
 
 
 def _is_known_fragment(fragment: object) -> bool:
@@ -917,12 +934,11 @@ def _assert_node_key_number(node: Miniscript, *, uncompressed: bool) -> None:
     """Refuse one node as `_assert_key_numbers` says.
 
     `uncompressed` says whether the descriptor holds an uncompressed key.
+    Refused for its number of keys unless `_assert_key_numbers` leaves the
+    node to the key check.
     """
-    try:
+    if not uncompressed or not node.keys:
         _assert_key_number(node.fragment, len(node.keys))
-    except BTClibValueError:
-        if not uncompressed or not node.keys:
-            raise
 
 
 # True while a descriptor is built from a miniscript already refused where
@@ -989,7 +1005,7 @@ def _assert_key_types(node: Miniscript | MultiA) -> None:
 def _assert_threshold_type(threshold: object) -> None:
     """Refuse a threshold that is no integer, naming its type."""
     if not is_integer(threshold):
-        err_msg = f"invalid threshold type: {type(threshold).__name__}"
+        err_msg = f"invalid threshold type: {_type_name(threshold)}"
         raise BTClibTypeError(err_msg)
 
 
@@ -1018,7 +1034,8 @@ def _assert_multi_a_numbers(leaf: MultiA) -> None:
     name = "sortedmulti_a" if leaf.sort else "multi_a"
     _assert_multi_a_count(name, leaf.keys)
     if not 1 <= leaf.threshold <= len(leaf.keys):
-        raise BTClibValueError(f"invalid k in k-of-n {name}: {leaf.threshold}")
+        err_msg = f"invalid k in k-of-n {name}: {_quoted(leaf.threshold)}"
+        raise BTClibValueError(err_msg)
 
 
 def _assert_tree_leaf(node: object) -> None:
@@ -1101,7 +1118,7 @@ def _assert_tree(tree: DescriptorTree) -> list[Miniscript]:
             _assert_tree_leaf(node)
             continue
         if len(node) != 2:
-            err_msg = f"a script tree branch takes two subtrees, {len(node)} given"
+            err_msg = f"a script tree branch takes two subtrees, {_size(node)} given"
             raise BTClibTypeError(err_msg)
         if depth == MAX_TREE_DEPTH:
             raise BTClibValueError(f"script tree deeper than {MAX_TREE_DEPTH}")
@@ -1219,13 +1236,13 @@ def _leaf_stack(
 def _required_signature(signatures: Mapping[bytes, bytes], sec: bytes) -> bytes:
     """Return the signature made with a public key, refusing where none is.
 
-    The key is named in the error: it is public by construction, and
-    which of a descriptor's keys has not signed is the whole content of
-    the refusal.
+    The key is not named in the error, which has one key to be about:
+    section 7 of the btclib-org standard, *A refusal carries no secret*,
+    prints a fingerprint of a public key at most.
     """
     signature = _offered_signature(signatures, sec, x_only=False)
     if signature is None:
-        raise BTClibValueError(f"no signature for public key {sec.hex()}")
+        raise BTClibValueError("no signature for public key")
     return signature
 
 
@@ -1592,7 +1609,7 @@ class Descriptor(ABC):
 
     def _spending_paths(self) -> tuple[SpendingPath, ...]:
         """Refuse: the fragments that know their paths override this."""
-        err_msg = f"{type(self).__name__} names no key a spending path needs"
+        err_msg = f"{_type_name(self)} names no key a spending path needs"
         raise BTClibValueError(err_msg)
 
     def _assert_index(self, index: int) -> None:
@@ -1604,7 +1621,7 @@ class Descriptor(ABC):
         """
         _assert_index_range(index)
         if index and not self.is_ranged:
-            err_msg = f"not a ranged descriptor: no script at index {index}"
+            err_msg = f"not a ranged descriptor: no script at index {_quoted(index)}"
             raise BTClibValueError(err_msg)
 
     def script_pub_keys(
@@ -1629,7 +1646,7 @@ class Descriptor(ABC):
         """Return the one script the descriptor describes at `index`."""
         script_pub_keys = self.script_pub_keys(index, prv_keys)
         if len(script_pub_keys) != 1:
-            err_msg = f"{len(script_pub_keys)} scripts: use script_pub_keys instead"
+            err_msg = f"{_size(script_pub_keys)} scripts: use script_pub_keys instead"
             raise BTClibValueError(err_msg)
         return script_pub_keys[0]
 
@@ -1705,7 +1722,7 @@ class Descriptor(ABC):
         those in an embedding position too, so what this answers is a
         descriptor that escaped its build, as a forged one does.
         """
-        err_msg = f"{type(self).__name__} is not a script another one embeds"
+        err_msg = f"{_type_name(self)} is not a script another one embeds"
         raise BTClibValueError(err_msg)
 
     def satisfy(
@@ -1819,11 +1836,9 @@ class Descriptor(ABC):
         _assert_prv_keys(prv_keys)
         script = script_from_script_pub_key(script_pub_key)
         if not is_integer(last_index):
-            raise BTClibTypeError(
-                f"invalid last_index type: {type(last_index).__name__}"
-            )
+            raise BTClibTypeError(f"invalid last_index type: {_type_name(last_index)}")
         if last_index < 0:
-            raise BTClibValueError(f"negative last_index: {last_index}")
+            raise BTClibValueError(f"negative last_index: {_quoted(last_index)}")
         last = last_index if self.is_ranged else 0
         return next(
             (
@@ -1912,29 +1927,51 @@ def _assert_keys(
     `_assert_musig_path_fields` says, at the position after its
     participants, where `parse` reads the path. A type is refused with no
     position, as the build refuses it.
+
+    The text written is the one `_FAULTS` writes for the caught one, as
+    `_fault` says, and each refusal is raised after its `except`, so
+    that it chains nothing.
     """
     position = 0
     for key in keys:
-        try:
-            check(key)
-        except _ParticipantError as e:
-            err_msg = f"key {position + e.index}: {e}"
-            raise BTClibValueError(err_msg) from None
-        except BTClibValueError as e:
-            raise BTClibValueError(f"key {position}: {e}") from None
-        except EccValueError as e:
-            raise EccValueError(f"key {position}: {e}") from None
-        try:
-            _assert_point(key)
-        except EccValueError as e:
-            raise EccValueError(f"key {position}: {e}") from None
+        _assert_key(key, check, position)
         position += len(key.participants)
         if key.participants and (key.der_path or key.wildcard is not None):
+            fault = None
             try:
                 _assert_musig_path_fields(key)
             except BTClibValueError as e:
-                raise BTClibValueError(f"key {position}: {e}") from None
+                fault = _fault(e, "invalid key path")
+            if fault is not None:
+                raise BTClibValueError(f"key {_position(position)}: {fault}")
         position += 1
+
+
+def _assert_key(
+    key: KeyExpression, check: Callable[[KeyExpression], None], position: int
+) -> None:
+    """Refuse one key as `_assert_keys` says, `position` its first."""
+    where = position
+    fault: str | None = None
+    not_a_point: str | None = None
+    try:
+        check(key)
+    except _ParticipantError as e:
+        where += e.index
+        fault = _fault(e, "musig(): invalid participant")
+    except BTClibValueError as e:
+        fault = _fault(e, "invalid key expression")
+    except EccValueError as e:
+        not_a_point = _fault(e, "not a public key")
+    else:
+        try:
+            _assert_point(key)
+        except EccValueError as e:
+            not_a_point = _fault(e, "not a public key")
+    if fault is not None:
+        raise BTClibValueError(f"key {_position(where)}: {fault}")
+    if not_a_point is not None:
+        raise EccValueError(f"key {_position(where)}: {not_a_point}")
 
 
 def _assert_keys_outside_taproot(keys: Iterable[KeyExpression]) -> None:
@@ -2585,11 +2622,12 @@ class MultiDescriptor(Descriptor):
         name = "sortedmulti" if self.sort else "multi"
         _assert_uint32_threshold(name, self.threshold)
         if not self.keys:
-            raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
+            raise BTClibValueError(_multi_no_keys(name))
         _assert_keys_outside_taproot(self.keys)
         _assert_multi_count(name, self.keys)
         if not 1 <= self.threshold <= len(self.keys):
-            raise BTClibValueError(f"invalid k in k-of-n {name}: {self.threshold}")
+            err_msg = f"invalid k in k-of-n {name}: {_quoted(self.threshold)}"
+            raise BTClibValueError(err_msg)
         if len(self.keys) > _MAX_BARE_MULTISIG_KEYS and not all(
             key.is_compressed for key in self.keys
         ):
@@ -2661,8 +2699,12 @@ class MultiDescriptor(Descriptor):
         ]
         found = [signature for _, signature in offered if signature is not None]
         if len(found) < self.threshold:
-            missing = ", ".join(sec.hex() for sec, sig in offered if sig is None)
-            err_msg = f"{len(found)} signatures of {self.threshold}, missing {missing}"
+            # each key missing a signature by its position, and not its bytes
+            missing = ", ".join(
+                str(i) for i, (_, sig) in enumerate(offered) if sig is None
+            )
+            err_msg = f"{_size(found)} signatures of {_position(self.threshold)},"
+            err_msg += f" missing for keys {missing}"
             raise BTClibValueError(err_msg)
         return [b"", *found[: self.threshold]]
 
@@ -2676,7 +2718,7 @@ def _assert_multi_types(multi: MultiDescriptor) -> None:
     value of the wrong type need not write itself without raising.
     """
     if not is_integer(multi.threshold):
-        err_msg = f"invalid threshold type: {type(multi.threshold).__name__}"
+        err_msg = f"invalid threshold type: {_type_name(multi.threshold)}"
         raise BTClibTypeError(err_msg)
     assert_type(multi.keys, tuple, "keys")
     for key in multi.keys:
@@ -3497,7 +3539,10 @@ class UnusedDescriptor(Descriptor):
 
 def _assert_position(name: str, context: str, allowed: tuple[str, ...]) -> None:
     if context not in allowed:
-        raise BTClibValueError(f"{name}() is not allowed inside {context}")
+        raise BTClibValueError(
+            f"{_label(name, _NAMES)}() is not allowed inside "
+            f"{_label(context, _CONTEXTS)}"
+        )
 
 
 def _assert_inner(inner: Descriptor, context: str) -> None:
@@ -3543,7 +3588,7 @@ def _assert_inner(inner: Descriptor, context: str) -> None:
     else:
         name = str(inner).partition("(")[0]
     if name not in _PARSERS:
-        err_msg = f"{type(inner).__name__} writes no function parse reads"
+        err_msg = f"{_type_name(inner)} writes no function parse reads"
         raise BTClibValueError(f"{err_msg} inside {context}")
     _assert_position(name, context, _PARSERS[name][0])
 
@@ -3636,16 +3681,17 @@ def _assert_multi_embedded(
     multi: MultiDescriptor, context: str, check: Callable[[KeyExpression], None]
 ) -> None:
     """Refuse a ``multi()`` as `_assert_embedded` says, `check` its keys."""
-    name = str(multi).partition("(")[0]
+    name = _label(str(multi).partition("(")[0], _NAMES)
     if multi.threshold < 0:
         raise BTClibValueError(f"invalid {name}() threshold: digits expected")
     _assert_uint32_threshold(name, multi.threshold)
     _assert_keys(multi.key_expressions, check)
     if not multi.keys:
-        raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
+        raise BTClibValueError(_multi_no_keys(name))
     _assert_multi_count(name, multi.keys)
     if not 1 <= multi.threshold <= len(multi.keys):
-        raise BTClibValueError(f"invalid k in k-of-n {name}: {multi.threshold}")
+        err_msg = f"invalid k in k-of-n {name}: {_quoted(multi.threshold)}"
+        raise BTClibValueError(err_msg)
     _assert_multi_size(name, multi.keys, context)
 
 
@@ -3653,10 +3699,13 @@ def _function_read(text: str) -> str | None:
     """Return the function `_parse_expression` reads a text as, else None.
 
     A text ending in ")" whose name `_PARSERS` holds, which it reads
-    before it tries a miniscript.
+    before it tries a miniscript. The name is the element of `_NAMES` it
+    equals, as `_label` returns it, so that a refusal may print it.
     """
     name = text.partition("(")[0]
-    return name if text.endswith(")") and name in _PARSERS else None
+    if text.endswith(")") and name in _PARSERS:
+        return _label(name, _NAMES)
+    return None
 
 
 def _leaf_function(text: str) -> str | None:
@@ -3665,18 +3714,19 @@ def _leaf_function(text: str) -> str | None:
     None is a miniscript. Core's ``Func`` takes a name only where the text
     ends in ")". ``pkh()`` and ``rawpkh()``, which `_PARSERS` allows
     inside tr(), are read there as the miniscript fragments, BIP379's and
-    this package's beside it.
+    this package's beside it. The name is returned as `_function_read`
+    returns it.
     """
     if not text.endswith(")"):
         return None
     name = text.partition("(")[0]
     refused = name in _PARSERS and _P2TR not in _PARSERS[name][0]
-    return name if name in _LEAF_FUNCTIONS or refused else None
+    return _label(name, _NAMES) if name in _LEAF_FUNCTIONS or refused else None
 
 
 def _one_argument(arguments: list[str], name: str) -> str:
     if len(arguments) != 1:
-        err_msg = f"{name}() takes one argument, {len(arguments)} given"
+        err_msg = f"{name}() takes one argument, {_size(arguments)} given"
         raise BTClibValueError(err_msg)
     return arguments[0]
 
@@ -3692,7 +3742,7 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
     args = _split_unpaired_arguments(text)
     threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
-        raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
+        raise BTClibValueError(_multi_no_keys(name))
     keys, lengths = _read_multipath_keys(
         args[1:],
         lambda key: _parse_key(
@@ -3702,7 +3752,7 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
     _assert_multisig_end(name, text, args)
     _assert_multi_a_count(name, keys)
     if not 1 <= threshold <= len(keys):
-        raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
+        raise BTClibValueError(f"invalid k in k-of-n {name}: {_quoted(threshold)}")
     _assert_multipath_keys(lengths)
     return MultiA(threshold, keys, sort=name == "sortedmulti_a")
 
@@ -3986,7 +4036,7 @@ def _parse_multi(
     args = _split_unpaired_arguments(text)
     threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
-        raise BTClibValueError(_MULTI_NO_KEYS.format(name=name))
+        raise BTClibValueError(_multi_no_keys(name))
     keys, lengths = _read_multipath_keys(
         args[1:],
         lambda key: _parse_key(
@@ -4000,10 +4050,15 @@ def _parse_multi(
     _assert_multisig_end(name, text, args)
     _assert_multi_count(name, keys)
     if not 1 <= threshold <= len(keys):
-        raise BTClibValueError(f"invalid k in k-of-n {name}: {threshold}")
+        raise BTClibValueError(f"invalid k in k-of-n {name}: {_quoted(threshold)}")
     _assert_multi_size(name, keys, context)
     _assert_multipath_keys(lengths)
     return MultiDescriptor(threshold, keys, sort=name == "sortedmulti", network=network)
+
+
+def _multi_no_keys(name: str) -> str:
+    """Return `parse`'s refusal of a multisig function with no key."""
+    return f"{_label(name, _NAMES)}() takes a threshold and at least one key"
 
 
 def _read_multi_threshold(name: str, text: str) -> int:
@@ -4037,7 +4092,7 @@ def _assert_multi_count(name: str, keys: tuple[KeyExpression, ...]) -> None:
     """
     if len(keys) > MAX_PUBKEYS_PER_MULTISIG:
         err_msg = f"{name}() takes at most {MAX_PUBKEYS_PER_MULTISIG} keys"
-        raise BTClibValueError(f"{err_msg}, {len(keys)} given")
+        raise BTClibValueError(f"{err_msg}, {_size(keys)} given")
 
 
 def _assert_multi_a_count(name: str, keys: tuple[KeyExpression, ...]) -> None:
@@ -4047,7 +4102,7 @@ def _assert_multi_a_count(name: str, keys: tuple[KeyExpression, ...]) -> None:
     of too many keys is refused for its count whatever its threshold is.
     """
     if len(keys) > _MAX_MULTI_A_KEYS:
-        raise BTClibValueError(f"invalid n in k-of-n {name}: {len(keys)}")
+        raise BTClibValueError(f"invalid n in k-of-n {name}: {_size(keys)}")
 
 
 def _assert_multi_size(
@@ -4065,7 +4120,7 @@ def _assert_multi_size(
     """
     if context == _TOP and len(keys) > _MAX_BARE_MULTISIG_KEYS:
         err_msg = f"a bare {name}() takes at most {_MAX_BARE_MULTISIG_KEYS} keys"
-        raise BTClibValueError(f"{err_msg}, {len(keys)} given")
+        raise BTClibValueError(f"{err_msg}, {_size(keys)} given")
     if context == _P2SH:
         size = 3 + sum((33 if key.is_compressed else 65) + 1 for key in keys)
         if size > MAX_SCRIPT_ELEMENT_SIZE:
@@ -4207,14 +4262,15 @@ def _assert_raw_script(script: bytes) -> None:
 def _assert_raw_size(script: bytes, context: str) -> None:
     """Refuse a ``raw()`` script over the limit of what embeds it.
 
-    The size is that of the octets `ScriptPubKey` embeds, which no
-    subclass's `__len__` answers.
+    The size decided by is that of the octets `bytes_from_octets` answers,
+    which can be a caller's bytes subclass with a `__len__` of its own;
+    the size written is the one those bytes hold, as `_size` measures it.
     """
     limit = _EMBEDDED_SCRIPT_SIZE.get(context)
-    size = len(bytes_from_octets(script))
-    if limit is not None and size > limit:
-        err_msg = f"raw() inside {context} is {size} bytes"
-        raise BTClibValueError(f"{err_msg}, over the {limit}-byte limit")
+    octets = bytes_from_octets(script)
+    if limit is not None and len(octets) > limit:
+        err_msg = f"raw() inside {_label(context, _CONTEXTS)} is {_size(octets)} bytes"
+        raise BTClibValueError(f"{err_msg}, over the {_position(limit)}-byte limit")
 
 
 def _parse_rawpkh(
@@ -4280,7 +4336,7 @@ def _parse_rawleaf(args: list[str]) -> RawLeaf:
     if version & 1:
         raise BTClibValueError("Leaf Version is invalid")
     if len(args) > _RAWLEAF_ARGUMENTS:
-        err_msg = f"rawleaf() takes a script and a leaf version, {len(args)} given"
+        err_msg = f"rawleaf() takes a script and a leaf version, {_size(args)} given"
         raise BTClibValueError(err_msg)
     return RawLeaf(script, version)
 
@@ -4329,6 +4385,10 @@ _PARSERS: dict[
     # inside tr() it is read as the miniscript fragment, as pkh() is
     "rawpkh": ((_TOP, _P2SH, _P2WSH, _P2TR), _parse_rawpkh),
 }
+
+# the names a refusal prints as they are, by `_label`: every function an
+# expression or a tr() leaf may call, and every miniscript fragment
+_NAMES = frozenset(_PARSERS) | frozenset(_LEAF_FUNCTIONS) | _MINISCRIPT_NAMES
 
 
 # the key fragments a ``c:`` over which BIP379 writes as a descriptor
@@ -4384,19 +4444,14 @@ _NOT_IN_P2SH = "A function is needed within P2SH"
 _MINISCRIPT_OUTSIDE = "Miniscript expressions can only be used in wsh or tr."
 
 
-# the longest text a refusal quotes where a name belongs, too short for a
-# key: section 7 of the organization's standard, "A refusal carries no secret"
-_QUOTED_NAME_SIZE = 16
-
-
 def _not_a_function(expression: str, where: str) -> str:
     """Return Core's refusal of an expression that is no descriptor function.
 
     Core quotes the expression, "'<expression>' is not a valid descriptor
     function". What its brackets enclose can hold a private key, so it is
     written "...", which leaves the name and any text after the closing
-    bracket. That is quoted where it is short enough to be a name, and
-    `where` names the expression otherwise.
+    bracket. That is quoted as `_quoted` quotes it where it is short
+    enough to be a name, and `where` names the expression otherwise.
     """
     shown = []
     depth = 0
@@ -4412,7 +4467,7 @@ def _not_a_function(expression: str, where: str) -> str:
         elif not depth:
             shown.append(char)
     name = "".join(shown)
-    named = where if len(name) > _QUOTED_NAME_SIZE else f"'{name}'"
+    named = where if len(name) > _QUOTED_MAX else _quoted(name)
     return f"{named} is not a valid descriptor function"
 
 
@@ -5534,7 +5589,7 @@ def _assert_provider(provider: Provider) -> None:
         assert_type(output_key, bytes, "taproot output key")
         assert_type(spend, tuple, "taproot spend data")
         if len(spend) != 3:
-            raise BTClibValueError(f"invalid taproot spend data: {len(spend)} items")
+            raise BTClibValueError(f"invalid taproot spend data: {_size(spend)} items")
         internal_key, merkle_root, leaf_scripts = spend
         assert_type(internal_key, bytes, "taproot internal key")
         assert_type(merkle_root, bytes, "taproot merkle root")
@@ -5551,7 +5606,7 @@ def _assert_provider(provider: Provider) -> None:
             assert_type(control, bytes, "control block")
             assert_type(leaf, tuple, "leaf script")
             if len(leaf) != 2:
-                raise BTClibValueError(f"invalid leaf script: {len(leaf)} items")
+                raise BTClibValueError(f"invalid leaf script: {_size(leaf)} items")
             assert_type(leaf[0], bytes, "leaf script")
             assert_type(leaf[1], int, "leaf version")
 
@@ -5716,7 +5771,8 @@ def _assert_policy_no_raw(descriptor: Descriptor) -> None:
     elif isinstance(descriptor, TrDescriptor) and descriptor.tree is not None:
         name = _raw_name_in(descriptor.tree)
     if name is not None:
-        err_msg = f"{name}() in a wallet policy: BIP388 has no template for it"
+        err_msg = f"{_label(name, _NAMES)}() in a wallet policy:"
+        err_msg += " BIP388 has no template for it"
         raise BTClibValueError(err_msg)
 
 
@@ -5754,7 +5810,7 @@ def _assert_policy_top_level(descriptor: Descriptor) -> None:
         )
         raise BTClibValueError(err_msg)
     if not isinstance(descriptor, _POLICY_TOP_LEVEL):
-        err_msg = f"{type(descriptor).__name__} is not a BIP388 SCRIPT expression"
+        err_msg = f"{_type_name(descriptor)} is not a BIP388 SCRIPT expression"
         raise BTClibValueError(err_msg)
 
 
@@ -5774,10 +5830,10 @@ def _assert_policy_wildcard(key: KeyExpression) -> None:
     reach is extended already, `_parse_musig`'s own rule.
     """
     if key.der_path:
-        err_msg = f"explicit derivation step before the wildcard: {key}"
+        err_msg = "explicit derivation step before the wildcard"
         raise BTClibValueError(err_msg)
     if key.wildcard != 0:
-        err_msg = f"not an unhardened wildcard, no wallet-policy placeholder: {key}"
+        err_msg = "not an unhardened wildcard, no wallet-policy placeholder"
         raise BTClibValueError(err_msg)
 
 
@@ -5800,7 +5856,7 @@ def _placeholder_index(
     return pool[identity]
 
 
-def _assert_distinct_participants(indexes: tuple[int, ...], musig: str) -> None:
+def _assert_distinct_participants(indexes: tuple[int, ...]) -> None:
     """Refuse a `musig()` naming the same key-information entry twice.
 
     BIP388's *Additional rules*: a placeholder is not allowed to repeat
@@ -5809,7 +5865,7 @@ def _assert_distinct_participants(indexes: tuple[int, ...], musig: str) -> None:
     one's.
     """
     if len(set(indexes)) != len(indexes):
-        err_msg = f"musig() repeats a participant: {musig}"
+        err_msg = "musig() repeats a participant"
         raise BTClibValueError(err_msg)
 
 
@@ -5837,18 +5893,19 @@ def _template_key(
     if key.participants:
         for participant in key.participants:
             if participant.der_path or participant.wildcard is not None:
-                err_msg = "derivation before aggregation is not allowed in a"
-                err_msg += f" wallet policy: {participant}"
+                err_msg = (
+                    "derivation before aggregation is not allowed in a wallet policy"
+                )
                 raise BTClibValueError(err_msg)
         _assert_policy_wildcard(key)
         indexes = tuple(
             _placeholder_index(participant, pool, key_info)
             for participant in key.participants
         )
-        _assert_distinct_participants(indexes, str(key))
+        _assert_distinct_participants(indexes)
         group = frozenset(indexes)
         if group in written:
-            err_msg = f"musig() placeholder used more than once: {key}"
+            err_msg = "musig() placeholder used more than once"
             raise BTClibValueError(err_msg)
         written.add(group)
         return replace(
@@ -5857,7 +5914,7 @@ def _template_key(
     _assert_policy_wildcard(key)
     index = _placeholder_index(key, pool, key_info)
     if index in written:
-        raise BTClibValueError(f"key expression used more than once: {key}")
+        raise BTClibValueError("a key expression used more than once")
     written.add(index)
     return KeyExpression(xkey=f"@{index}", wildcard=key.wildcard)
 
@@ -5906,11 +5963,11 @@ def _paired_chain_digits(
             or key.wildcard != 0
             or key.der_path[0] >= HARDENED_OFFSET
         ):
-            err_msg = f"not a receive/change chain step before the wildcard: {key}"
+            err_msg = "not a receive/change chain step before the wildcard"
             raise BTClibValueError(err_msg)
     recv, chg = recv_key.der_path[0], chg_key.der_path[0]
     if recv == chg:
-        err_msg = f"receive and change use the same chain step: {recv}"
+        err_msg = f"receive and change use the same chain step: {_quoted(recv)}"
         raise BTClibValueError(err_msg)
     return recv, chg
 
@@ -5976,29 +6033,30 @@ def _paired_key(
         ):
             for participant in (recv_participant, chg_participant):
                 if participant.der_path or participant.wildcard is not None:
-                    err_msg = "derivation before aggregation is not allowed in a"
-                    err_msg += f" wallet policy: {participant}"
+                    err_msg = (
+                        "derivation before aggregation is not allowed in a"
+                        " wallet policy"
+                    )
                     raise BTClibValueError(err_msg)
             if (recv_participant.origin, recv_participant.xkey) != (
                 chg_participant.origin,
                 chg_participant.xkey,
             ):
-                err_msg = "receive and change disagree on a musig() participant:"
-                err_msg += f" {recv_participant} / {chg_participant}"
+                err_msg = "receive and change disagree on a musig() participant"
                 raise BTClibValueError(err_msg)
             indexes.append(_placeholder_index(recv_participant, pool, key_info))
-        _assert_distinct_participants(tuple(indexes), str(recv_key))
+        _assert_distinct_participants(tuple(indexes))
         recv, chg = _paired_chain_digits(recv_key, chg_key)
         group = frozenset(indexes)
-        _assert_disjoint_pair(group, recv, chg, written, str(recv_key))
+        _assert_disjoint_pair(group, recv, chg, written, "a musig() placeholder")
         keys = ",".join(f"@{i}" for i in indexes)
         return f"musig({keys})/{_pair_suffix(recv, chg)}"
     if (recv_key.origin, recv_key.xkey) != (chg_key.origin, chg_key.xkey):
-        err_msg = f"receive and change disagree on a key: {recv_key} / {chg_key}"
+        err_msg = "receive and change disagree on a key"
         raise BTClibValueError(err_msg)
     recv, chg = _paired_chain_digits(recv_key, chg_key)
     index = _placeholder_index(recv_key, pool, key_info)
-    _assert_disjoint_pair(index, recv, chg, written, f"@{index}")
+    _assert_disjoint_pair(index, recv, chg, written, f"@{_position(index)}")
     return f"@{index}/{_pair_suffix(recv, chg)}"
 
 
@@ -6103,7 +6161,7 @@ _POLICY_MUSIG_GROUP = re.compile(rf"musig\({_POLICY_INDEX}(?:,{_POLICY_INDEX})*\
 def _assert_multipath_index(multipath_index: int) -> None:
     """Refuse anything but the two branches BIP388's cardinality allows."""
     if multipath_index not in (0, 1):
-        raise BTClibValueError(f"invalid multipath index: {multipath_index}")
+        raise BTClibValueError(f"invalid multipath index: {_quoted(multipath_index)}")
 
 
 def _assert_bare_key_info(key: KeyExpression) -> None:
@@ -6114,23 +6172,25 @@ def _assert_bare_key_info(key: KeyExpression) -> None:
     hands one back this way, and a caller building its own has to as well.
     """
     if key.der_path or key.wildcard is not None or key.participants:
-        raise BTClibValueError(f"not a bare key-information entry: {key}")
+        raise BTClibValueError("not a bare key-information entry")
 
 
 def _resolved_placeholder(
     match: re.Match[str], key_info: Sequence[KeyExpression], multipath_index: int
 ) -> str:
     """Return the text a wallet-policy placeholder and its suffix resolve to."""
-    try:
+    text = None
+    # refused after `suppress`, so that it chains nothing
+    with suppress(IndexError):
         if match["musig"] is not None:
             indexes = [int(token[1:]) for token in match["musig"].split(",")]
             keys = ",".join(str(key_info[i]) for i in indexes)
             text = f"musig({keys})"
         else:
             text = str(key_info[int(match["index"])])
-    except IndexError:
-        err_msg = f"key placeholder out of range: {match[0]}"
-        raise BTClibValueError(err_msg) from None
+    if text is None:
+        err_msg = f"key placeholder out of range: {_quoted(match[0])}"
+        raise BTClibValueError(err_msg)
     suffix = match["suffix"]
     if suffix == "/**":
         return f"{text}/{multipath_index}/*"

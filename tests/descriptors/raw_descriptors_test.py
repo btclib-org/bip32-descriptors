@@ -464,12 +464,12 @@ def test_raw_takes_whole_bytes_of_hex_only(script: str) -> None:
 @pytest.mark.parametrize(
     "script, message",
     [
-        ("\t00", r"^invalid descriptor character: '\\t'$"),
-        ("00\t11", r"^invalid descriptor character: '\\t'$"),
-        ("00\t", r"^invalid descriptor character: '\\t'$"),
-        ("\n00", r"^invalid descriptor character: '\\n'$"),
-        ("00\n11", r"^invalid descriptor character: '\\n'$"),
-        ("00\n", r"^invalid descriptor character: '\\n'$"),
+        ("\t00", r"^invalid descriptor character at position 4$"),
+        ("00\t11", r"^invalid descriptor character at position 6$"),
+        ("00\t", r"^invalid descriptor character at position 6$"),
+        ("\n00", r"^invalid descriptor character at position 4$"),
+        ("00\n11", r"^invalid descriptor character at position 6$"),
+        ("00\n", r"^invalid descriptor character at position 6$"),
     ],
 )
 def test_raw_refuses_a_tab_or_a_newline_before_reading_its_hex(

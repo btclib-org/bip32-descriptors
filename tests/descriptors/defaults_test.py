@@ -42,7 +42,7 @@ def test_a_wallet_policy_defaults_to_the_receive_branch() -> None:
 
 def test_a_placeholder_out_of_range_is_named_with_its_suffix() -> None:
     """The refusal quotes the placeholder as the template writes it."""
-    message = "key placeholder out of range: @1/**"
+    message = "key placeholder out of range: '@1/**'"
     with pytest.raises(BTClibValueError, match=f"^{re.escape(message)}$"):
         wallet_policy_descriptor("pkh(@1/**)", KEY_INFO)
 

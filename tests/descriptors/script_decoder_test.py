@@ -29,9 +29,9 @@ K = [PrvKeyData(i).pub.sec.hex() for i in range(1, 3)]
     [
         # one byte pushed by OP_PUSHDATA1, OP_PUSHDATA2 and OP_PUSHDATA4:
         # the length after the op code is one, two and four bytes long
-        ("4c01aa", "non-minimal push of 1 bytes: op code 0x4c"),
-        ("4d0100aa", "non-minimal push of 1 bytes: op code 0x4d"),
-        ("4e01000000aa", "non-minimal push of 1 bytes: op code 0x4e"),
+        ("4c01aa", "non-minimal push of 1 bytes: op code an int of 7 bits"),
+        ("4d0100aa", "non-minimal push of 1 bytes: op code an int of 7 bits"),
+        ("4e01000000aa", "non-minimal push of 1 bytes: op code an int of 7 bits"),
     ],
 )
 def test_a_pushdata_op_code_is_read_with_its_data(script: str, message: str) -> None:
@@ -42,7 +42,7 @@ def test_a_pushdata_op_code_is_read_with_its_data(script: str, message: str) -> 
 
 def test_an_op_code_below_op_endif_closes_no_fragment() -> None:
     """OP_NOP sorts below OP_ENDIF and is no OP_ENDIF."""
-    message = "not a miniscript: op code 0x61 closes no fragment"
+    message = "not a miniscript: op code an int of 7 bits closes no fragment"
     with pytest.raises(BTClibValueError, match=f"^{re.escape(message)}$"):
         from_script("61")
 
@@ -55,7 +55,7 @@ def test_a_hash160_comparison_without_op_dup_is_no_pk_h() -> None:
     where five op codes are left, and refuses the script as one that
     closes no fragment.
     """
-    message = "not a miniscript: op code 0x87 closes no fragment"
+    message = "not a miniscript: op code an int of 8 bits closes no fragment"
     with pytest.raises(BTClibValueError, match=f"^{re.escape(message)}$"):
         from_script("a914" + "00" * 20 + "88")
 
