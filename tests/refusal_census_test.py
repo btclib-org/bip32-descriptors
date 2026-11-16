@@ -23,9 +23,11 @@ It reads as an exception the package builds each call of a name ending in
 an import binds to such a class or to a class of the package that may be
 an exception: one deriving, through classes of the package, from a base
 that is neither one of them nor one of `_PLAIN_BASES`. A parameter of the
-name, of any kind, binds it to what a caller passes, and a call of it is
-not read as building one. It reads the exception of each `raise` too, but
-not what a function of the package returns, nor the exception an `except`
+name, of any kind, binds it to what a caller passes: a call of it is read
+as building one where its default is such a class, or what a call of the
+package passes there, read as for a parameter below, or where such a call
+unpacks its arguments. It reads the exception of each `raise` too, but not
+what a function of the package returns, nor the exception an `except`
 around the `raise` binds, nor a name each value of which its scope assigns
 is `None`, such a call, or a call of a function of the package each of
 whose `return`s is one; a bare annotation assigns it nothing. Every
@@ -774,14 +776,22 @@ class _Census:
             current = module.parents.get(current)
         return False
 
-    def _builds_exception(self, func: ast.expr, module: _Module) -> bool:
+    def _builds_exception(
+        self,
+        func: ast.expr,
+        module: _Module,
+        seen: frozenset[tuple[int, str]] = frozenset(),
+    ) -> bool:
         """Return whether a callee is an exception class or a name bound to one.
 
         A name ending in `Error` or `Exception`, or a name a `class`
         statement, an assignment or an import binds to such a name or to an
         exception class of the package, as `_exception_classes` finds them.
         A parameter of the name, of any kind, binds it to what a caller
-        passes, which the outer scopes do not say: it is not taken for one.
+        passes, which the outer scopes do not say: it is one where its
+        default, or what a call of the package passes there, is one, as
+        `_passed` reads them, or where a call unpacks what it passes, and
+        otherwise is not taken for one.
         """
         name = _called_name(func) or ""
         if name.endswith(("Error", "Exception")):
@@ -792,13 +802,63 @@ class _Census:
             if isinstance(scope, _FUNCTION) and any(
                 arg.arg == name for arg in _arguments(scope)
             ):
-                return False
+                if (id(scope), name) in seen:
+                    return False
+                passed = self._passed(scope, name, module)
+                return passed is None or any(
+                    self._builds_exception(value, caller, seen | {(id(scope), name)})
+                    for caller, value in passed
+                )
             if any(
                 self._binds_exception(binding, name)
                 for binding in self._scope_nodes(scope)
             ):
                 return True
         return False
+
+    def _passed(
+        self, func: ast.AST, name: str, module: _Module
+    ) -> list[tuple[_Module, ast.expr]] | None:
+        """Return a parameter's default and what the package's calls pass.
+
+        The calls are read as `_parameter` reads them: of a private
+        function, to a parameter neither starred nor a method's own object;
+        None where one unpacks what it passes. A parameter of a public
+        function or of a lambda, or of a function read as a value, has its
+        default alone.
+        """
+        arg = next(arg for arg in _arguments(func) if arg.arg == name)
+        func_args: ast.arguments = func.args  # type: ignore[attr-defined]
+        positional = [*func_args.posonlyargs, *func_args.args]
+        bound = bool(positional) and positional[0].arg in {"self", "cls"}
+        defaults: dict[ast.arg, ast.expr | None] = dict(
+            zip(
+                positional[len(positional) - len(func_args.defaults) :],
+                func_args.defaults,
+                strict=True,
+            )
+        )
+        defaults |= zip(func_args.kwonlyargs, func_args.kw_defaults, strict=True)
+        default = defaults.get(arg)
+        found = [] if default is None else [(module, default)]
+        if (
+            not _private(getattr(func, "name", ""))
+            or arg in {func_args.vararg, func_args.kwarg}
+            or (bound and arg is positional[0])
+            or id(func) in self.reads
+        ):
+            return found
+        for caller, call in self.calls.get(id(func), []):
+            if _unpacks(call):
+                return None
+            found.extend((caller, k.value) for k in call.keywords if k.arg == name)
+            if arg in positional:
+                position = positional.index(arg)
+                if bound and isinstance(call.func, ast.Attribute):
+                    position -= 1
+                if 0 <= position < len(call.args):
+                    found.append((caller, call.args[position]))
+        return found
 
     def _binds_exception(self, binding: ast.AST, name: str) -> bool:
         """Return whether a binding binds a name to an exception class."""
@@ -3054,6 +3114,72 @@ _SHAPES = {
     "class of the package a double-starred parameter shadows": (
         "class Refused(Exception):\n    pass\ndef f(key):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
         "class Refused(Exception):\n    pass\ndef f(key, **Refused):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
+    ),
+    "exception class bound by assignment that a call passes to a parameter": (
+        (
+            "Refused = ValueError\ndef _make(key, Refused):\n"
+            "    return Refused('a')\ndef f(key):\n    raise _make(key, Refused)"
+        ),
+        (
+            "Refused = ValueError\ndef _make(key, Refused):\n"
+            "    return Refused(key)\ndef f(key):\n    raise _make(key, Refused)"
+        ),
+    ),
+    "exception class of the package every call passes to a parameter": (
+        (
+            "class Refused(Exception):\n    pass\ndef _make(Refused, key):\n    return Refused('a')\n"
+            "def f(key):\n    raise _make(Refused, key)"
+        ),
+        (
+            "class Refused(Exception):\n    pass\ndef _make(Refused, key):\n    return Refused(key)\n"
+            "def f(key):\n    raise _make(Refused, key)"
+        ),
+    ),
+    "exception class a parameter takes by default": (
+        "class Refused(Exception):\n    pass\ndef f(key, Refused=Refused):\n    return Refused('a')",
+        "class Refused(Exception):\n    pass\ndef f(key, Refused=Refused):\n    return Refused(key)",
+    ),
+    "exception class a call passes to a keyword-only parameter": (
+        (
+            "Refused = ValueError\ndef _make(key, *, kind):\n    return kind('a')\n"
+            "def f(key):\n    raise _make(key, kind=Refused)"
+        ),
+        (
+            "Refused = ValueError\ndef _make(key, *, kind):\n    return kind(key)\n"
+            "def f(key):\n    raise _make(key, kind=Refused)"
+        ),
+    ),
+    "exception class a call may pass by unpacking": (
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n    return kind('a')\n"
+            "def f(key):\n    raise _make(*(key, Refused))"
+        ),
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n    return kind(key)\n"
+            "def f(key):\n    raise _make(*(key, Refused))"
+        ),
+    ),
+    "exception class a call passes to a method's parameter": (
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\n    def f(self, key):\n"
+            "        raise self._make(key, Refused)"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\n    def f(self, key):\n"
+            "        raise self._make(key, Refused)"
+        ),
+    ),
+    "exception class a parameter a call leaves takes by default": (
+        (
+            "Refused = ValueError\ndef _make(key, kind=Refused):\n    return kind('a')\n"
+            "def f(key):\n    raise _make(key)"
+        ),
+        (
+            "Refused = ValueError\ndef _make(key, kind=Refused):\n    return kind(key)\n"
+            "def f(key):\n    raise _make(key)"
+        ),
     ),
     "exception handed to a function that raises it": (
         (
