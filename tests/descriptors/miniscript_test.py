@@ -1083,6 +1083,32 @@ def test_each_context_reads_its_own_keys_and_fragments() -> None:
         from_script(f"21{KEY}ac", TAPSCRIPT)
 
 
+# the generator in its uncompressed form, cut to the lengths a tapscript
+# key is not
+G = bytes.fromhex(
+    "0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    "483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"
+)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [G[1:32], b"\x02" + G[1:33], G[1:], G],
+    ids=lambda key: f"{len(key)} bytes",
+)
+def test_a_supplied_tapscript_key_is_refused_by_its_own_length(key: bytes) -> None:
+    """Refuse a pk_h() key of the wrong length by the length it has.
+
+    The even-y lift puts a byte before what it is given, so the length is
+    checked before it, as a pushed key's is, and the refusal names the
+    bytes the caller supplied.
+    """
+    script = b"\x76\xa9\x14" + hash160(key) + b"\x88\xac"
+    message = f"^not a tapscript public key: {len(key)} bytes$"
+    with pytest.raises(BTClibValueError, match=message):
+        from_script(script, TAPSCRIPT, {hash160(key): key})
+
+
 def test_a_tapscript_key_is_x_only_both_ways() -> None:
     """Write 32 bytes and read them back as the key they lift to."""
     node = parse(f"pk({KEY})", TAPSCRIPT)
