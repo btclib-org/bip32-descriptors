@@ -52,9 +52,11 @@ long after the branch is gone.
 
 ## Working with an LLM
 
-**Development here is LLM-based.** Most issues, code and reviews are
-written by agentic sessions that the maintainer directs and reads.
-Humans are welcome, as long as they are comfortable working that way.
+**Your agents are welcome.** Use them to solve the open issues and to
+review the open pull requests. There is no cap on how many pull requests
+you open, and no rule to disclose an agent's part: every change is held
+to the same review, whoever or whatever wrote it, as the rest of this
+file and `REVIEWING.md` say.
 
 **A contribution is yours, whoever wrote it.** Read every line before
 you open the pull request, understand it, and be ready to answer a
@@ -142,9 +144,12 @@ It is opened the moment it is written and verified — not held for the
 previous one to be reviewed or to land, and not batched with the next. A
 batch arrives as one reviewing job with several subjects, which is the
 shape that costs the most to read; a finished pull request held back is
-review that could have started and did not. A security advisory's fix is
-the exception, held back as [section 12][s12]'s *A security advisory is
-worked in this order* says.
+review that could have started and did not. A port of the standard is
+one subject: one pull request per tree, holding every change to the
+standard landed since that tree's last port. Its review asks one
+question: does each copy now match the standard's source? A security
+advisory's fix is the exception, held back as [section 12][s12]'s *A
+security advisory is worked in this order* says.
 
 Working this way stacks branches, which is fine and costs one rule: a
 child whose base was amended is moved with the old base named,
@@ -198,11 +203,10 @@ has seen.
 
 When `main`'s CI is red after a merge, its repair takes priority over
 every other pull request, because until it lands `main`'s runs cannot
-tell a new failure from the one already there. A pull request armed with
-`--auto` (below) stays armed, and others keep landing meanwhile. Holding
-every landing for a repair costs more than the break it guards against,
-so the risk of landing on a red `main` is accepted
-(btclib-org/.github#1777).
+tell a new failure from the one already there. Other pull requests keep
+landing meanwhile. Holding every landing for a repair costs more than
+the break it guards against, so the risk of landing on a red `main` is
+accepted (btclib-org/.github#1777).
 
 A pull request whose required check is red only because `main` was red
 is closed and reopened once the repair lands (`gh pr close <n>`, then
@@ -213,9 +217,8 @@ run's log is read before the run is relied on: its line `HEAD is now at
 <sha> Merge <head> into <base>` names the merge it tested, and where
 `<base>` lacks the repair, the pull request is closed and reopened
 again. No push is made, so its approvals and its ack of record stand.
-Closing disarms `--auto`, so it is armed again once the checks are
-green. The reopen also runs the review bot again, and changes that
-review requests are answered like any other review's.
+The reopen also runs the review bot again, and changes that review
+requests are answered like any other review's.
 
 Then squash, [the only method the rule accepts][s11].
 
@@ -226,8 +229,38 @@ head**, through `gh pr merge` pinned to it:
 gh pr merge <n> --squash --match-head-commit <the head the checks ran on>
 ```
 
-With `--auto` added, GitHub runs the same merge once the approval and
-the checks are in.
+Whoever approved it runs that merge, or a session on the maintainer's
+word. Auto-merge is off, so no pull request can be armed, for the reason
+[section 11's *Merge method*][s11] gives.
+
+**A release can hold the landing.** Before every merge, these two read
+the repository `gh` resolves, from `GH_REPO` where it is set and from the
+checkout otherwise, and its open or merged pull requests carrying
+`release-hold`:
+
+```shell
+gh api 'repos/{owner}/{repo}' --jq .full_name
+```
+
+```shell
+gh api --paginate \
+  'repos/{owner}/{repo}/issues?labels=release-hold&state=all&per_page=100' \
+  --jq '.[] | select(.pull_request)
+    | select(.state == "open" or .pull_request.merged_at != null)
+    | {number, state, merged: .pull_request.merged_at}'
+```
+
+The first must print the tree's own `owner/name`. The second reads every
+page and prints one line per hold, so where it prints nothing there is
+no hold, and each line it prints is read as a publishing tree's
+`RELEASING.md` says in *Release to PyPI*. A nonzero exit of either, as
+the `404` of a repository that does not exist, is an error, and the
+merge waits until both answer.
+
+The check and the merge are two calls, and none of the [rules a GitHub
+ruleset offers][rulesets] reads a label, so a label put on between them
+does not stop the merge. Until the release merges, its own check that
+`main` has not moved catches such a merge, as *Release to PyPI* says.
 
 **Where the repository has a bypass, the maintainer may land without
 that approval, through it**: [`GOVERNANCE.md`][governance]'s *How a
@@ -285,6 +318,7 @@ settings and why they are what they are.
 [s-sigs]: https://github.com/btclib-org/.github#signatures
 [s-branch]: https://github.com/btclib-org/.github#branch-protection-and-rulesets
 [dco]: https://developercertificate.org/
+[rulesets]: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets
 [governance]: https://github.com/btclib-org/.github/blob/main/GOVERNANCE.md
 [roadmap]: https://github.com/btclib-org/.github/blob/main/ROADMAP.md
 [good-first]: https://github.com/search?q=org%3Abtclib-org+label%3A%22good+first+issue%22+is%3Aopen&type=issues
@@ -358,6 +392,24 @@ the package composes internally. `bip32_descriptors.bip32` is the shape to
 copy: `derive` validates and calls `_derive`, which does not, and
 `key_data_from_bip32_key` is the one place a `BIP32Key` of any spelling
 becomes a validated `BIP32KeyData`.
+
+**An object a field of which `object.__setattr__` set after its build is
+outside that rule.** `object.__setattr__` sets a field a frozen dataclass
+refuses to set, and the package calls it only inside an `__init__` or a
+`__post_init__`. A reader held to such a field would have to ask every
+field it reads again, at each read.
+
+**An object `pickle.loads` restores through `__setstate__` is asked as
+its build asks it**, by the `__setstate__` of a `Descriptor`, a
+`Miniscript` node, a `KeyExpression`, a `MultiA`, a `RawLeaf`, a `RawNode`
+and a `BIP32KeyOrigin`, each of which says what it refuses: a field
+`__init__` takes is refused where its build refuses it, and one the build
+computes is computed again, whatever the pickle holds for it.
+`tests/descriptors/pickle_test.py` and `tests/bip32/key_origin_test.py`
+hold the cases. A pickle with no state never calls `__setstate__`, at any
+protocol: the default pickling writes one for an object with no field
+set, such as `object.__new__(RawNode)`, and `pickle.loads` restores it
+with no fields. That object is outside this rule.
 
 **A refusal of ecc's own leaves as that package's class.** The curve
 arithmetic and the schemes on it are ecc's (btclib-org/btclib#2282),
@@ -438,6 +490,12 @@ and `fail_under` is what it answers against — 100%, and coverage takes
 that literally: a statement or a branch no test reaches fails it. A
 selective run is reported and not gated, and `tests/conftest.py`'s
 `coverage_fail_under` is what makes that difference.
+
+Beyond that floor, new or changed functionality must come with tests of its
+own, added or updated in the same pull request, and a fix must come with a
+test that fails without the fix. Coverage shows that a line ran, not that
+anything checked what it did, and a test that passes without the fix proves
+nothing about it.
 
 The documentation build is the one to remember, because no hook reads
 reStructuredText: a docstring docutils cannot parse fails it with every

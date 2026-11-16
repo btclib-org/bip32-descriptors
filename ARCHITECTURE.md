@@ -19,6 +19,9 @@ with what it knows -- scripts, keys, key origins, the taproot tree --
 and writes nothing into a transaction or a psbt: that is btclib-wallet's
 psbt updater.
 
+`compiler` compiles a spending policy to the miniscript that enforces
+it, and imports `key_expression` and `miniscript`.
+
 `__init__` imports no module of the package: it loads one when it is
 first asked for.
 

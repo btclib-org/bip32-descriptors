@@ -2297,7 +2297,7 @@ def test_a_path_step_holds_no_whitespace() -> None:
     key_expression = parse(f"pkh([deadbeef/0h]{XPUB}/0)").key_expressions[0]
     assert key_expression.der_path == (0,)
     assert key_expression.origin is not None
-    assert key_expression.origin.der_path == [0x80000000]
+    assert key_expression.origin.der_path == (0x80000000,)
 
 
 def test_a_key_holds_no_whitespace() -> None:
@@ -2442,7 +2442,7 @@ def test_a_slash_introduces_a_path_step() -> None:
         assert str(parse(descriptor)).partition("#")[0] == descriptor
     # the lenient reading of a key origin drops an empty step, where the
     # descriptor parser holds the path to BIP380
-    assert BIP32KeyOrigin.from_description("deadbeef/").der_path == []
+    assert BIP32KeyOrigin.from_description("deadbeef/").der_path == ()
 
 
 def test_key_origin_is_kept() -> None:
@@ -4055,9 +4055,9 @@ def test_the_missing_keys_are_named() -> None:
 def test_only_a_script_is_embeddable() -> None:
     """The wrappers have no stack of their own to be embedded with.
 
-    `parse`, and ``wsh()`` when built, refuse `wsh(tr())` and every other
-    such pair, so this is reachable only by a descriptor that skipped its
-    build, as an unpickled one does.
+    `parse`, and ``wsh()`` when built, refuse `wsh(tr())` and every
+    other such pair, so this is reachable only by a descriptor that
+    escaped its build, as a forged one does.
     """
     inner = parse(f"tr({XONLY_A})")
     with pytest.raises(BTClibValueError, match=r"^tr\(\) is not allowed inside wsh"):
@@ -5241,9 +5241,10 @@ def test_a_redeem_script_over_520_bytes_is_refused(
 def test_an_unpickled_sh_over_520_bytes_has_no_spend() -> None:
     """`satisfy` refuses as `script_pub_key` does: no spend without an output.
 
-    Sixteen keys make the 547-byte redeem script the parser refuses above,
-    and so does `ShDescriptor` when built. Unpickling skips that refusal,
-    so the descriptor is an unpickled one given the keys.
+    Sixteen keys make the 547-byte redeem script the parser refuses
+    above, and so does `ShDescriptor` when built. `object.__setattr__`
+    skips that refusal, so the descriptor is an unpickled one given the
+    keys.
     """
     multi = MultiDescriptor(
         1,

@@ -19,6 +19,61 @@ behind them.
 
 [std]: https://github.com/btclib-org/.github
 
+## v2026.11.14
+
+### A hand-built raw() refuses an empty script
+
+`RawDescriptor(b"")` is refused with `parse`'s message, and `sh()` and
+`wsh()` refuse an unpickled one (closes #282).
+
+### tr() and rawtr() refuse more unpickled musig() participants and fields
+
+A participant that is x-only, uncompressed, a `musig()` or no
+`KeyExpression` (closes #300), and a field of the `musig()`'s own
+(closes #321).
+
+### tr() refuses an unpickled multi_a() leaf of a k or n parse refuses
+
+Its k and its number of keys are refused where `parse` refuses them
+(closes #313).
+
+### A bare miniscript refuses a multisig of no key beside an uncompressed key
+
+Unpickled, and a forged node above a multisig of too many keys there
+(closes #302) (closes #305).
+
+### A number parse cannot read in a miniscript older, after, thresh or multisig
+
+Is refused, built or unpickled, a `MultiA`'s k included.
+Another node refuses one past ten digits unquoted, and no refusal quotes
+a number of the size of a private key (issue #313).
+
+### Mutation testing
+
+The descriptors profile is split into shards that partition its
+mutants (issue #50).
+
+### The bestpractices.dev answers
+
+They cite v2026.11.13 (issue #304), and they and `REPOSITORY.md` record
+the maintainer's bypass on `main-self-merge`
+(issue btclib-org/.github#2212).
+
+### AGENTS.md and CONTRIBUTING.md
+
+AGENTS.md points at `REVIEWING.md` under *Code Review Rules*
+(issue btclib-org/.github#2009), and CONTRIBUTING.md prescribes no
+checkout layout (issue btclib-org/.github#2263).
+
+### prettier
+
+It leaves `.pre-commit-config.yaml` to pre-commit.ci
+(issue btclib-org/.github#2038).
+
+### The lock
+
+soupsieve moves, past the advisory `uv audit` reported (closes #315).
+
 ## v2026.11.13
 
 ### BIP32KeyData reads a key's scalar and point; point_from_xkey is new
