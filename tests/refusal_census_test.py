@@ -23,16 +23,17 @@ It reads as an exception the package builds each call of a name ending in
 an import binds to such a class or to a class of the package that may be
 an exception: one deriving, through classes of the package, from a base
 that is neither one of them nor one of `_PLAIN_BASES`. A parameter of the
-name, of any kind, binds it to what a caller passes: a call of it is read
-as building one where its default is such a class, or what a call of the
-package passes there, read as for a parameter below, or where such a call
-unpacks its arguments. It reads the exception of each `raise` too, but not
-what a function of the package returns, nor the exception an `except`
-around the `raise` binds, nor a name each value of which its scope assigns
-is `None`, such a call, or a call of a function of the package each of
-whose `return`s is one; a bare annotation assigns it nothing. Every
-argument of each has to be traced to values a refusal may print, and what
-the census cannot trace is a finding. It traces
+name, of any kind, binds it to what a caller passes: a call of it is a
+site, whose arguments are traced, where its default or what a call of the
+package passes there, read as for a parameter below, is such a class, or
+where such a call unpacks its arguments; what it builds is taken for an
+exception only where every one of them is. It reads the exception of each
+`raise` too, but not what a function of the package returns, nor the
+exception an `except` around the `raise` binds, nor a name each value of
+which its scope assigns is `None`, such a call, or a call of a function of
+the package each of whose `return`s is one; a bare annotation assigns it
+nothing. Every argument of each has to be traced to values a refusal may
+print, and what the census cannot trace is a finding. It traces
 
 - a literal, a comparison, a name bound by a `def`, a `class` or an
   import but one of `_PROCESS_INPUT`, a builtin of `_PURE_BUILTINS` or
@@ -709,7 +710,7 @@ class _Census:
                     ):
                         found[id(node)] = (module, node, [node.exc])
                 elif isinstance(node, ast.Call) and self._builds_exception(
-                    node.func, module
+                    node.func, module, maybe=True
                 ):
                     found[id(node)] = (module, node, _values(node))
         return sorted(
@@ -781,6 +782,8 @@ class _Census:
         func: ast.expr,
         module: _Module,
         seen: frozenset[tuple[int, str]] = frozenset(),
+        *,
+        maybe: bool = False,
     ) -> bool:
         """Return whether a callee is an exception class or a name bound to one.
 
@@ -789,9 +792,10 @@ class _Census:
         exception class of the package, as `_exception_classes` finds them.
         A parameter of the name, of any kind, binds it to what a caller
         passes, which the outer scopes do not say: it is one where its
-        default, or what a call of the package passes there, is one, as
-        `_passed` reads them, or where a call unpacks what it passes, and
-        otherwise is not taken for one.
+        default and what every call of the package passes there are, as
+        `_passed` reads them. With `maybe` it may be one, and its arguments
+        are traced: where any of them is, or where a call unpacks what it
+        passes. Otherwise it is not taken for one.
         """
         name = _called_name(func) or ""
         if name.endswith(("Error", "Exception")):
@@ -802,19 +806,36 @@ class _Census:
             if isinstance(scope, _FUNCTION) and any(
                 arg.arg == name for arg in _arguments(scope)
             ):
-                if (id(scope), name) in seen:
-                    return False
-                passed = self._passed(scope, name, module)
-                return passed is None or any(
-                    self._builds_exception(value, caller, seen | {(id(scope), name)})
-                    for caller, value in passed
-                )
+                return self._parameter_builds(scope, name, module, seen, maybe=maybe)
             if any(
                 self._binds_exception(binding, name)
                 for binding in self._scope_nodes(scope)
             ):
                 return True
         return False
+
+    def _parameter_builds(
+        self,
+        func: ast.AST,
+        name: str,
+        module: _Module,
+        seen: frozenset[tuple[int, str]],
+        *,
+        maybe: bool,
+    ) -> bool:
+        """Return whether a parameter holds an exception class, or may."""
+        if (id(func), name) in seen:
+            return False
+        passed = self._passed(func, name, module)
+        if passed is None:
+            return maybe
+        held = [
+            self._builds_exception(
+                value, caller, seen | {(id(func), name)}, maybe=maybe
+            )
+            for caller, value in passed
+        ]
+        return any(held) if maybe else bool(held) and all(held)
 
     def _passed(
         self, func: ast.AST, name: str, module: _Module
@@ -830,7 +851,7 @@ class _Census:
         arg = next(arg for arg in _arguments(func) if arg.arg == name)
         func_args: ast.arguments = func.args  # type: ignore[attr-defined]
         positional = [*func_args.posonlyargs, *func_args.args]
-        bound = bool(positional) and positional[0].arg in {"self", "cls"}
+        bound = _method(func, module) and positional[0].arg in {"self", "cls"}
         defaults: dict[ast.arg, ast.expr | None] = dict(
             zip(
                 positional[len(positional) - len(func_args.defaults) :],
@@ -1895,7 +1916,7 @@ class _Census:
         origin = f"{module.where(arg)} parameter {name} of {func_name}"
         func_args: ast.arguments = func.args  # type: ignore[attr-defined]
         positional = [*func_args.posonlyargs, *func_args.args]
-        bound = bool(positional) and positional[0].arg in {"self", "cls"}
+        bound = _method(func, module) and positional[0].arg in {"self", "cls"}
         if not _private(func_name) or arg in {func_args.vararg, func_args.kwarg}:
             leaves.append(origin)
             return
@@ -1936,6 +1957,12 @@ class _Census:
                     passed.append(call.args[position])
             for value in passed:
                 self._visit(value, caller, leaves, keys)
+
+
+def _method(func: ast.AST, module: _Module) -> bool:
+    """Return whether a function is a method: one a class body defines."""
+    positional = [*func.args.posonlyargs, *func.args.args]  # type: ignore[attr-defined]
+    return bool(positional) and isinstance(module.parents.get(func), ast.ClassDef)
 
 
 def _unpacks(call: ast.Call) -> bool:
@@ -3179,6 +3206,38 @@ _SHAPES = {
         (
             "Refused = ValueError\ndef _make(key, kind=Refused):\n    return kind(key)\n"
             "def f(key):\n    raise _make(key)"
+        ),
+    ),
+    "call of a parameter whose result a refusal prints, a call unpacking": (
+        (
+            "class Refused(Exception):\n    pass\ndef _make(kind):\n    return kind('a')\n"
+            "def f():\n    raise ValueError(_make(Refused))"
+        ),
+        (
+            "class Refused(Exception):\n    pass\ndef _make(kind):\n    return kind('a')\n"
+            "def f(kind):\n    raise ValueError(_make(*(kind,)))"
+        ),
+    ),
+    "call of a parameter whose result a refusal prints, one call a class": (
+        (
+            "class Refused(Exception):\n    pass\ndef _make(kind):\n    return kind('a')\n"
+            "def f():\n    raise ValueError(_make(Refused))\n"
+            "def g():\n    raise _make(Refused)"
+        ),
+        (
+            "class Refused(Exception):\n    pass\ndef _make(kind):\n    return kind('a')\n"
+            "def f(kind):\n    raise ValueError(_make(kind))\n"
+            "def g():\n    raise _make(Refused)"
+        ),
+    ),
+    "exception class passed to a function's parameter named cls": (
+        (
+            "class Refused(Exception):\n    pass\ndef _make(cls, key):\n    return cls('a')\n"
+            "def f(key):\n    raise _make(Refused, key)"
+        ),
+        (
+            "class Refused(Exception):\n    pass\ndef _make(cls, key):\n    return cls(key)\n"
+            "def f(key):\n    raise _make(Refused, key)"
         ),
     ),
     "exception handed to a function that raises it": (
