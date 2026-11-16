@@ -2774,21 +2774,6 @@ def test_the_keys_of_a_multi_are_refused_before_its_function(
         wrap(multi)
 
 
-# keyword-only: `script` would follow the default of `sort`
-@dataclass(frozen=True, kw_only=True)
-class _RawThenMulti(RawDescriptor, MultiDescriptor):
-    """A ``raw()`` that holds the fields of a ``multi()`` too."""
-
-    script: bytes
-
-
-@dataclass(frozen=True, kw_only=True)
-class _MultiThenRaw(MultiDescriptor, RawDescriptor):
-    """A ``multi()`` that holds the field of a ``raw()`` too."""
-
-    script: bytes
-
-
 @pytest.mark.parametrize(
     "wrapper,keys,refusal",
     [
@@ -2813,13 +2798,13 @@ def test_a_raw_holding_multi_fields_is_wrapped_as_the_raw_it_writes(
 
     Issue btclib-org/bip32-descriptors#337.
     """
-    raw = _RawThenMulti(1, keys, script=b"\x51")
+    raw = _RawThenMulti(threshold=1, keys=keys, script=b"\x51")
     assert str(raw) == "raw(51)"
     wrapped = wrapper(raw)
     expected = wrapper(RawDescriptor(b"\x51"))
     assert str(wrapped) == str(expected)
     assert wrapped.script_pub_key().script == expected.script_pub_key().script
-    multi = _MultiThenRaw(1, keys, script=b"\x51")
+    multi = _MultiThenRaw(threshold=1, keys=keys, script=b"\x51")
     assert str(multi) == str(MultiDescriptor(1, keys))
     with pytest.raises(BTClibValueError, match=f"^{re.escape(refusal)}$"):
         wrapper(multi)
