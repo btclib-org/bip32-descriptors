@@ -612,13 +612,6 @@ def test_a_pkh_leaf_of_a_provider_key_of_no_compressed_prefix_is_a_rawleaf() -> 
     assert infer_descriptor(script, known, "regtest") == unknown
 
 
-class _FalseBytes(bytes):
-    """Bytes that are false, whatever they hold."""
-
-    def __bool__(self) -> bool:
-        return False
-
-
 @pytest.mark.parametrize("text", [f"pkh({K1})", f"wpkh({K1})", f"tr({X34},pkh({K1}))"])
 def test_a_provider_key_that_is_false_infers_as_its_bytes(text: str) -> None:
     """A key is read by its bytes, not by its truth.
