@@ -19,6 +19,107 @@ behind them.
 
 [std]: https://github.com/btclib-org/.github
 
+## v2026.11.17
+
+### A descriptor's spending paths
+
+`Descriptor.spending_paths` and `Miniscript.spending_paths` list the
+ways a script can be spent, each a `SpendingPath` of `Quorum` keys,
+lock times, hash locks and `tr()` leaf (closes #356).
+
+### spending_paths is bounded on what a call reads
+
+On the pairs a conjunction reads (closes #365), on the whole call, a
+`tr()`'s leaves together (closes #367) (closes #374), and, in a test, on
+a disjunction's quorum hashes on every interpreter (closes #370).
+
+### spending_paths merges and prunes as its docstring says
+
+Merging tries each one-of quorum of the same hash (closes #366), and
+the path bound can refuse a `thresh()` that mixes lock times
+(closes #364).
+
+### A policy compiler
+
+`descriptors.compiler.compile_policy` ports sipa/miniscript's policy
+compiler, its search bounded on nesting, depth and steps (closes #357)
+(closes #372).
+
+### Refusals print no refused value
+
+A refusal the package writes prints no key, xkey, script, prefix,
+version, fingerprint, miniscript or caught text, and an int by its bits;
+`tests/refusal_census_test.py` holds the rule (issue #390).
+
+### A key's refusal names the length the caller gave
+
+A public key refused for its prefix by its size (closes #342), and a
+tapscript `pk_h()` key `key_hashes` supplies by its length
+(closes #385).
+
+### A pickle is checked as its build checks it
+
+`pickle.loads` runs the build's checks, and a `KeyExpression` refuses
+an origin of another type (closes #363).
+
+### BIP32KeyOrigin holds its path as a tuple
+
+So the hash of a spending path holding it cannot go stale
+(closes #378).
+
+### More is refused when built
+
+A `RawLeaf` with an empty script, a `RawNode` not of 32 bytes
+(closes #331), and an `AddrDescriptor` of an address `parse` refuses
+(closes #332).
+
+### Bytes are read by what they hold
+
+A bytes subclass is read by its bytes, not by its truth or its
+`len()`: in `infer_descriptor`'s provider, `rawpkh()` and `raw()`
+(closes #339) (closes #346), and as a public key (closes #345).
+
+### sh() wraps a raw() holding multi() fields as the raw()
+
+A class deriving from `RawDescriptor` before `MultiDescriptor` is no
+longer refused for the size of the `multi()` script it does not write
+(closes #337).
+
+### BIP 379's limits
+
+Tests only: each limit vector at its bound (closes #376).
+
+### Two parities of one x coordinate
+
+Tests only: Bitcoin Core's cases, in a tapscript and in P2WSH, and the
+whole refusal of an index on a descriptor not ranged (closes #396).
+
+### Workflows
+
+The suite runs on every push to `main`, each push run in a concurrency
+group of its own (issue btclib-org/.github#2277). The merge is explicit
+and auto-merge is off (issue btclib-org/.github#2272).
+
+### Mutation testing
+
+The descriptors profile has a shard for the policy compiler.
+
+### The standard's copies
+
+CONTRIBUTING.md, REVIEWING.md, RELEASING.md, AGENTS.md, README.md and
+REPOSITORY.md take the standard's text, RELEASING.md's `release-hold`
+step included.
+
+### SECURITY.md
+
+A flaw that lets funds be stolen, lost or locked belongs here.
+
+### The bestpractices.dev answers
+
+They follow each criterion's text, and count published advisories and
+the issues of the kinds SECURITY.md names
+(issue btclib-org/.github#2318).
+
 ## v2026.11.14
 
 ### A hand-built raw() refuses an empty script
