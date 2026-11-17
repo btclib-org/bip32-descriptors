@@ -842,6 +842,30 @@ pulled  2026-11-15
 behind  0 revisions; that commit is the tip of the path
 ```
 
+```text
+repo    sipa/miniscript
+path    main.cpp
+commit  033238fd9b8126bce29446eaf018af2bdbc8c906  2022-04-20
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
+```
+
+```text
+repo    sipa/miniscript
+path    compiler.h
+commit  fd9bed0d3a8cabe4541bb18eabf1fda2984b4b33  2023-02-16
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
+```
+
+```text
+repo    sipa/miniscript
+path    bitcoin/
+commit  930e2f22cfd3575db21c8bb44920d64a781793e9  2023-02-16
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
+```
+
 Verdict: **recorded**. `descriptors.compiler` is a port of
 `compiler.cpp`, so each answer of `tests/descriptors/compiler_test.py`'s
 `WEBSITE`, `GRAMMAR` and `COMPOSED` is the miniscript sipa's compiler
@@ -860,6 +884,10 @@ The repository has no test that runs the compiler: the website's examples
 and the grammar are its test cases, and the compiler's answers are what
 the program `main.cpp` prints for them. `main.cpp` expands each `H` to a
 digest, of eights or of nines, as the test does.
+
+`main.cpp`, `compiler.h` and `bitcoin/` are pinned too, because the build
+below reads them: a change there can change an answer. `bitcoin/` is
+pinned as a directory, to the last commit touching any file under it.
 
 From the repository root, this builds the newest pin and prints the
 cases whose recorded answer is not what it answers. It prints an empty
