@@ -439,15 +439,15 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "base58-bech32", specifier = ">=2026.10.23" },
-    { name = "btclib", specifier = ">=2026.11.10" },
-    { name = "ecc", specifier = ">=2026.11.8" },
-    { name = "ecc", extras = ["secp256k1"], marker = "extra == 'secp256k1'", specifier = ">=2026.11.8" },
+    { name = "btclib", specifier = ">=2026.11.13" },
+    { name = "ecc", specifier = ">=2026.11.11" },
+    { name = "ecc", extras = ["secp256k1"], marker = "extra == 'secp256k1'", specifier = ">=2026.11.11" },
     { name = "typing-extensions", specifier = ">=4.4" },
 ]
 provides-extras = ["secp256k1"]
 
 [package.metadata.requires-dev]
-bindings = [{ name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.8" }]
+bindings = [{ name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.11" }]
 check = [
     { name = "check-sdist", specifier = ">=1.6.0" },
     { name = "check-wheel-contents", specifier = ">=0.6.3" },
@@ -461,7 +461,7 @@ dev = [
     { name = "check-wheel-contents", specifier = ">=0.6.3" },
     { name = "cosmic-ray", specifier = ">=8.7.0" },
     { name = "coverage", specifier = ">=7.16.0" },
-    { name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.8" },
+    { name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.11" },
     { name = "furo", marker = "python_full_version >= '3.12'", specifier = ">=2025.12.19" },
     { name = "hypothesis", specifier = ">=6.168.0" },
     { name = "mypy", specifier = ">=2.3.1" },
@@ -478,7 +478,7 @@ dev = [
     { name = "uv-build", specifier = ">=0.12.0,<0.14" },
 ]
 docs = [
-    { name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.8" },
+    { name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.11" },
     { name = "furo", marker = "python_full_version >= '3.12'", specifier = ">=2025.12.19" },
     { name = "myst-parser", marker = "python_full_version >= '3.12'", specifier = ">=5.1.0" },
     { name = "sphinx", marker = "python_full_version >= '3.12'", specifier = ">=9.1.0" },
@@ -493,7 +493,7 @@ harness = [
     { name = "pytest-xdist", specifier = ">=3.8.0" },
 ]
 lint = [
-    { name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.8" },
+    { name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.11" },
     { name = "mypy", specifier = ">=2.3.1" },
     { name = "pre-commit", specifier = ">=4.6.2" },
     { name = "ruff", specifier = ">=0.16.7" },
@@ -502,7 +502,7 @@ mutation = [{ name = "cosmic-ray", specifier = ">=8.7.0" }]
 test = [
     { name = "bitcoin-core-rpc", specifier = ">=2026.9.3" },
     { name = "coverage", specifier = ">=7.16.0" },
-    { name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.8" },
+    { name = "ecc", extras = ["secp256k1"], specifier = ">=2026.11.11" },
     { name = "hypothesis", specifier = ">=6.168.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
@@ -522,16 +522,16 @@ wheels = [
 
 [[package]]
 name = "btclib"
-version = "2026.11.10"
+version = "2026.11.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "base58-bech32" },
     { name = "ecc" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fa/55/15b8252fe06f2f09086f7d045161f1289f472ea7059568f77fd8d78979f3/btclib-2026.11.10.tar.gz", hash = "sha256:a40beb166721bd5a7928272e5b4f442e8035063d38d8136d68ffbe8cf11dae2e", size = 8350323, upload-time = "2026-11-10T22:10:18.589Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/70/446fe28c3db963f75a2145097d2b802f0eb7cf69d1d74a3d58b0ae3df745/btclib-2026.11.13.tar.gz", hash = "sha256:4cee03a6cdb24e1b1d2c52c13b431322e206dbf37398aabfce8db8db8d307f93", size = 8364742, upload-time = "2026-11-13T00:11:21.201Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7d/ab/97e867ebd366ecb7618913e6ccd9972819a76ea2b020827b594c5540ca0e/btclib-2026.11.10-py3-none-any.whl", hash = "sha256:ebb56ee88726f6f7bb852573cacbf25fa5350424ee37a6a54931b712e67bd327", size = 1457100, upload-time = "2026-11-10T22:10:16.851Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/0e/ac651f97dd817e2f509b41ab4da450bda5ab52d8a182638ca452cae69aca/btclib-2026.11.13-py3-none-any.whl", hash = "sha256:2c6788949cb40f6907d580f6b093f24db68a89840355972dfeac84581dce0f17", size = 1459411, upload-time = "2026-11-13T00:11:18.501Z" },
 ]
 
 [[package]]
@@ -1168,14 +1168,14 @@ wheels = [
 
 [[package]]
 name = "ecc"
-version = "2026.11.8"
+version = "2026.11.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/74/be/c4768a1d6f82bba231eb07fa03a4f2aa8bd0cde2656b39d837b96d46a7d0/ecc-2026.11.8.tar.gz", hash = "sha256:0869f1ee04d7fd90f7618b9af592d4960acb9af9c870ed58085a63eef7c775fd", size = 2172438, upload-time = "2026-11-09T10:32:07.179Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/6b/f3eadc44f8790da43449249e8983a581f28eb8310e098da61ca52bf7edc5/ecc-2026.11.11.tar.gz", hash = "sha256:b3e7682be3b3b726c9bcae6e93ffd1f14974687e9b2c53855cc90ca0f2c59ba2", size = 2177103, upload-time = "2026-11-11T05:24:47.947Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/87/e4de2fe2c36c4b5e4cffa838e2db030181adfb40bc99e65d4d1ce4782890/ecc-2026.11.8-py3-none-any.whl", hash = "sha256:68abeb86eaceea66a04599683cc1ce87f5baa2733996844dc335e4f36f8fc2b0", size = 311173, upload-time = "2026-11-09T10:32:05.339Z" },
+    { url = "https://files.pythonhosted.org/packages/11/ca/bcfd2c7ecb0e34e906eaa995d63d2ceab4554849eba8f2557d8e6fa70a46/ecc-2026.11.11-py3-none-any.whl", hash = "sha256:91db56ce7db1a84fb30b5dd3bb95f31953014fb6b9617ce9cbe420cc0a0b15dc", size = 311193, upload-time = "2026-11-11T05:24:46.252Z" },
 ]
 
 [package.optional-dependencies]

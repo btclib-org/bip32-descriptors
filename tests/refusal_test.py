@@ -1997,29 +1997,15 @@ def _lying(base: type, length: int = _LIE) -> type:
     return type(f"_Lying{base.__name__}", (base,), {"__len__": lambda _self: length})
 
 
-def _handing(octets: bytes) -> bytes:
-    """Return bytes whose `__bytes__` answers `octets` with a length of `_LIE`.
+def _handing(octets: bytes, length: int = _LIE) -> bytes:
+    """Return bytes whose `__bytes__` answers `octets` as `length` long.
 
-    What btclib's `bytes_from_octets` returns for it, `bytes()` handing
-    back the subclass `__bytes__` answers.
+    btclib's `bytes_from_octets` reads the bytes themselves and never
+    calls it, so a check after it measures `octets`.
     """
-    lying = _lying(bytes)(octets)
+    lying = _lying(bytes, length)(octets)
     handing = type("_Handing", (bytes,), {"__bytes__": lambda _self: lying})
     return handing(octets)  # type: ignore[no-any-return]
-
-
-class _Itself(bytes):
-    """Bytes of a length of `_LIE` that `bytes()` answers with themselves."""
-
-    __slots__ = ()
-
-    @override
-    def __len__(self) -> int:
-        return _LIE
-
-    @override
-    def __bytes__(self) -> bytes:
-        return self
 
 
 class _LyingText(str):
@@ -2095,19 +2081,23 @@ def _forged_origin(**fields: object) -> Callable[[], object]:
             "not a tapscript public key: 10 bytes",
         ),
         (
-            lambda: from_script(_handing(b"\x51"), P2WSH),
-            "script too large for P2WSH: 1 bytes",
+            lambda: from_script(_handing(b"\x51" * 3601, 1), P2WSH),
+            "script too large for P2WSH: 3601 bytes",
         ),
         (
-            lambda: WshDescriptor(RawDescriptor(_handing(b"\x51" * 600))),
-            "raw() inside wsh() is 600 bytes, over the 10000-byte limit",
+            lambda: WshDescriptor(RawDescriptor(_handing(b"\x51" * 10001, 1))),
+            "raw() inside wsh() is 10001 bytes, over the 10000-byte limit",
         ),
         (
-            lambda: rootxprv_from_seed(_handing(b"\x01" * 32)),
-            "too many bits for seed: 256",
+            lambda: rootxprv_from_seed(_handing(b"\x01" * 100, 32)),
+            "too many bits for seed: 800",
         ),
         (
-            lambda: replace(ROOT, chain_code=_Itself(b"\0" * 10)),
+            lambda: rootxprv_from_seed(_handing(b"\x01" * 10, 32)),
+            "too few bits for seed: 80",
+        ),
+        (
+            lambda: replace(ROOT, chain_code=_handing(b"\0" * 10, 32)),
             "invalid chain_code length: 10 bytes instead of 32",
         ),
         (
@@ -2179,6 +2169,7 @@ def _forged_origin(**fields: object) -> Callable[[], object]:
         "script",
         "raw() inside wsh()",
         "seed",
+        "short seed",
         "extended key field",
         "public key prefix",
         "scripts",
@@ -2205,3 +2196,19 @@ def test_a_count_a_refusal_writes_is_the_built_in_one(
     with pytest.raises(errors, match=f"^{re.escape(err_msg)}$") as e:
         build()
     assert_secret_free(e.value, [*SPELLINGS, str(_LIE)])
+
+
+@pytest.mark.parametrize(
+    "build, octets",
+    [
+        (lambda octets: from_script(octets, P2WSH), b"\x51"),
+        (lambda octets: WshDescriptor(RawDescriptor(octets)), b"\x51" * 600),
+        (rootxprv_from_seed, b"\x01" * 32),
+    ],
+    ids=["script", "raw() inside wsh()", "seed"],
+)
+def test_a_valid_value_is_read_by_its_bytes(
+    build: Callable[[bytes], object], octets: bytes
+) -> None:
+    """Accepted as its plain bytes are, whatever its `__bytes__` answers."""
+    assert build(_handing(octets)) == build(octets)
