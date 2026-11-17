@@ -6,13 +6,13 @@ base58-bech32==2026.11.7 \
     # via
     #   bip32-descriptors
     #   btclib
-btclib==2026.11.10 \
-    --hash=sha256:a40beb166721bd5a7928272e5b4f442e8035063d38d8136d68ffbe8cf11dae2e \
-    --hash=sha256:ebb56ee88726f6f7bb852573cacbf25fa5350424ee37a6a54931b712e67bd327
+btclib==2026.11.13 \
+    --hash=sha256:2c6788949cb40f6907d580f6b093f24db68a89840355972dfeac84581dce0f17 \
+    --hash=sha256:4cee03a6cdb24e1b1d2c52c13b431322e206dbf37398aabfce8db8db8d307f93
     # via bip32-descriptors
-ecc==2026.11.8 \
-    --hash=sha256:0869f1ee04d7fd90f7618b9af592d4960acb9af9c870ed58085a63eef7c775fd \
-    --hash=sha256:68abeb86eaceea66a04599683cc1ce87f5baa2733996844dc335e4f36f8fc2b0
+ecc==2026.11.11 \
+    --hash=sha256:91db56ce7db1a84fb30b5dd3bb95f31953014fb6b9617ce9cbe420cc0a0b15dc \
+    --hash=sha256:b3e7682be3b3b726c9bcae6e93ffd1f14974687e9b2c53855cc90ca0f2c59ba2
     # via
     #   bip32-descriptors
     #   btclib

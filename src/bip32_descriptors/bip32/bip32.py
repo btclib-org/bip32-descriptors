@@ -529,9 +529,7 @@ def _rootxprv_from_seed(seed: Octets, version: Octets) -> BIP32KeyData:
     """Return BIP32 root master extended private key from seed."""
     seed = bytes_from_octets(seed)
     bit_length = len(seed) * 8
-    # the bit count is diagnostic enough: never echo the seed itself. It
-    # is written from the bytes the seed holds, and not from the `__len__`
-    # of the bytes subclass `bytes_from_octets` can answer
+    # the bit count is diagnostic enough: never echo the seed itself
     if bit_length < 128:
         raise BTClibValueError(f"too few bits for seed: {_seed_bits(seed)}")
     if bit_length > 512:
