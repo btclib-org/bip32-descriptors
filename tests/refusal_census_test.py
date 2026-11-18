@@ -3125,6 +3125,42 @@ _SHAPES = {
         ),
         "class Refused(Exception):\n    pass\ndef f(key):\n    return Refused(key)",
     ),
+    "exception class a scope declaring the name global binds": (
+        (
+            "def f(key):\n    global Refused\n    Refused = ValueError\n"
+            "    return Refused('a')"
+        ),
+        (
+            "def f(key):\n    global Refused\n    Refused = ValueError\n"
+            "    return Refused(key)"
+        ),
+    ),
+    "exception class a scope declaring the name nonlocal binds": (
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        return Refused('a')\n    return _g()"
+        ),
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        return Refused(key)\n    return _g()"
+        ),
+    ),
+    "exception class an enclosing scope declaring the name nonlocal binds": (
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        def _h():\n            nonlocal Refused\n"
+            "            return Refused('a')\n        return _h()\n    return _g()"
+        ),
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        def _h():\n            nonlocal Refused\n"
+            "            return Refused(key)\n        return _h()\n    return _g()"
+        ),
+    ),
     "class of the package a parameter shadows": (
         "class Refused(Exception):\n    pass\ndef f(key):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
         "class Refused(Exception):\n    pass\ndef f(key, Refused):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
