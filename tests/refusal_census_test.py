@@ -27,15 +27,16 @@ name, of any kind, binds it to what a caller passes: a call of it is a
 site, whose arguments are traced, where its default or what a call of the
 package passes there, read as for a parameter below, a method's own object
 or class included, is such a class, or where the census cannot read what a
-call passes there: a call that unpacks its arguments, or a `@classmethod`
-called on an object; what it builds is taken for an exception only where
-every one of them is. It reads the exception of each `raise` too, but not
-what a function of the package returns, nor the exception an `except`
-around the `raise` binds, nor a name each value of which its scope assigns
-is `None`, such a call, or a call of a function of the package each of
-whose `return`s is one; a bare annotation assigns it nothing. Every
-argument of each has to be traced to values a refusal may print, and what
-the census cannot trace is a finding. It traces
+call passes there: a call that unpacks its arguments, a `@classmethod`
+called on an object, or a method with another decorator, as below; what
+it builds is taken for an exception only where every one of them is. It
+reads the exception of each `raise` too, but not what a function of the
+package returns, nor the exception an `except` around the `raise` binds,
+nor a name each value of which its scope assigns is `None`, such a call,
+or a call of a function of the package each of whose `return`s is one; a
+bare annotation assigns it nothing. Every argument of each has to be
+traced to values a refusal may print, and what the census cannot trace
+is a finding. It traces
 
 - a literal, a comparison, a name bound by a `def`, a `class` or an
   import but one of `_PROCESS_INPUT`, a builtin of `_PURE_BUILTINS` or
@@ -69,8 +70,9 @@ the census cannot trace is a finding. It traces
   written out, the column the name takes;
 - a local or module name, where it traces every value the name is bound
   to, what a `with` binds traced as the call it makes, and every value
-  put into it anywhere in the scope, by a method such as `append` or by
-  an assignment to an item or an attribute;
+  put into it anywhere in the scope, by a method such as `append`, or by
+  an assignment, a loop, a comprehension or a `with` that stores an item
+  or an attribute of it;
 - a parameter of a private function, where it traces what every call in
   the package passes there, and its default, read in the scope where the
   `def` stands;
@@ -87,13 +89,15 @@ too, but for a method's own object or class and `super()`. A method takes
 first what it is called on, or nothing where it is called through a class
 of the package or through a `@classmethod`'s own class. A `@classmethod`
 takes its class first however it is called, and a `@staticmethod` takes
-nothing. Its decorator says which, not the name of its first parameter.
-So the census does not trace a parameter of a public function or of a
-lambda, a method's own object or class, a function read as a value rather
-than called, the exception an `except` binds, or what `_PROCESS_INPUT`
-names. Each of these holds what a caller, a server or another program
-handed over, and reaches a refusal only through `_code`, `_message_text`,
-`_position` or `_quoted`, or not at all.
+nothing. Its decorator says which, not the name of its first parameter;
+a decorator other than those and `_KEEPING_DECORATORS` may hand it
+anything, anywhere. So the census does not trace a parameter of a public
+function, of a lambda or of a method with such a decorator, a method's
+own object or class, a function read as a value rather than called, the
+exception an `except` binds, or what `_PROCESS_INPUT` names. Each of
+these holds what a caller, a server or another program handed over, and
+reaches a refusal only through `_code`, `_message_text`, `_position` or
+`_quoted`, or not at all.
 
 What a refusal still raises that the census does not trace is in `KEPT`,
 an exception one function raises by name, each entry with its reason. An
@@ -113,8 +117,9 @@ bound to in its own scope, a list, a dict, a set or what a call of
 finding: another name, an item of another container, and an argument of
 a call other than a refusal, one of `_READERS`, or a function of the
 package whose parameter neither has a value put into it nor is handed on
-in turn. A container reached any other way, through an attribute or what
-a call answers, is not followed past the name the census reads.
+in turn, called without unpacking an argument. A container reached any
+other way, through an attribute or what a call answers, is not followed
+past the name the census reads.
 
 An exception that is not one of the package's classes may hold the input,
 as a `UnicodeError` holds its bytes, so no refusal chains one or has it as
@@ -311,6 +316,9 @@ _READERS = frozenset(
     }
 )
 _CONSTANT = re.compile(r"_*[A-Z][A-Z0-9_]*")
+# the decorators of the package's methods that hand a method what it is
+# called on first, as an undecorated one is handed it
+_KEEPING_DECORATORS = frozenset({"abstractmethod", "override", "property"})
 _FUNCTION = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 _COMPREHENSION = (ast.ListComp, ast.SetComp, ast.GeneratorExp)
 _COMPREHENSIONS = (*_COMPREHENSION, ast.DictComp)
@@ -355,9 +363,8 @@ def _arguments(func: ast.AST) -> list[ast.arg]:
 def _own_nodes(scope: ast.AST) -> list[ast.AST]:
     """Return the nodes of a scope, not entering a nested function or class.
 
-    A function's own are those of its body: its decorators and defaults are
-    read in the scope around it, as are a nested function's or class's, and
-    a class's bases.
+    A function's own are those of its body: what `_read_around` returns of it
+    is read in the scope around it, as is that of a nested function or class.
     """
     found: list[ast.AST] = []
     if isinstance(scope, ast.Lambda):
@@ -398,14 +405,20 @@ def _block_nodes(statements: list[ast.stmt]) -> list[ast.AST]:
 def _read_around(node: ast.AST) -> list[ast.AST]:
     """Return what the scope around a function or a class reads of it.
 
-    Its decorators, the defaults of its parameters, and a class's bases and
-    keywords.
+    Its decorators, the defaults of its parameters, a function's annotations
+    and a class's bases and keywords. Python 3.11 to 3.13 run an annotation
+    where the `def` stands, unless the module postpones it; the census reads
+    it there whether or not it does.
     """
     found: list[ast.AST] = list(getattr(node, "decorator_list", []))
     args: ast.arguments | None = getattr(node, "args", None)
     if args is not None:
         found.extend(args.defaults)
         found.extend(d for d in args.kw_defaults if d is not None)
+        found.extend(a.annotation for a in _arguments(node) if a.annotation)
+    returns = getattr(node, "returns", None)
+    if returns is not None:
+        found.append(returns)
     found.extend(getattr(node, "bases", []))
     found.extend(getattr(node, "keywords", []))
     return found
@@ -555,7 +568,8 @@ def _mutates(node: ast.AST, name: str) -> bool:
 def _mutated(node: ast.AST) -> list[str]:
     """Return the names a node puts values into, by a call or an assignment.
 
-    `x.append(v)` puts `v` into `x`, and so do `x[k] = v` and `x.k = v`.
+    `x.append(v)` puts `v` into `x`, and so do `x[k] = v` and `x.k = v`, and
+    a loop, a comprehension or a `with` whose target is `x[k]` or `x.k`.
     """
     if isinstance(node, ast.Call):
         func = node.func
@@ -566,11 +580,8 @@ def _mutated(node: ast.AST) -> list[str]:
         ):
             return [func.value.id]
         return []
-    if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-        return []
-    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
     found: list[str] = []
-    for target in targets:
+    for target in _targets(node):
         for part in ast.walk(target):
             if isinstance(part, (ast.Subscript, ast.Attribute)):
                 root = part.value
@@ -579,6 +590,17 @@ def _mutated(node: ast.AST) -> list[str]:
                 if isinstance(root, ast.Name):
                     found.append(root.id)
     return found
+
+
+def _targets(node: ast.AST) -> list[ast.expr]:
+    """Return what an assignment, a loop, a comprehension or a `with` stores."""
+    if isinstance(node, ast.Assign):
+        return node.targets
+    if isinstance(node, (ast.AnnAssign, ast.AugAssign, *_LOOP)):
+        return [node.target]
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return [i.optional_vars for i in node.items if i.optional_vars]
+    return []
 
 
 def _stores(target: ast.AST, name: str) -> bool:
@@ -633,8 +655,8 @@ def _comprehension_binding(expr: ast.Name, module: _Module) -> ast.AST | None:
     A comprehension is a scope of its own, but for the iterable of its first
     `for`, which is read in the scope around it. A lambda between the name
     and the comprehension binds the name where the name is in its body,
-    not in a default, and is a parameter of it; a `def` or a `class` ends
-    the search.
+    not in a default, and is a parameter of it or rebound in it, as
+    `_rebinds` reads that; a `def` or a `class` ends the search.
     """
     path: list[ast.AST] = [expr]
     node = module.parents.get(expr)
@@ -642,8 +664,9 @@ def _comprehension_binding(expr: ast.Name, module: _Module) -> ast.AST | None:
         node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
     ):
         if isinstance(node, ast.Lambda):
-            if node.body in path and any(
-                arg.arg == expr.id for arg in _arguments(node)
+            if node.body in path and (
+                any(arg.arg == expr.id for arg in _arguments(node))
+                or any(_rebinds(n, expr.id) for n in _own_nodes(node))
             ):
                 return None
         elif (
@@ -928,13 +951,16 @@ class _Census:
             return True
         if not isinstance(func, ast.Name):
             return False
-        scope = self._binder(func, module)[0]
+        scope, declared = self._binder(func, module)
         if isinstance(scope, _FUNCTION) and any(
             arg.arg == name for arg in _arguments(scope)
         ):
             return self._parameter_builds(scope, name, module, seen, maybe=maybe)
+        # a scope that declares the name `global` or `nonlocal` binds it too
         return scope is not None and any(
-            self._binds_exception(binding, name) for binding in self._scope_nodes(scope)
+            self._binds_exception(binding, name)
+            for each in [scope, *declared]
+            for binding in self._scope_nodes(each)
         )
 
     def _parameter_builds(
@@ -967,12 +993,14 @@ class _Census:
 
         The calls are read as `_parameter` reads them: of a private
         function, to a parameter that is not starred; None where one
-        unpacks what it passes. A method's own object is what each call is
-        called on, or its first argument where it is called through a
-        class; a `@classmethod`'s own class is what each call is called
-        through, and None where it is called on an object, whose class the
-        census does not name. A parameter of a public function or of a
-        lambda, or of a function read as a value, has its default alone.
+        unpacks what it passes, or where the function is a method with
+        another decorator, as `_other_decorator` reads that. A method's own
+        object is what each call is called on, or its first argument where
+        it is called through a class; a `@classmethod`'s own class is what
+        each call is called through, and None where it is called on an
+        object, whose class the census does not name. A parameter of a
+        public function or of a lambda, or of a function read as a value,
+        has its default alone.
         """
         arg = next(arg for arg in _arguments(func) if arg.arg == name)
         func_args: ast.arguments = func.args  # type: ignore[attr-defined]
@@ -993,6 +1021,8 @@ class _Census:
             or id(func) in self.reads
         ):
             return found
+        if _other_decorator(func, module):
+            return None
         for caller, call in self.calls.get(id(func), []):
             if _unpacks(call):
                 return None
@@ -1005,9 +1035,9 @@ class _Census:
                     # what the method is called on, which it takes first; a
                     # `@classmethod` takes it only where it is a class
                     value = cast("ast.Attribute", call.func).value
-                    if _decorated(func, "classmethod") and not self._through_class(
-                        value, caller
-                    ):
+                    if _decorated(
+                        func, "classmethod", module
+                    ) and not self._through_class(value, caller):
                         return None
                     found.append((caller, value))
                 elif position < len(call.args):
@@ -1374,7 +1404,7 @@ class _Census:
         """
         if _receiver(func, module) is None or not isinstance(call.func, ast.Attribute):
             return 0
-        if _decorated(func, "classmethod"):
+        if _decorated(func, "classmethod", module):
             return 1
         return 0 if self._through_class(call.func.value, caller) else 1
 
@@ -1385,7 +1415,7 @@ class _Census:
         `@classmethod` is handed first, as `_receiver_of` reads it.
         """
         method = self._receiver_of(receiver, module)
-        if method is not None and _decorated(method, "classmethod"):
+        if method is not None and _decorated(method, "classmethod", module):
             return True
         return self._own(receiver, module)
 
@@ -1995,13 +2025,22 @@ class _Census:
         """Return whether every package `def` a call runs only reads `node`.
 
         Where the parameter it is passed as has no value put into it in
-        that `def`, and is handed nowhere else.
+        that `def`, and is handed nowhere else. Where the call unpacks an
+        argument, or the `def` is a method with another decorator, as
+        `_other_decorator` reads that, which parameter that is is not known.
         """
         functions = self._resolve(call.func, module)
-        if not functions or node not in call.args or depth > len(self.functions):
+        if (
+            not functions
+            or node not in call.args
+            or _unpacks(call)
+            or depth > len(self.functions)
+        ):
             return False
         for function in functions:
             function_module = self.functions[id(function)][0]
+            if _other_decorator(function, function_module):
+                return False
             positional = _positional(function)
             position = call.args.index(node) + self._handed(
                 function, function_module, call, module
@@ -2126,6 +2165,10 @@ class _Census:
         if not _private(func_name) or arg in {func_args.vararg, func_args.kwarg}:
             leaves.append(origin)
             return
+        if _other_decorator(func, module):
+            # a method whose decorator may hand it anything, in any place
+            leaves.append(f"{origin}, decorated")
+            return
         if arg is receiver:
             # a method's own object or class, which the census does not
             # trace: a call on an object hands it that object, and a call
@@ -2171,18 +2214,60 @@ def _receiver(func: ast.AST, module: _Module) -> ast.arg | None:
     """Return a method's own object or class: its first positional parameter.
 
     A method here is a function a class body defines, and the decorator, not
-    the name, says what it is handed first: a `@staticmethod` has none.
+    the name, says what it is handed first: a `@staticmethod` has none, and
+    one with another decorator, as `_other_decorator` reads that, has none
+    the census can name.
     """
     positional = _positional(func)
-    if not positional or not isinstance(module.parents.get(func), ast.ClassDef):
+    if (
+        not positional
+        or not isinstance(module.parents.get(func), ast.ClassDef)
+        or _other_decorator(func, module)
+    ):
         return None
-    return None if _decorated(func, "staticmethod") else positional[0]
+    return None if _decorated(func, "staticmethod", module) else positional[0]
 
 
-def _decorated(func: ast.AST, decorator: str) -> bool:
-    """Return whether a `def` carries a decorator of that name."""
+def _builtin_decorator(decorator: ast.expr, module: _Module) -> str | None:
+    """Return which of `staticmethod` and `classmethod` a decorator is, or None.
+
+    It is one by that name, or by the name a `from builtins import` at the
+    top of the module binds to it.
+    """
+    for builtin in ("staticmethod", "classmethod"):
+        aliases = {
+            alias.asname
+            for node in module.tree.body
+            if isinstance(node, ast.ImportFrom) and node.module == "builtins"
+            for alias in node.names
+            if alias.name == builtin
+        }
+        if _called_name(decorator) == builtin or (
+            isinstance(decorator, ast.Name) and decorator.id in aliases
+        ):
+            return builtin
+    return None
+
+
+def _decorated(func: ast.AST, decorator: str, module: _Module) -> bool:
+    """Return whether a `def` carries that builtin decorator."""
     return any(
-        _called_name(d) == decorator for d in getattr(func, "decorator_list", [])
+        _builtin_decorator(d, module) == decorator
+        for d in getattr(func, "decorator_list", [])
+    )
+
+
+def _other_decorator(func: ast.AST, module: _Module) -> bool:
+    """Return whether a method carries a decorator the census does not know.
+
+    One of neither those two builtins nor `_KEEPING_DECORATORS`, by its
+    name: it may hand the method anything first, or nothing, so the census
+    cannot say which parameter a call's argument lands in.
+    """
+    return isinstance(module.parents.get(func), ast.ClassDef) and any(
+        _builtin_decorator(d, module) is None
+        and _called_name(d) not in _KEEPING_DECORATORS
+        for d in getattr(func, "decorator_list", [])
     )
 
 
@@ -4269,6 +4354,226 @@ _SHAPES = {
         (
             "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
             "        int(key)\n    finally:\n        _g()"
+        ),
+    ),
+    "exception class a function binds where it declares it global": (
+        (
+            "def f(key):\n    global Refused\n    Refused = ValueError\n"
+            "    return Refused('a')"
+        ),
+        (
+            "def f(key):\n    global Refused\n    Refused = ValueError\n"
+            "    return Refused(key)"
+        ),
+    ),
+    "exception class a function binds where it declares it nonlocal": (
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        return Refused('a')\n    return _g()"
+        ),
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        return Refused(key)\n    return _g()"
+        ),
+    ),
+    "exception class an outer nonlocal binds, called under an inner one": (
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        def _h():\n            nonlocal Refused\n"
+            "            return Refused('a')\n        return _h()\n    return _g()"
+        ),
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        def _h():\n            nonlocal Refused\n"
+            "            return Refused(key)\n        return _h()\n    return _g()"
+        ),
+    ),
+    "raising call in a parameter's annotation of a def in an except": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        def h(x: _g()):\n            pass"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        def h(x: _g()):\n"
+            "            pass"
+        ),
+    ),
+    "raising call in the return annotation of a def in an except": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        def h(x) -> _g():\n            pass"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        def h(x) -> _g():\n"
+            "            pass"
+        ),
+    ),
+    "raising call in a starred parameter's annotation of a def in a finally": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    finally:\n        def h(*x: _g()):\n            pass"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    finally:\n        def h(*x: _g()):\n            pass"
+        ),
+    ),
+    "name a lambda in a comprehension binds with :=": (
+        (
+            "def f(key):\n"
+            "    return [lambda: ((x := 'a'), ValueError(x))[1] for x in (key,)]"
+        ),
+        (
+            "def f(key):\n"
+            "    return [lambda: ((x := key), ValueError(x))[1] for x in ('a',)]"
+        ),
+    ),
+    "item a loop stores": (
+        (
+            "def f(key):\n    bucket = [None]\n    for bucket[0] in ('a',):\n"
+            "        pass\n    raise ValueError(bucket[0])"
+        ),
+        (
+            "def f(key):\n    bucket = [None]\n    for bucket[0] in (key,):\n"
+            "        pass\n    raise ValueError(bucket[0])"
+        ),
+    ),
+    "item a comprehension stores": (
+        (
+            "def f(key):\n    bucket = [None]\n    _ = [0 for bucket[0] in ('a',)]\n"
+            "    raise ValueError(bucket[0])"
+        ),
+        (
+            "def f(key):\n    bucket = [None]\n    _ = [0 for bucket[0] in (key,)]\n"
+            "    raise ValueError(bucket[0])"
+        ),
+    ),
+    "item a with stores": (
+        (
+            "def _open(x):\n    return x\ndef f(key):\n    bucket = [None]\n"
+            "    with _open('a') as bucket[0]:\n        pass\n"
+            "    raise ValueError(bucket[0])"
+        ),
+        (
+            "def _open(x):\n    return x\ndef f(key):\n    bucket = [None]\n"
+            "    with _open(key) as bucket[0]:\n        pass\n"
+            "    raise ValueError(bucket[0])"
+        ),
+    ),
+    "container handed through a class with an unpacked argument": (
+        (
+            "class _C:\n    def _g(self, unused, items, key):\n"
+            "        return len(items)\n    def f(self, key):\n        values = []\n"
+            "        _C._g(self, 0, values, key)\n        raise ValueError(values)"
+        ),
+        (
+            "class _C:\n    def _g(self, unused, items, key):\n"
+            "        return len(items)\n    def f(self, key):\n        values = []\n"
+            "        _C._g(*(self, 0), values, key)\n        raise ValueError(values)"
+        ),
+    ),
+    "staticmethod imported under another name": (
+        (
+            "from builtins import staticmethod as static\nclass _C:\n    @static\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, 'a')"
+        ),
+        (
+            "from builtins import staticmethod as static\nclass _C:\n    @static\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "classmethod imported under another name": (
+        (
+            "from builtins import classmethod as klass\nclass _C:\n    @klass\n"
+            "    def _make(kind, key):\n        return ValueError(key)\n"
+            "    def f(self, key):\n        raise _C._make('a')"
+        ),
+        (
+            "from builtins import classmethod as klass\nclass _C:\n    @klass\n"
+            "    def _make(kind, key):\n        return ValueError(key)\n"
+            "    def f(self, key):\n        raise _C._make(key)"
+        ),
+    ),
+    "parameter of a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return staticmethod(f)\nclass _C:\n    @_deco\n"
+            "    def _make(kind):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError)"
+        ),
+        (
+            "def _deco(f):\n    return staticmethod(f)\nclass _C:\n    @_deco\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "own object of a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    def _text(self):\n"
+            "        return 'a'\n    @property\n    def f(self):\n"
+            "        raise ValueError(self._text())"
+        ),
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    def _text(self):\n"
+            "        return 'a'\n    @_deco\n    def f(self):\n"
+            "        raise ValueError(self._text())"
+        ),
+    ),
+    "container handed to a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return f\nclass _C:\n"
+            "    def _g(self, items, key):\n        return len(items)\n"
+            "    def f(self, key):\n        values = []\n        self._g(values, key)\n"
+            "        raise ValueError(values)"
+        ),
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @_deco\n"
+            "    def _g(self, items, key):\n        return len(items)\n"
+            "    def f(self, key):\n        values = []\n        self._g(values, key)\n"
+            "        raise ValueError(values)"
+        ),
+    ),
+    "argument of a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @_deco\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "exception class handed to a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @override\n"
+            "    def _make(self, kind, other):\n        err = kind('a')\n"
+            "        raise err\n    def f(self, key):\n"
+            "        self._make(ValueError, ValueError)"
+        ),
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @_deco\n"
+            "    def _make(self, kind, other):\n        err = kind('a')\n"
+            "        raise err\n    def f(self, key):\n"
+            "        self._make(ValueError, ValueError)"
+        ),
+    ),
+    "parameter of a decorated function that is not a method": (
+        (
+            "def _deco(f):\n    return f\n@_deco\ndef _g(x):\n"
+            "    raise ValueError(x)\ndef f(key):\n    _g('a')"
+        ),
+        (
+            "def _deco(f):\n    return f\n@_deco\ndef _g(x):\n"
+            "    raise ValueError(x)\ndef f(key):\n    _g(key)"
         ),
     ),
 }
