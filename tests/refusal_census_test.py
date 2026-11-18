@@ -117,9 +117,10 @@ bound to in its own scope, a list, a dict, a set or what a call of
 finding: another name, an item of another container, and an argument of
 a call other than a refusal, one of `_READERS`, or a function of the
 package whose parameter neither has a value put into it nor is handed on
-in turn, called without unpacking an argument. A container reached any
-other way, through an attribute or what a call answers, is not followed
-past the name the census reads.
+in turn, called without unpacking an argument and not a method with
+another decorator, as above. A container reached any other way, through
+an attribute or what a call answers, is not followed past the name the
+census reads.
 
 An exception that is not one of the package's classes may hold the input,
 as a `UnicodeError` holds its bytes, so no refusal chains one or has it as
@@ -566,7 +567,7 @@ def _mutates(node: ast.AST, name: str) -> bool:
 
 
 def _mutated(node: ast.AST) -> list[str]:
-    """Return the names a node puts values into, by a call or an assignment.
+    """Return the names a node puts values into: by a call, or as a target.
 
     `x.append(v)` puts `v` into `x`, and so do `x[k] = v` and `x.k = v`, and
     a loop, a comprehension or a `with` whose target is `x[k]` or `x.k`.
@@ -938,13 +939,15 @@ class _Census:
 
         A name ending in `Error` or `Exception`, or a name a `class`
         statement, an assignment or an import binds to such a name or to an
-        exception class of the package, as `_exception_classes` finds them.
-        A parameter of the name, of any kind, binds it to what a caller
-        passes, which the outer scopes do not say: it is one where its
-        default and what every call of the package passes there are, as
-        `_passed` reads them. With `maybe` it may be one, and its arguments
-        are traced: where any of them is, or where `_passed` cannot say what
-        a call passes. Otherwise it is not taken for one.
+        exception class of the package, as `_exception_classes` finds them,
+        in the scope that binds it or in a scope that declares it `global`
+        or `nonlocal`. Short of that, a parameter of the name, of any kind,
+        binds it to what a caller passes, which the outer scopes do not say:
+        it is one where its default and what every call of the package
+        passes there are, as `_passed` reads them. With `maybe` it may be
+        one, and its arguments are traced: where any of them is, or where
+        `_passed` cannot say what a call passes. Otherwise it is not taken
+        for one.
         """
         name = _called_name(func) or ""
         if name.endswith(("Error", "Exception")):
@@ -952,15 +955,20 @@ class _Census:
         if not isinstance(func, ast.Name):
             return False
         scope, declared = self._binder(func, module)
+        # a scope that declares the name `global` or `nonlocal` binds it too,
+        # whatever the scope that holds the name binds it to
+        if any(
+            self._binds_exception(binding, name)
+            for each in declared
+            for binding in self._scope_nodes(each)
+        ):
+            return True
         if isinstance(scope, _FUNCTION) and any(
             arg.arg == name for arg in _arguments(scope)
         ):
             return self._parameter_builds(scope, name, module, seen, maybe=maybe)
-        # a scope that declares the name `global` or `nonlocal` binds it too
         return scope is not None and any(
-            self._binds_exception(binding, name)
-            for each in [scope, *declared]
-            for binding in self._scope_nodes(each)
+            self._binds_exception(binding, name) for binding in self._scope_nodes(scope)
         )
 
     def _parameter_builds(
@@ -4376,6 +4384,16 @@ _SHAPES = {
             "def f(key):\n    Refused = None\n    def _g():\n"
             "        nonlocal Refused\n        Refused = ValueError\n"
             "        return Refused(key)\n    return _g()"
+        ),
+    ),
+    "exception class a function binds where it declares nonlocal a parameter": (
+        (
+            "def f(key, Refused=None):\n    def _g():\n        nonlocal Refused\n"
+            "        Refused = ValueError\n        return Refused('a')\n    return _g()"
+        ),
+        (
+            "def f(key, Refused=None):\n    def _g():\n        nonlocal Refused\n"
+            "        Refused = ValueError\n        return Refused(key)\n    return _g()"
         ),
     ),
     "exception class an outer nonlocal binds, called under an inner one": (
