@@ -566,23 +566,39 @@ class _Module:
                 self.parents[child] = node
 
     def scopes(self, node: ast.AST) -> list[ast.AST]:
-        """Return the enclosing functions, innermost first, then the module.
+        """Return the enclosing scopes, innermost first, then the module.
 
         A default, an annotation or a decorator of a `def` or a lambda is
-        read where it stands, so that `def` is not one of its scopes.
+        read where it stands, so that `def` is not one of its scopes. A
+        class body is a scope of its own statements, and of the defaults,
+        annotations and decorators of what it defines, but not of a
+        function's body, a nested class's or a comprehension's, its first
+        iterable aside.
         """
         found: list[ast.AST] = []
+        # whether a function, a class or a comprehension shuts out a class body
+        shut = False
+        below: ast.AST | None = None
         child, current = node, self.parents.get(node)
         while current is not None:
             if isinstance(current, ast.Lambda):
                 if child is current.body:
                     found.append(current)
+                    shut = True
             elif (
                 isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and child in current.body
             ):
                 found.append(current)
-            child, current = current, self.parents.get(current)
+                shut = True
+            elif isinstance(current, (*_COMPREHENSION, ast.DictComp)):
+                if below is not current.generators[0].iter:
+                    shut = True
+            elif isinstance(current, ast.ClassDef) and child in current.body:
+                if not shut:
+                    found.append(current)
+                shut = True
+            below, child, current = child, current, self.parents.get(current)
         found.append(self.tree)
         return found
 
@@ -3253,6 +3269,18 @@ _SHAPES = {
     "exception raised out of a container": (
         "def f(key):\n    errors = [ValueError('a')]\n    raise errors[0]",
         "def f(key):\n    errors = [key]\n    raise errors[0]",
+    ),
+    "a call of a name the class body binds": (
+        (
+            "def _g():\n    return 1\ndef f(key, action):\n    try:\n"
+            "        pass\n    except OSError:\n        class _D:\n"
+            "            _g()"
+        ),
+        (
+            "def _g():\n    return 1\ndef f(key, action):\n    try:\n"
+            "        pass\n    except OSError:\n        class _D:\n"
+            "            _g = action\n            _g()"
+        ),
     ),
     "raising call in a finally": (
         (
