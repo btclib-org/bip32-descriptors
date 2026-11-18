@@ -3264,6 +3264,28 @@ _SHAPES = {
             "        int(key)\n    finally:\n        _g()"
         ),
     ),
+    "raising call in a parameter annotation of a def in an except": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        def h(x: _g()):\n            pass"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        def h(x: _g()):\n"
+            "            pass"
+        ),
+    ),
+    "raising call in a return annotation of a def in an except": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        def h(x) -> _g():\n            pass"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        def h(x) -> _g():\n"
+            "            pass"
+        ),
+    ),
 }
 
 
