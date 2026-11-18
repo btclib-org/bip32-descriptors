@@ -90,14 +90,15 @@ first what it is called on, or nothing where it is called through a class
 of the package or through a `@classmethod`'s own class. A `@classmethod`
 takes its class first however it is called, and a `@staticmethod` takes
 nothing. Its decorator says which, not the name of its first parameter;
-a decorator other than those and `_KEEPING_DECORATORS` may hand it
-anything, anywhere. So the census does not trace a parameter of a public
-function, of a lambda or of a method with such a decorator, a method's
-own object or class, a function read as a value rather than called, the
-exception an `except` binds, or what `_PROCESS_INPUT` names. Each of
-these holds what a caller, a server or another program handed over, and
-reaches a refusal only through `_code`, `_message_text`, `_position` or
-`_quoted`, or not at all.
+a decorator that is not provably one of those or of
+`_KEEPING_DECORATORS`, taken from its home as `_decorator_name` reads
+that, may hand it anything, anywhere. So the census does not trace a
+parameter of a public function, of a lambda or of a method with such a
+decorator, a method's own object or class, a function read as a value
+rather than called, the exception an `except` binds, or what
+`_PROCESS_INPUT` names. Each of these holds what a caller, a server or
+another program handed over, and reaches a refusal only through `_code`,
+`_message_text`, `_position` or `_quoted`, or not at all.
 
 What a refusal still raises that the census does not trace is in `KEPT`,
 an exception one function raises by name, each entry with its reason. An
@@ -320,6 +321,14 @@ _CONSTANT = re.compile(r"_*[A-Z][A-Z0-9_]*")
 # the decorators of the package's methods that hand a method what it is
 # called on first, as an undecorated one is handed it
 _KEEPING_DECORATORS = frozenset({"abstractmethod", "override", "property"})
+# the modules a method's decorator is imported from, by its name
+_DECORATOR_HOMES = {
+    "abstractmethod": ("abc",),
+    "classmethod": ("builtins",),
+    "override": ("typing", "typing_extensions"),
+    "property": ("builtins",),
+    "staticmethod": ("builtins",),
+}
 _FUNCTION = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 _COMPREHENSION = (ast.ListComp, ast.SetComp, ast.GeneratorExp)
 _COMPREHENSIONS = (*_COMPREHENSION, ast.DictComp)
@@ -2236,31 +2245,83 @@ def _receiver(func: ast.AST, module: _Module) -> ast.arg | None:
     return None if _decorated(func, "staticmethod", module) else positional[0]
 
 
-def _builtin_decorator(decorator: ast.expr, module: _Module) -> str | None:
-    """Return which of `staticmethod` and `classmethod` a decorator is, or None.
+def _decorator_name(decorator: ast.expr, module: _Module) -> str | None:
+    """Return the decorator a method's decorator provably is, or None.
 
-    It is one by that name, or by the name a `from builtins import` at the
-    top of the module binds to it.
+    One of `_DECORATOR_HOMES`, where its home is provably where it comes
+    from. A name is the decorator it is named after where no scope it is
+    read in binds it, and the one it imports where an import from that
+    decorator's home is all that binds it there; `X.attr` is `attr` where
+    an `import` of the home of `attr` is all that binds `X`. Any other
+    binding, a parameter and a `*` import from elsewhere included, makes it
+    None, and so does any other decorator.
     """
-    for builtin in ("staticmethod", "classmethod"):
-        aliases = {
-            alias.asname
-            for node in module.tree.body
-            if isinstance(node, ast.ImportFrom) and node.module == "builtins"
-            for alias in node.names
-            if alias.name == builtin
-        }
-        if _called_name(decorator) == builtin or (
-            isinstance(decorator, ast.Name) and decorator.id in aliases
+    # read in the body of the class that holds the method first
+    holder = module.parents[module.parents[decorator]]
+    scopes = [holder, *module.scopes(decorator)]
+    if isinstance(decorator, ast.Attribute) and isinstance(decorator.value, ast.Name):
+        homes = _DECORATOR_HOMES.get(decorator.attr, ())
+        bindings = _decorator_bindings(decorator.value.id, scopes)
+        return (
+            decorator.attr
+            if bindings
+            and all(
+                isinstance(n, ast.Import)
+                and any(
+                    (a.asname or a.name) == decorator.value.id and a.name in homes
+                    for a in n.names
+                )
+                for n in bindings
+            )
+            else None
+        )
+    if not isinstance(decorator, ast.Name):
+        return None
+    if names := [
+        _imported_decorator(n, decorator.id)
+        for n in _decorator_bindings(decorator.id, scopes)
+    ]:
+        return names[0] if all(n == names[0] for n in names) else None
+    return decorator.id
+
+
+def _decorator_bindings(name: str, scopes: list[ast.AST]) -> list[ast.AST]:
+    """Return what binds a name in the first of the scopes that binds it.
+
+    A node that rebinds it, as `_rebinds` reads that, a parameter of a
+    function, and a `*` import, which may bind any name.
+    """
+    for scope in scopes:
+        found: list[ast.AST] = [
+            n
+            for n in _own_nodes(scope)
+            if _rebinds(n, name)
+            or (isinstance(n, ast.ImportFrom) and n.names[0].name == "*")
+        ]
+        if isinstance(scope, _FUNCTION):
+            found.extend(a for a in _arguments(scope) if a.arg == name)
+        if found:
+            return found
+    return []
+
+
+def _imported_decorator(binding: ast.AST, name: str) -> str | None:
+    """Return the decorator an import from its home binds to a name, or None."""
+    if not isinstance(binding, ast.ImportFrom):
+        return None
+    for alias in binding.names:
+        bound = name if alias.name == "*" else alias.name
+        if (alias.asname or bound) == name and binding.module in (
+            _DECORATOR_HOMES.get(bound, ())
         ):
-            return builtin
+            return bound
     return None
 
 
 def _decorated(func: ast.AST, decorator: str, module: _Module) -> bool:
-    """Return whether a `def` carries that builtin decorator."""
+    """Return whether a `def` carries a decorator `_decorator_name` names so."""
     return any(
-        _builtin_decorator(d, module) == decorator
+        _decorator_name(d, module) == decorator
         for d in getattr(func, "decorator_list", [])
     )
 
@@ -2268,13 +2329,14 @@ def _decorated(func: ast.AST, decorator: str, module: _Module) -> bool:
 def _other_decorator(func: ast.AST, module: _Module) -> bool:
     """Return whether a method carries a decorator the census does not know.
 
-    One of neither those two builtins nor `_KEEPING_DECORATORS`, by its
-    name: it may hand the method anything first, or nothing, so the census
-    cannot say which parameter a call's argument lands in.
+    One `_decorator_name` reads as none of `staticmethod`, `classmethod` and
+    `_KEEPING_DECORATORS`: it may hand the method anything first, or
+    nothing, so the census cannot say which parameter a call's argument
+    lands in.
     """
+    known = {"staticmethod", "classmethod", *_KEEPING_DECORATORS}
     return isinstance(module.parents.get(func), ast.ClassDef) and any(
-        _builtin_decorator(d, module) is None
-        and _called_name(d) not in _KEEPING_DECORATORS
+        _decorator_name(d, module) not in known
         for d in getattr(func, "decorator_list", [])
     )
 
@@ -4530,6 +4592,186 @@ _SHAPES = {
             "def _deco(f):\n    return staticmethod(f)\nclass _C:\n    @_deco\n"
             "    def _make(kind, key):\n        return kind(key)\n"
             "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a module defines under the name of a typing one": (
+        (
+            "def override(f):\n    return staticmethod(f)\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "def override(f):\n    return staticmethod(f)\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a module defines under the name of a builtin one": (
+        (
+            "def staticmethod(f):\n    return f\nclass _C:\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "def staticmethod(f):\n    return f\nclass _C:\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator read as an attribute of a module other than its home": (
+        (
+            "import mylib\nclass _C:\n    @mylib.override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "import mylib\nclass _C:\n    @mylib.override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator named after a typing one under a star import from elsewhere": (
+        (
+            "from mylib import *\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "from mylib import *\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a parameter around the class binds under a typing name": (
+        (
+            "def _mk(override):\n    class _C:\n        @override\n"
+            "        def _make(kind, key):\n            return kind('a')\n"
+            "        def f(self, key):\n            raise self._make(ValueError, key)\n"
+            "    return _C"
+        ),
+        (
+            "def _mk(override):\n    class _C:\n        @override\n"
+            "        def _make(kind, key):\n            return kind(key)\n"
+            "        def f(self, key):\n            raise self._make(ValueError, key)\n"
+            "    return _C"
+        ),
+    ),
+    "decorator imported from elsewhere under the name of a typing one": (
+        (
+            "from mylib import override\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "from mylib import override\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a class body defines under the name of a builtin one": (
+        (
+            "class _C:\n    def staticmethod(f):\n        return f\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "class _C:\n    def staticmethod(f):\n        return f\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorators imported from their homes under other names": (
+        (
+            "from abc import abstractmethod as a\nfrom typing import override as o\n"
+            "from typing_extensions import override as e\nclass _C:\n    @a\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n    @o\n"
+            "    def _h(self, x):\n        raise ValueError(x)\n    @e\n"
+            "    def _i(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')\n        self._h('a')\n"
+            "        self._i('a')"
+        ),
+        (
+            "from abc import abstractmethod as a\nfrom typing import override as o\n"
+            "from mylib import override as e\nclass _C:\n    @a\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n    @o\n"
+            "    def _h(self, x):\n        raise ValueError(x)\n    @e\n"
+            "    def _i(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')\n        self._h('a')\n"
+            "        self._i('a')"
+        ),
+    ),
+    "decorator name an import from its home and an assignment both bind": (
+        (
+            "def _d(f):\n    return f\n"
+            "from builtins import staticmethod as static\nclass _C:\n"
+            "    @static\n    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, ValueError, 'a')"
+        ),
+        (
+            "def _d(f):\n    return f\nstatic = _d\n"
+            "from builtins import staticmethod as static\nclass _C:\n"
+            "    @static\n    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, ValueError, 'a')"
+        ),
+    ),
+    "decorator read as an attribute of its home imported under another name": (
+        (
+            "import typing as t\nclass _C:\n    @t.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "import typing as t\nclass _C:\n    @typing.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "decorator read as an attribute of a name imported from elsewhere": (
+        (
+            "import typing\nclass _C:\n    @typing.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "from mylib import typing\nclass _C:\n    @typing.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "decorator named after a typing one under a star import from its home": (
+        (
+            "from typing import *\nclass _C:\n    @override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "from mylib import *\nclass _C:\n    @override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "decorator of a method a call answers": (
+        (
+            "def _wrap():\n    return lambda f: f\nclass _C:\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "def _wrap():\n    return lambda f: f\nclass _C:\n    @_wrap()\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "decorator of a method read as an attribute of its home": (
+        (
+            "import typing\nclass _C:\n    @typing.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "import mylib\nclass _C:\n    @mylib.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
         ),
     ),
     "own object of a method with a decorator the census does not know": (
