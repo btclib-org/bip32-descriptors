@@ -95,7 +95,9 @@ trace is a finding. It traces
   unpacked from.
 
 A name called is the `def` of the scope that binds it, or the one of the
-module of the package it is imported from; an attribute called is every
+module of the package it is imported from. A function or a class that
+declares a name `global` binds it in the module too, for a name called as
+for a class an `except` names. An attribute called is every
 method of that name in the package, and what it is called on is traced
 too, but for a method's own object or class and `super()`. A method takes
 first what it is called on, or nothing where it is called through a class
@@ -757,6 +759,8 @@ class _Census:
     scopes: dict[int, tuple[_Module, ast.AST]] = field(default_factory=dict)
     nodes: dict[int, list[ast.AST]] = field(default_factory=dict)
     mutations: dict[int, dict[str, list[ast.AST]]] = field(default_factory=dict)
+    # by module, each function or class declaring a name `global`, by name
+    global_scopes: dict[int, dict[str, list[ast.AST]]] = field(default_factory=dict)
     edges: dict[_Key, tuple[list[str], set[_Key]]] = field(default_factory=dict)
     reached: dict[_Key, frozenset[str]] = field(default_factory=dict)
     # each class of the package by its name, the `def`s that may raise, and
@@ -841,16 +845,42 @@ class _Census:
         """Return the nodes binding a name where it is read, None where unknown.
 
         The nodes of the scope `_binder` finds that `_rebinds` reads, and
-        none where nothing binds the name. A parameter, a comprehension's
-        target and a name a scope declares `global` or `nonlocal` are
-        unknown.
+        none where nothing binds the name. For the module, the nodes of each
+        function or class that declares the name `global` and rebinds it
+        there too. A parameter, a comprehension's target and a name a scope
+        around it declares `global` or `nonlocal` are unknown.
         """
         if self._binder(name, module) == (None, []):
             return []
         scope = self._local_scope(name, module)
         if scope is None:
             return None
-        return [n for n in self._scope_nodes(scope) if _rebinds(n, name.id)]
+        scopes = [scope]
+        if scope is module.tree:
+            scopes.extend(self._global_scopes(module).get(name.id, []))
+        return [
+            n
+            for each in scopes
+            for n in self._scope_nodes(each)
+            if _rebinds(n, name.id)
+        ]
+
+    def _global_scopes(self, module: _Module) -> dict[str, list[ast.AST]]:
+        """Return, by name, each function or class declaring it `global`."""
+        if id(module.tree) not in self.global_scopes:
+            found: dict[str, list[ast.AST]] = {}
+            for scope in ast.walk(module.tree):
+                if isinstance(scope, (*_FUNCTION, ast.ClassDef)):
+                    names = {
+                        each
+                        for node in self._scope_nodes(scope)
+                        if isinstance(node, ast.Global)
+                        for each in node.names
+                    }
+                    for each in names:
+                        found.setdefault(each, []).append(scope)
+            self.global_scopes[id(module.tree)] = found
+        return self.global_scopes[id(module.tree)]
 
     def _imported(self, node: ast.ImportFrom, name: str) -> list[ast.AST]:
         """Return the `def`s an import of the package binds to a name."""
@@ -3591,6 +3621,18 @@ _SHAPES = {
             "        action()"
         ),
     ),
+    "a call of a function another function declares global": (
+        (
+            "def _h():\n    return 1\ndef g(action):\n    global _h\n"
+            "    def _h():\n        return 2\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        _h()"
+        ),
+        (
+            "def _h():\n    return 1\ndef g(action):\n    global _h\n"
+            "    _h = action\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        _h()"
+        ),
+    ),
     "a method called on another object": (
         (
             "class C:\n    def _g(self):\n        return 1\n"
@@ -4960,6 +5002,18 @@ _SHAPES = {
         (
             "class _E(Exception):\n    pass\ndef f(key):\n    global _E\n"
             "    try:\n        pass\n    except _E:\n        raise"
+        ),
+    ),
+    "a class of the package caught, which another function declares global": (
+        (
+            "class _E(Exception):\n    pass\ndef g():\n    global _E\n"
+            "    class _E(Exception):\n        pass\ndef f(key):\n    try:\n"
+            "        pass\n    except _E:\n        raise"
+        ),
+        (
+            "class _E(Exception):\n    pass\ndef g():\n    global _E\n"
+            "    _E = OSError\ndef f(key):\n    try:\n        pass\n"
+            "    except _E:\n        raise"
         ),
     ),
     "a class caught off a package a dotted import binds": (
