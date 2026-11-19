@@ -774,6 +774,7 @@ class _Census:
     scopes: dict[int, tuple[_Module, ast.AST]] = field(default_factory=dict)
     nodes: dict[int, list[ast.AST]] = field(default_factory=dict)
     mutations: dict[int, dict[str, list[ast.AST]]] = field(default_factory=dict)
+    global_bindings: dict[int, dict[str, list[ast.AST]]] = field(default_factory=dict)
     edges: dict[_Key, tuple[list[str], set[_Key]]] = field(default_factory=dict)
     reached: dict[_Key, frozenset[str]] = field(default_factory=dict)
     # each class of the package by its name, the `def`s that may raise, and
@@ -1991,9 +1992,10 @@ class _Census:
         In a comprehension, each `for` whose target stores it; elsewhere,
         each node of the scope that rebinds the name, as `_rebinds` reads
         that, or declares it `global` or `nonlocal`, so that another scope
-        may put values into it. Then each node of the scope, or of a
-        function or a comprehension it holds, that puts a value into what
-        the name holds, as `_mutated` reads that.
+        may put values into it. In a module, also what `_global_bindings`
+        finds. Then each node of the scope, or of a function or a
+        comprehension it holds, that puts a value into what the name holds,
+        as `_mutated` reads that.
         """
         found: list[ast.AST]
         if isinstance(scope, _COMPREHENSIONS):
@@ -2004,11 +2006,41 @@ class _Census:
                 for n in self._scope_nodes(scope)
                 if _rebinds(n, name) or _declares(n, name)
             ]
+        if isinstance(scope, ast.Module):
+            found.extend(self._global_bindings(scope).get(name, []))
         seen = {id(n) for n in found}
         found.extend(
             n for n in self._mutations(scope).get(name, []) if id(n) not in seen
         )
         return found
+
+    def _global_bindings(self, tree: ast.Module) -> dict[str, list[ast.AST]]:
+        """Return, by name, the nodes that rebind a module's name elsewhere.
+
+        Each node of a function or a class in the module that declares the
+        name `global` and rebinds it there, as `_rebinds` reads that: the
+        value it binds is the module's.
+        """
+        if id(tree) not in self.global_bindings:
+            found: dict[str, list[ast.AST]] = {}
+            for scope in ast.walk(tree):
+                if not isinstance(
+                    scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
+                    continue
+                nodes = self._scope_nodes(scope)
+                declared = {
+                    name
+                    for node in nodes
+                    if isinstance(node, ast.Global)
+                    for name in node.names
+                }
+                for name in declared:
+                    found.setdefault(name, []).extend(
+                        n for n in nodes if _rebinds(n, name)
+                    )
+            self.global_bindings[id(tree)] = found
+        return self.global_bindings[id(tree)]
 
     def _scope_nodes(self, scope: ast.AST) -> list[ast.AST]:
         if id(scope) not in self.nodes:
@@ -5252,6 +5284,26 @@ _SHAPES = {
         (
             "E = ValueError\ndef f(key):\n    class _D:\n        x = E(key)\n"
             "        E = int"
+        ),
+    ),
+    "a value a function puts into a module name it declares global": (
+        (
+            "x = None\ndef g(key):\n    global x\n    x = 'a'\n"
+            "def f():\n    raise ValueError(x)"
+        ),
+        (
+            "x = None\ndef g(key):\n    global x\n    x = key\n"
+            "def f():\n    raise ValueError(x)"
+        ),
+    ),
+    "a value a class body reads from a module name a function declares global": (
+        (
+            "x = None\ndef f(key):\n    global x\n    x = 'a'\n    class _D:\n"
+            "        y = ValueError(x)\n        x = 'a'"
+        ),
+        (
+            "x = None\ndef f(key):\n    global x\n    x = key\n    class _D:\n"
+            "        y = ValueError(x)\n        x = 'a'"
         ),
     ),
     "a call of a name the class body binds": (
