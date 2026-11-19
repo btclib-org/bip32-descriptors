@@ -820,7 +820,7 @@ class _Census:
         return found or None
 
     def _local_scope(self, name: ast.Name, module: _Module) -> ast.AST | None:
-        """Return the function or module that binds a name by its own nodes.
+        """Return the function, class or module that binds a name by its nodes.
 
         The scope `_binder` finds, but None where that is a comprehension,
         where the name is a parameter of it, or where a scope declares the
@@ -905,6 +905,19 @@ class _Census:
             key=lambda site: (site[0].name, getattr(site[1], "lineno", 0)),
         )
 
+    def _local_filling(
+        self, scope: ast.AST, name: str, module: _Module
+    ) -> list[ast.AST]:
+        """Return what `_filling` finds in the scope `_local_scope` returns.
+
+        A class body reads a name it has not bound yet from the module, so
+        the module's are added to a class body's.
+        """
+        found = self._filling(scope, name)
+        if isinstance(scope, ast.ClassDef):
+            found = [*found, *self._filling(module.tree, name)]
+        return found
+
     def _built_at_a_site(self, exc: ast.expr, module: _Module) -> bool:
         """Return whether a name raised holds only exceptions built at a site.
 
@@ -917,7 +930,7 @@ class _Census:
         scope = self._local_scope(exc, module)
         if scope is None:
             return False
-        bindings = self._filling(scope, exc.id)
+        bindings = self._local_filling(scope, exc.id, module)
         return bool(bindings) and all(
             isinstance(node, (ast.Assign, ast.AnnAssign))
             and self._builds_at_a_site(node.value, module)
@@ -1511,15 +1524,17 @@ class _Census:
         scope = self._local_scope(cause, module)
         if scope is None:
             return False
+        scopes = [scope, module.tree] if isinstance(scope, ast.ClassDef) else [scope]
         own = {
             handler.name
-            for handler in self._scope_nodes(scope)
+            for each in scopes
+            for handler in self._scope_nodes(each)
             if isinstance(handler, ast.ExceptHandler)
             and handler.name
             and self._own(handler.type, module)
         }
         values: list[ast.expr | None] = []
-        for node in self._filling(scope, cause.id):
+        for node in self._local_filling(scope, cause.id, module):
             if _mutates(node, cause.id):
                 call = cast("ast.Call", node)
                 values.extend([*call.args, *(k.value for k in call.keywords)])
@@ -4493,6 +4508,16 @@ _SHAPES = {
         (
             "import sys\nx = sys.argv\ndef f(key):\n    class _D:\n"
             "        raise ValueError(x)\n        x = 'a'"
+        ),
+    ),
+    "an exception a class body raises before it binds the name": (
+        (
+            "e = ValueError('b')\ndef f(key):\n    class _D:\n        raise e\n"
+            "        e = ValueError('a')"
+        ),
+        (
+            "import sys\ne = sys.argv\ndef f(key):\n    class _D:\n"
+            "        raise e\n        e = ValueError('a')"
         ),
     ),
     "a call of a name the class body binds": (
