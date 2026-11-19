@@ -225,8 +225,8 @@ def _is_point(pub_key: bytes) -> bool:
 def assert_valid_hd_key_paths(hd_key_paths: Mapping[bytes, BIP32KeyOrigin]) -> None:
     """Raise an exception if the dataclass element is not valid.
 
-    Each key is sized, and read as a point, by the bytes it holds, which
-    no subclass's `__len__` answers.
+    Each key is sized, and one of 33 or 65 bytes read as a point, by the
+    bytes it holds, which no subclass's `__len__` answers.
     """
     if len(hd_key_paths.values()) > len(
         {der_path.serialize() for der_path in hd_key_paths.values()}

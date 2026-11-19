@@ -375,7 +375,10 @@ def _printed_pub_key(key: KeyExpression) -> str:
     wifs, network = _PRINTED_WIFS.get() or (None, "")
     if not wifs:
         return text
-    pub_key = b"" if key.pub_key is None else key.pub_key
+    # the bytes it holds, which `_spellings` sizes
+    pub_key = (
+        b"" if key.pub_key is None else bytes.__getitem__(key.pub_key, slice(None))
+    )
     keys = (b"\x02" + pub_key[1:], b"\x03" + pub_key[1:]) if key.x_only else (pub_key,)
     found: dict[bytes, str] = {}
     for spelling in dict.fromkeys(s for k in keys for s in _spellings(k)):
@@ -578,7 +581,7 @@ class KeyExpression:
         if pub_key is None:
             return True
         if not isinstance(pub_key, bytes):
-            # an unpickled key may hold another type, refused for it elsewhere
+            # a forged key may hold another type, refused for it elsewhere
             return len(pub_key) == 33  # type: ignore[unreachable]
         return bytes.__len__(pub_key) == 33
 
@@ -634,7 +637,9 @@ class KeyExpression:
             )
             return pub_keyinfo_from_xkey(derive_(synthetic, musig_path), network)[0]
         if self.pub_key is not None:
-            return self.pub_key
+            # the bytes it holds, which a script and a witness write:
+            # `serialize` sizes a push by `len()`, which a subclass answers
+            return bytes.__getitem__(self.pub_key, slice(None))
         der_path = list(self.der_path)
         if self.wildcard is not None:
             der_path.append(self.wildcard + index)

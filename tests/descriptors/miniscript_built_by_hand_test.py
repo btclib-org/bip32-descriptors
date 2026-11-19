@@ -25,7 +25,6 @@ from typing import Any
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.key import PrvKeyData
-from typing_extensions import override
 
 from bip32_descriptors.descriptors import parse
 from bip32_descriptors.descriptors.descriptors import (
@@ -34,6 +33,7 @@ from bip32_descriptors.descriptors.descriptors import (
 )
 from bip32_descriptors.descriptors.miniscript import P2WSH, TAPSCRIPT, Miniscript
 from bip32_descriptors.descriptors.miniscript import parse as parse_miniscript
+from tests import says_length
 from tests.secret_free import assert_secret_free
 
 _C = PrvKeyData(3).pub.sec.hex()
@@ -162,23 +162,6 @@ def test_a_subexpression_of_another_context_is_refused_in_any_position() -> None
     assert_secret_free(e.value, [P2WSH])
 
 
-class _Says(bytes):
-    """Bytes whose length says `n`, whatever they hold."""
-
-    n = 0
-
-    @override
-    def __len__(self) -> int:
-        return self.n
-
-
-def _says(octets: bytes, n: int) -> bytes:
-    """Return `octets` as bytes whose length says `n`."""
-    says = _Says(octets)
-    says.n = n
-    return says
-
-
 @pytest.mark.parametrize("length", [33, 31])
 def test_data_is_sized_by_its_bytes(length: int) -> None:
     """Built as its plain bytes are, and refused for the size it holds.
@@ -186,8 +169,46 @@ def test_data_is_sized_by_its_bytes(length: int) -> None:
     Issue btclib-org/bip32-descriptors#355.
     """
     digest = bytes.fromhex(_RANDOM_HEX)
-    assert len(_says(digest, length)) == length
-    node = Miniscript("sha256", P2WSH, data=_says(digest, length))
+    assert len(says_length(digest, length)) == length
+    node = Miniscript("sha256", P2WSH, data=says_length(digest, length))
     assert node == Miniscript("sha256", P2WSH, data=digest)
     with pytest.raises(BTClibValueError, match="takes 32 bytes of data, 31 given$"):
-        Miniscript("sha256", P2WSH, data=_says(digest[1:], 32))
+        Miniscript("sha256", P2WSH, data=says_length(digest[1:], 32))
+
+
+def _with_data(node: Miniscript, data: bytes) -> Miniscript:
+    """Return `node` built again, with `data` in place of the data it holds."""
+    if node.data:
+        return replace(node, data=data)
+    return replace(node, subs=tuple(_with_data(sub, data) for sub in node.subs))
+
+
+# a 20-byte hash for ``rawpkh()``, the data of its ``raw_pk_h``
+_HASH160_HEX = "9a1c78a507689f6f54b847ad1cef1e614ee23f1e"
+
+
+@pytest.mark.parametrize("length", [1, 33])
+@pytest.mark.parametrize(
+    "text,data",
+    [
+        (f"and_v(v:pk({_C}),sha256({_RANDOM_HEX}))", _RANDOM_HEX),
+        (f"and_v(v:rawpkh({_HASH160_HEX}),pkh({_C}))", _HASH160_HEX),
+    ],
+    ids=["sha256", "rawpkh"],
+)
+def test_data_is_pushed_as_the_bytes_it_holds(
+    text: str, data: str, length: int
+) -> None:
+    """The script, and the ``wsh()`` of it, are those of its plain bytes.
+
+    `serialize` sizes a push by `len()`, so the data goes in as the bytes
+    it holds. Issue btclib-org/bip32-descriptors#355.
+    """
+    plain = parse_miniscript(text, P2WSH)
+    node = _with_data(plain, says_length(bytes.fromhex(data), length))
+    assert bytes.fromhex(data) in plain.script()
+    assert node.script() == plain.script()
+    wsh = WshDescriptor(MiniscriptDescriptor(node))
+    plain_wsh = WshDescriptor(MiniscriptDescriptor(plain))
+    assert wsh.script_pub_key().script == plain_wsh.script_pub_key().script
+    assert wsh.address() == plain_wsh.address()

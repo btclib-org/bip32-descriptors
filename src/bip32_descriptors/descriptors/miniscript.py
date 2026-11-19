@@ -1877,6 +1877,15 @@ def _sec(
     return sec[1:] if node.context == TAPSCRIPT else sec
 
 
+def _plain_data(node: Miniscript) -> bytes:
+    """Return the bytes a node's data holds, through none of its methods.
+
+    The script pushes them: `serialize` sizes a push by `len()`, which a
+    subclass answers as it likes.
+    """
+    return bytes.__getitem__(node.data, slice(None))
+
+
 # a return per branch is past ruff's limit on return statements
 def _leaf_fragment_script(  # sourcery skip: lift-return-into-if
     node: Miniscript,
@@ -1896,7 +1905,7 @@ def _leaf_fragment_script(  # sourcery skip: lift-return-into-if
         key_hash = hash160(_sec(node, node.keys[0], index, network, prv_keys))
         commands = ["OP_DUP", "OP_HASH160", key_hash, "OP_EQUALVERIFY"]
     elif fragment == "raw_pk_h":
-        commands = ["OP_DUP", "OP_HASH160", node.data, "OP_EQUALVERIFY"]
+        commands = ["OP_DUP", "OP_HASH160", _plain_data(node), "OP_EQUALVERIFY"]
     elif fragment == "older":
         commands = [*_pushed_number(node.threshold), "OP_CHECKSEQUENCEVERIFY"]
     elif fragment == "after":
@@ -1907,7 +1916,7 @@ def _leaf_fragment_script(  # sourcery skip: lift-return-into-if
             *_pushed_number(32),
             "OP_EQUALVERIFY",
             _HASH_OP_CODES[fragment],
-            node.data,
+            _plain_data(node),
             "OP_EQUALVERIFY" if verify else "OP_EQUAL",
         ]
     else:
