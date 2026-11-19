@@ -4075,6 +4075,16 @@ _SHAPES = {
         _ON_SELF.format("        class _D:\n            self = key\n"),
         _ON_SELF.format("        self = key\n"),
     ),
+    "exception class a class body builds before it binds the name": (
+        (
+            "E = ValueError\ndef f(key):\n    class _D:\n"
+            "        x = E('a')\n        E = int"
+        ),
+        (
+            "E = ValueError\ndef f(key):\n    class _D:\n"
+            "        x = E(key)\n        E = int"
+        ),
+    ),
     "a method called on a dict comprehension's target named as its object": (
         (
             "class _C:\n    def _text(self):\n        return 'a'\n"
