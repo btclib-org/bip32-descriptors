@@ -28,15 +28,27 @@ site, whose arguments are traced, where its default or what a call of the
 package passes there, read as for a parameter below, a method's own object
 or class included, is such a class, or where the census cannot read what a
 call passes there: a call that unpacks its arguments, a `@classmethod`
-called on an object, or a method with another decorator, as below; what
-it builds is taken for an exception only where every one of them is. It
-reads the exception of each `raise` too, but not what a function of the
-package returns, nor the exception an `except` around the `raise` binds,
-nor a name each value of which its scope assigns is `None`, such a call,
-or a call of a function of the package each of whose `return`s is one; a
-bare annotation assigns it nothing. Every argument of each has to be
-traced to values a refusal may print, and what the census cannot trace
-is a finding. It traces
+called on an object, or a method with another decorator, as below. What
+it builds is taken for an exception only where every one of them is.
+
+A call of a parameter is a site too where a caller the census does not
+see may fill the parameter, or where a call passes a value it cannot
+classify. The first is a parameter it reads by its default alone: of a
+public function, of a lambda or of a function read as a value. There a
+method's own object is a class only where its class derives from a base
+from outside the package, which may be a metaclass such as `type`, and a
+`@classmethod`'s own class is the class that defines it or one deriving
+from it. The second is a value such as what a call, an `await` or a
+`yield` answers, an attribute, an item of a container it cannot read
+whole, or a local alias of one of them.
+
+It reads the exception of each `raise` too, but not what a function of
+the package returns, nor the exception an `except` around the `raise`
+binds, nor a name each value of which its scope assigns is `None`, such a
+call, or a call of a function of the package each of whose `return`s is
+one; a bare annotation assigns it nothing. Every argument of each has
+to be traced to values a refusal may print, and what the census cannot
+trace is a finding. It traces
 
 - a literal, a comparison, a name bound by a `def`, a `class` or an
   import but one of `_PROCESS_INPUT`, a builtin of `_PURE_BUILTINS` or
@@ -332,6 +344,8 @@ _DECORATOR_HOMES = {
 _FUNCTION = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 _COMPREHENSION = (ast.ListComp, ast.SetComp, ast.GeneratorExp)
 _COMPREHENSIONS = (*_COMPREHENSION, ast.DictComp)
+# what answers a value the census cannot read, as a call does
+_ANSWERED = (ast.Await, ast.Yield, ast.YieldFrom)
 # a `type` statement, which Python parses from 3.12 on
 _TYPE_ALIAS = getattr(ast, "TypeAlias", ())
 _BINDING = (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)
@@ -955,8 +969,8 @@ class _Census:
         it is one where its default and what every call of the package
         passes there are, as `_passed` reads them. With `maybe` it may be
         one, and its arguments are traced: where any of them is, or where
-        `_passed` cannot say what a call passes. Otherwise it is not taken
-        for one.
+        the census cannot say what a call passes, as `_parameter_builds`
+        reads that. Otherwise it is not taken for one.
         """
         name = _called_name(func) or ""
         if name.endswith(("Error", "Exception")):
@@ -989,19 +1003,176 @@ class _Census:
         *,
         maybe: bool,
     ) -> bool:
-        """Return whether a parameter holds an exception class, or may."""
+        """Return whether a parameter holds an exception class, or may.
+
+        It may where its default or a value a call passes may be one, as
+        `_builds_exception` reads that; where `_passed` cannot say what a
+        call passes; where a caller the census does not see may pass
+        anything, as `_unseen` reads that; and where a call passes a value
+        the census cannot classify, as `_unclassified` reads that.
+        """
         if (id(func), name) in seen:
             return False
         passed = self._passed(func, name, module)
         if passed is None:
             return maybe
+        if maybe and self._unseen(func, name, module):
+            return True
         held = [
             self._builds_exception(
                 value, caller, seen | {(id(func), name)}, maybe=maybe
             )
+            or (maybe and self._unclassified(value, caller, seen | {(id(func), name)}))
             for caller, value in passed
         ]
         return any(held) if maybe else bool(held) and all(held)
+
+    def _unseen(self, func: ast.AST, name: str, module: _Module) -> bool:
+        """Return whether a caller the census does not see fills a parameter.
+
+        A parameter `_passed` reads by its default alone: of a public
+        function or of a lambda, or of a function read as a value, but not
+        a starred one, which holds a tuple or a dict. A method's own object
+        is a class only where the class that defines the method derives
+        from a base from outside the package, as `_exception_classes` reads
+        that, which may be a metaclass such as `type` or `ABCMeta`: its
+        objects are classes. A `@classmethod`'s own class is the class that
+        defines it or one deriving from it, as `_derived` reads that, and
+        may be an exception where any of them may.
+        """
+        func_args: ast.arguments = func.args  # type: ignore[attr-defined]
+        arg = next(arg for arg in _arguments(func) if arg.arg == name)
+        if arg in {func_args.vararg, func_args.kwarg} or not (
+            not _private(getattr(func, "name", "")) or id(func) in self.reads
+        ):
+            return False
+        if arg is _receiver(func, module):
+            holder = cast("ast.ClassDef", module.parents[func])
+            if not _decorated(func, "classmethod", module):
+                return holder.name in self._exception_classes()
+            return bool(self._derived(holder.name) & self._exception_classes())
+        return True
+
+    def _derived(self, base: str) -> set[str]:
+        """Return each class of the package that derives from a base, by name.
+
+        The base itself too, and, until nothing changes, each class one of
+        whose bases is among them.
+        """
+        bases = {
+            name: {
+                _base_name(each) for class_def in class_defs for each in class_def.bases
+            }
+            for name, class_defs in self.class_defs.items()
+        }
+        found = {base}
+        changed = True
+        while changed:
+            changed = False
+            for name, named in bases.items():
+                if name not in found and named & found:
+                    found.add(name)
+                    changed = True
+        return found
+
+    def _unclassified(
+        self, value: ast.expr, module: _Module, seen: frozenset[tuple[int, str]]
+    ) -> bool:
+        """Return whether a value passed may be an exception class unseen.
+
+        One `_builds_exception` does not take for one, but which may be: what
+        a call, an `await`, a `yield` or a `yield from` answers; an
+        attribute, which an assignment the census does not follow may fill;
+        an item of a container that may be, as `_items` reads it; a branch
+        of an `if` expression, an operand of `and` or `or`, or the value of
+        an `:=`, that may be; and a name a scope binds to a value that may
+        be, or binds other than by assigning a value, a `def`, a `class` or
+        an import. A literal, a lambda and a builtin are not, nor is any
+        other expression.
+        """
+        if (id(value), "") in seen:
+            return False
+        seen |= {(id(value), "")}
+        if isinstance(value, (ast.Call, ast.Attribute, *_ANSWERED)):
+            return True
+        if isinstance(value, ast.IfExp):
+            parts: list[ast.expr] = [value.body, value.orelse]
+        elif isinstance(value, ast.BoolOp):
+            parts = value.values
+        elif isinstance(value, ast.NamedExpr):
+            parts = [value.value]
+        elif isinstance(value, ast.Subscript):
+            parts = self._items(value.value, module)
+        elif isinstance(value, ast.Name):
+            parts = self._assigned(value, module)
+        else:
+            return False
+        return any(
+            self._builds_exception(part, module, seen, maybe=True)
+            or self._unclassified(part, module, seen)
+            for part in parts
+        )
+
+    def _items(self, container: ast.expr, module: _Module) -> list[ast.expr]:
+        """Return the items of a container where each binding writes them out.
+
+        A list, a tuple or a dict written out, with no item or entry
+        unpacked into it, and a name the scope that binds it assigns only
+        such values to and puts no value into, as `_mutations` reads that.
+        Otherwise the container itself, a call answering what the census
+        cannot read: a name bound by a parameter, an import or nothing among
+        them.
+        """
+        unknown: list[ast.expr] = [ast.Call(func=container, args=[], keywords=[])]
+        values = [container]
+        if isinstance(container, ast.Name):
+            values = self._assigned(container, module)
+            # a name `_assigned` gives a value for has a scope that binds it
+            scope = cast("ast.AST", self._binder(container, module)[0])
+            if not values or self._mutations(scope).get(container.id):
+                return unknown
+        found: list[ast.expr] = []
+        for value in values:
+            if isinstance(value, (ast.List, ast.Tuple)) and not any(
+                isinstance(item, ast.Starred) for item in value.elts
+            ):
+                found.extend(value.elts)
+            elif isinstance(value, ast.Dict) and None not in value.keys:
+                found.extend(value.values)
+            else:
+                return unknown
+        return found
+
+    def _assigned(self, name: ast.Name, module: _Module) -> list[ast.expr]:
+        """Return each value the scope that binds a name assigns it.
+
+        A binding of another kind but a `def`, a `class` or an import, an
+        unpacking or a comprehension's `for` among them, gives a call, which
+        answers what the census cannot read; a parameter, a builtin and a
+        name the source does not bind give nothing.
+        """
+        scope = self._binder(name, module)[0]
+        if scope is None:
+            return []
+        if isinstance(scope, _COMPREHENSIONS):
+            return [ast.Call(func=name, args=[], keywords=[])]
+        found: list[ast.expr] = []
+        for node in self._scope_nodes(scope):
+            if not _rebinds(node, name.id) or isinstance(node, _DECLARED):
+                continue
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and (
+                node.value is not None
+                and any(
+                    isinstance(t, ast.Name) and t.id == name.id
+                    for t in (
+                        node.targets if isinstance(node, ast.Assign) else [node.target]
+                    )
+                )
+            ):
+                found.append(node.value)
+            else:
+                found.append(ast.Call(func=name, args=[], keywords=[]))
+        return found
 
     def _passed(
         self, func: ast.AST, name: str, module: _Module
@@ -2573,6 +2744,15 @@ def test_kept_hides_its_own_entry_alone() -> None:
 # do not, so that each branch of the census runs here too: the modules,
 # and what the census finds in them
 _UNSEEN: dict[str, tuple[dict[str, str], list[str]]] = {
+    "an alias of an alias of itself": (
+        {
+            "m.py": (
+                "def _make(key, kind):\n    return kind(key)\n"
+                "def f(key):\n    a = b\n    b = a\n    raise _make(key, a)"
+            )
+        },
+        [],
+    ),
     "an attribute of a call assigned": (
         {"m.py": "def f(key):\n    d = []\n    g().x = d\n    raise ValueError(d)"},
         ["m.py:4: m.py:3 d, handed to Assign"],
@@ -3571,12 +3751,478 @@ _SHAPES = {
             "def f(key):\n    raise _make(key)"
         ),
     ),
-    "exception class a lambda's parameter shadows": (
+    "exception class a lambda's parameter shadows, which may hold one": (
         (
-            "class Refused(Exception):\n    pass\ndef f(key):\n    build = lambda Refused: Refused(key)\n"
-            "    return build(str)"
+            "class Refused(Exception):\n    pass\ndef f(key):\n"
+            "    build = lambda Refused: Refused('a')\n    return build(str)"
         ),
-        "class Refused(Exception):\n    pass\ndef f(key):\n    return Refused(key)",
+        (
+            "class Refused(Exception):\n    pass\ndef f(key):\n"
+            "    build = lambda Refused: Refused(key)\n    return build(str)"
+        ),
+    ),
+    "exception class passed to a public function's parameter": (
+        (
+            "Refused = ValueError\ndef make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n"
+            "    raise make(key, Refused)"
+        ),
+        (
+            "Refused = ValueError\ndef make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise make(key, Refused)"
+        ),
+    ),
+    "exception class passed to a function read as a value": (
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind('a')\ng = _make\ndef f(key):\n"
+            "    raise g('a', Refused)"
+        ),
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ng = _make\ndef f(key):\n"
+            "    raise g('a', Refused)"
+        ),
+    ),
+    "exception class passed to a lambda's parameter": (
+        (
+            "Refused = ValueError\nmake = lambda key, kind: kind('a')\n"
+            "def f(key):\n    raise make('a', Refused)"
+        ),
+        (
+            "Refused = ValueError\nmake = lambda key, kind: kind(key)\n"
+            "def f(key):\n    raise make('a', Refused)"
+        ),
+    ),
+    "exception class passed as an item of a list written out": (
+        (
+            "KINDS = [ValueError]\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+        (
+            "KINDS = [ValueError]\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+    ),
+    "exception class passed through a local alias": (
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n    kind = Refused\n"
+            "    raise _make(key, kind)"
+        ),
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n    kind = Refused\n"
+            "    raise _make(key, kind)"
+        ),
+    ),
+    "exception class passed as what a call answers": (
+        (
+            "def _kind():\n    return ValueError\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, _kind())"
+        ),
+        (
+            "def _kind():\n    return ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, _kind())"
+        ),
+    ),
+    "exception class passed as an item of a list a call answers": (
+        (
+            "def _kinds():\n    return [ValueError]\nKINDS = _kinds()\n"
+            "def _make(key, kind):\n    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+        (
+            "def _kinds():\n    return [ValueError]\nKINDS = _kinds()\n"
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+    ),
+    "builtin passed to a parameter that builds": (
+        (
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, str)"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, ValueError)"
+        ),
+    ),
+    "exception class passed from a comprehension's for": (
+        (
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    return [_make('a', k) for k in (ValueError,)]"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    return [_make(key, k) for k in (ValueError,)]"
+        ),
+    ),
+    "exception class passed through a name a loop binds": (
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    for kind in (Refused,):\n        raise _make('a', kind)"
+        ),
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    for kind in (Refused,):\n        raise _make(key, kind)"
+        ),
+    ),
+    "own class of a public classmethod, which may be an exception": (
+        (
+            "class _C:\n    @classmethod\n    def make(cls, key):\n"
+            "        return cls(key)"
+        ),
+        (
+            "class Refused(Exception):\n    @classmethod\n    def make(cls, key):\n"
+            "        return cls(key)"
+        ),
+    ),
+    "own object of a public method, which is no class": (
+        "class _C:\n    def f(self, key):\n        return self(key)",
+        "class _C:\n    def f(self, key, kind):\n        return kind(key)",
+    ),
+    "starred parameter of a public function, which holds no class": (
+        ("def make(key, *kinds):\n    return kinds(key)"),
+        ("def make(key, kinds):\n    return kinds(key)"),
+    ),
+    "exception class passed in a branch of an if expression": (
+        (
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, str if key else str)"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, str if key else ValueError)"
+        ),
+    ),
+    "exception class passed as a value of a dict written out": (
+        (
+            "KINDS = {'a': str}\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS['a'])"
+        ),
+        (
+            "KINDS = {'a': ValueError}\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS['a'])"
+        ),
+    ),
+    "exception class passed as an item of a list among others": (
+        (
+            "KINDS = [str]\ndef _make(key, kind):\n    return kind(key)\n"
+            "def f(key):\n    raise _make(key, KINDS[0])"
+        ),
+        (
+            "KINDS = [str, ValueError]\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+    ),
+    "exception class passed through a name an unpacking binds": (
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    kind, other = Refused, 1\n    raise _make('a', kind)"
+        ),
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    kind, other = Refused, 1\n    raise _make(key, kind)"
+        ),
+    ),
+    "exception class passed as an item of a parameter": (
+        (
+            "def _make(key, kind):\n    return kind('a')\n"
+            "def _pick(key, kinds):\n    return _make(key, kinds[0])\n"
+            "def f(key):\n    raise _pick(key, [ValueError])"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\n"
+            "def _pick(key, kinds):\n    return _make(key, kinds[0])\n"
+            "def f(key):\n    raise _pick(key, [ValueError])"
+        ),
+    ),
+    "item of a public function's parameter passed to one that builds": (
+        (
+            "def _make(key, kind):\n    return kind('a')\n"
+            "def pick(key, kinds):\n    return _make(key, kinds[0])"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\n"
+            "def pick(key, kinds):\n    return _make(key, kinds[0])"
+        ),
+    ),
+    "exception class passed as an item of an imported name": (
+        (
+            "from kinds import KINDS\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+        (
+            "from kinds import KINDS\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+    ),
+    "exception class passed as an item appended to a list": (
+        (
+            "KINDS = [str]\nKINDS.append(ValueError)\n"
+            "def _make(key, kind):\n    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS[1])"
+        ),
+        (
+            "KINDS = [str]\nKINDS.append(ValueError)\n"
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS[1])"
+        ),
+    ),
+    "exception class passed as an entry set in a dict": (
+        (
+            "KINDS = {}\nKINDS['a'] = ValueError\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS['a'])"
+        ),
+        (
+            "KINDS = {}\nKINDS['a'] = ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS['a'])"
+        ),
+    ),
+    "exception class passed as an item set in a list": (
+        (
+            "KINDS = [str]\nKINDS[0] = ValueError\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+        (
+            "KINDS = [str]\nKINDS[0] = ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+    ),
+    "exception class passed as an entry a dict is updated with": (
+        (
+            "KINDS = {'a': str}\nKINDS.update(a=ValueError)\n"
+            "def _make(key, kind):\n    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS['a'])"
+        ),
+        (
+            "KINDS = {'a': str}\nKINDS.update(a=ValueError)\n"
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS['a'])"
+        ),
+    ),
+    "exception class passed as an item of a list unpacked into": (
+        (
+            "from kinds import BASE\nKINDS = [*BASE]\n"
+            "def _make(key, kind):\n    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+        (
+            "from kinds import BASE\nKINDS = [*BASE]\n"
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS[0])"
+        ),
+    ),
+    "exception class passed as an entry of a dict unpacked into": (
+        (
+            "from kinds import BASE\nKINDS = {**BASE}\n"
+            "def _make(key, kind):\n    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS['a'])"
+        ),
+        (
+            "from kinds import BASE\nKINDS = {**BASE}\n"
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS['a'])"
+        ),
+    ),
+    "exception class passed as an operand of or": (
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n    other = None\n"
+            "    raise _make(key, other or Refused)"
+        ),
+        (
+            "Refused = ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n    other = None\n"
+            "    raise _make(key, other or Refused)"
+        ),
+    ),
+    "exception class passed through an assignment expression": (
+        (
+            "def _make(key, kind):\n    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, (k := ValueError))"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, (k := ValueError))"
+        ),
+    ),
+    "what a call answers passed through an assignment expression": (
+        (
+            "def _kind():\n    return ValueError\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, (k := _kind()))"
+        ),
+        (
+            "def _kind():\n    return ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, (k := _kind()))"
+        ),
+    ),
+    "exception class passed as an attribute of its own object": (
+        (
+            "def _make(key, kind):\n    return kind('a')\nclass _C:\n"
+            "    def __init__(self):\n        self.kind = ValueError\n"
+            "    def f(self, key):\n        raise _make(key, self.kind)"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\nclass _C:\n"
+            "    def __init__(self):\n        self.kind = ValueError\n"
+            "    def f(self, key):\n        raise _make(key, self.kind)"
+        ),
+    ),
+    "exception class passed as an attribute of a module": (
+        (
+            "import errs\ndef _make(key, kind):\n    return kind('a')\n"
+            "def f(key):\n    raise _make(key, errs.Refused)"
+        ),
+        (
+            "import errs\ndef _make(key, kind):\n    return kind(key)\n"
+            "def f(key):\n    raise _make(key, errs.Refused)"
+        ),
+    ),
+    "exception class passed as a class attribute": (
+        (
+            "def _make(key, kind):\n    return kind('a')\nclass _C:\n"
+            "    KIND = ValueError\n    def f(self, key):\n"
+            "        raise _make(key, self.KIND)"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\nclass _C:\n"
+            "    KIND = ValueError\n    def f(self, key):\n"
+            "        raise _make(key, self.KIND)"
+        ),
+    ),
+    "own class of a public classmethod a subclass may hand": (
+        (
+            "class _Base:\n    @classmethod\n    def make(cls, key):\n"
+            "        return cls('a')\nclass Refused(_Base, ValueError):\n"
+            "    pass"
+        ),
+        (
+            "class _Base:\n    @classmethod\n    def make(cls, key):\n"
+            "        return cls(key)\nclass Refused(_Base, ValueError):\n"
+            "    pass"
+        ),
+    ),
+    "own class of a public classmethod a subclass two down may hand": (
+        (
+            "class _Base:\n    @classmethod\n    def make(cls, key):\n"
+            "        return cls('a')\nclass _Mid(_Base):\n    pass\n"
+            "class Refused(_Mid, ValueError):\n    pass"
+        ),
+        (
+            "class _Base:\n    @classmethod\n    def make(cls, key):\n"
+            "        return cls(key)\nclass _Mid(_Base):\n    pass\n"
+            "class Refused(_Mid, ValueError):\n    pass"
+        ),
+    ),
+    "own object of a metaclass's public method, which is a class": (
+        ("class _Meta(type):\n    def make(cls, key):\n        return cls('a')"),
+        ("class _Meta(type):\n    def make(cls, key):\n        return cls(key)"),
+    ),
+    "exception class passed as an item of a name nothing binds": (
+        (
+            "def _make(key, kind):\n    return kind('a')\n"
+            "def f(key):\n    raise _make(key, KINDS[0])"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\n"
+            "def f(key):\n    raise _make(key, KINDS[0])"
+        ),
+    ),
+    "exception class passed as an item of what a call answers": (
+        (
+            "def _kinds():\n    return [ValueError]\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n    raise _make(key, _kinds()[0])"
+        ),
+        (
+            "def _kinds():\n    return [ValueError]\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n    raise _make(key, _kinds()[0])"
+        ),
+    ),
+    "exception class passed as what an await answers": (
+        (
+            "async def _kind():\n    return ValueError\n"
+            "def _make(key, kind):\n    return kind('a')\n"
+            "async def f(key):\n    raise _make(key, await _kind())"
+        ),
+        (
+            "async def _kind():\n    return ValueError\n"
+            "def _make(key, kind):\n    return kind(key)\n"
+            "async def f(key):\n    raise _make(key, await _kind())"
+        ),
+    ),
+    "exception class passed as what a yield answers": (
+        (
+            "def _make(key, kind):\n    return kind('a')\ndef f(key):\n"
+            "    kind = yield\n    raise _make(key, kind)"
+        ),
+        (
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    kind = yield\n    raise _make(key, kind)"
+        ),
+    ),
+    "exception class passed as what a yield from answers": (
+        (
+            "def _kinds():\n    yield\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n"
+            "    kind = yield from _kinds()\n    raise _make(key, kind)"
+        ),
+        (
+            "def _kinds():\n    yield\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    kind = yield from _kinds()\n    raise _make(key, kind)"
+        ),
+    ),
+    "own object of a method of a class deriving from ABCMeta": (
+        (
+            "from abc import ABCMeta\nclass _Meta(ABCMeta):\n"
+            "    def make(cls, key):\n        return cls('a')"
+        ),
+        (
+            "from abc import ABCMeta\nclass _Meta(ABCMeta):\n"
+            "    def make(cls, key):\n        return cls(key)"
+        ),
+    ),
+    "own object of a method of a class deriving from abc.ABCMeta": (
+        (
+            "import abc\nclass _Meta(abc.ABCMeta):\n"
+            "    def make(cls, key):\n        return cls('a')"
+        ),
+        (
+            "import abc\nclass _Meta(abc.ABCMeta):\n"
+            "    def make(cls, key):\n        return cls(key)"
+        ),
+    ),
+    "own object of a method of a class deriving from EnumType": (
+        (
+            "from enum import EnumType\nclass _Meta(EnumType):\n"
+            "    def make(cls, key):\n        return cls('a')"
+        ),
+        (
+            "from enum import EnumType\nclass _Meta(EnumType):\n"
+            "    def make(cls, key):\n        return cls(key)"
+        ),
     ),
     "class of the package a parameter shadows": (
         "class Refused(Exception):\n    pass\ndef f(key):\n    try:\n        key.decode()\n    except Refused:\n        raise ValueError('a')",
