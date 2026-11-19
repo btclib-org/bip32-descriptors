@@ -22,8 +22,10 @@ It reads as an exception the package builds each call of a name ending in
 `Error` or `Exception`, or of a name a `class` statement, an assignment or
 an import binds to such a class or to a class of the package that may be
 an exception: one deriving, through classes of the package, from a base
-that is neither one of them nor one of `_PLAIN_BASES`. A parameter of the
-name, of any kind, binds it to what a caller passes: a call of it is a
+that is neither one of them nor one of `_PLAIN_BASES`. An import from a
+module of the package binds a name to what that module binds it to. A
+parameter of the name, of any kind, binds it to what a caller passes: a
+call of it is a
 site, whose arguments are traced, where its default or what a call of the
 package passes there, read as for a parameter below, a method's own object
 or class included, is such a class, or where the census cannot read what a
@@ -949,6 +951,7 @@ class _Census:
         A name ending in `Error` or `Exception`, or a name a `class`
         statement, an assignment or an import binds to such a name or to an
         exception class of the package, as `_exception_classes` finds them,
+        or an import binds to what a module of the package binds it to,
         in the scope that binds it or in a scope that declares it `global`
         or `nonlocal`. Short of that, a parameter of the name, of any kind,
         binds it to what a caller passes, which the outer scopes do not say:
@@ -1061,15 +1064,32 @@ class _Census:
                     found.append((caller, call.args[position]))
         return found
 
-    def _binds_exception(self, binding: ast.AST, name: str) -> bool:
-        """Return whether a binding binds a name to an exception class."""
+    def _binds_exception(
+        self,
+        binding: ast.AST,
+        name: str,
+        seen: frozenset[tuple[str, str]] = frozenset(),
+    ) -> bool:
+        """Return whether a binding binds a name to an exception class.
+
+        An import from a module of the package binds it to what any binding
+        of that module binds the name imported to; `seen` holds each module
+        and name already followed, so that a cycle binds it to none.
+        """
         classes = self._exception_classes()
         if isinstance(binding, ast.ClassDef):
             return binding.name == name and name in classes
         if isinstance(binding, (ast.Import, ast.ImportFrom)):
             return any(
                 (a.asname or a.name) == name
-                and (_names_exception(a.name) or a.name in classes)
+                and (
+                    _names_exception(a.name)
+                    or a.name in classes
+                    or (
+                        isinstance(binding, ast.ImportFrom)
+                        and self._exports_exception(binding, a.name, seen)
+                    )
+                )
                 for a in binding.names
             )
         if isinstance(binding, (ast.Assign, ast.AnnAssign)) and _rebinds(binding, name):
@@ -1078,6 +1098,23 @@ class _Census:
                 _names_exception(source) or source in classes
             )
         return False
+
+    def _exports_exception(
+        self, binding: ast.ImportFrom, name: str, seen: frozenset[tuple[str, str]]
+    ) -> bool:
+        """Return whether the module imported from binds a name to an exception.
+
+        The module is one of the package, and each of its bindings is read
+        as `_binds_exception` reads it.
+        """
+        source = self._module_of(binding.module or "")
+        if source is None or (source.name, name) in seen:
+            return False
+        seen |= {(source.name, name)}
+        return any(
+            self._binds_exception(node, name, seen)
+            for node in self._scope_nodes(source.tree)
+        )
 
     def _exception_classes(self) -> set[str]:
         """Return each class of the package that may be an exception, by name.
@@ -2702,10 +2739,11 @@ _ON_SELF = (
     "    def f(self, key):\n{}        raise ValueError(self._text())"
 )
 
-# one module per shape the docstring claims, each refusing `key`, a public
-# function's parameter, or a value made from it: the census traces the
-# first of each pair and flags the second
-_SHAPES = {
+# one module per shape the docstring claims, or the modules by name where
+# the shape takes more than one, each refusing `key`, a public function's
+# parameter, or a value made from it: the census traces the first of each
+# pair and flags the second
+_SHAPES: dict[str, tuple[str | dict[str, str], str | dict[str, str]]] = {
     "literal": (
         "def f(key):\n    raise ValueError('a literal')",
         "def f(key):\n    raise ValueError(key)",
@@ -5000,14 +5038,33 @@ _SHAPES = {
             "    raise ValueError(x)\ndef f(key):\n    _g(key)"
         ),
     ),
+    "class imported from a module that assigns it": (
+        {
+            "errs.py": "Refused = ValueError",
+            "m.py": (
+                "from errs import Refused\ndef _make(key, kind):\n"
+                "    return kind(key)\ndef f(key):\n    raise _make(key, str)"
+            ),
+        },
+        {
+            "errs.py": "Refused = ValueError",
+            "m.py": (
+                "from errs import Refused\ndef _make(key, kind):\n"
+                "    return kind(key)\ndef f(key):\n    raise _make(key, Refused)"
+            ),
+        },
+    ),
 }
 
 
 @pytest.mark.parametrize("traced, flagged", _SHAPES.values(), ids=_SHAPES)
-def test_census_controls(traced: str, flagged: str) -> None:
-    """The census traces one module of a shape and flags the other."""
-    assert not _census({"m.py": traced}).findings()
-    assert _census({"m.py": flagged}).findings()
+def test_census_controls(
+    traced: str | dict[str, str], flagged: str | dict[str, str]
+) -> None:
+    """The census traces the modules of a shape and flags the others."""
+    for sources, flags in [(traced, False), (flagged, True)]:
+        modules = sources if isinstance(sources, dict) else {"m.py": sources}
+        assert bool(_census(modules).findings()) is flags
 
 
 @pytest.mark.parametrize(
@@ -5096,3 +5153,16 @@ def test_census_finds_no_class_in_an_import_cycle() -> None:
         "m.py": f"from a import FetchError\n{_RELAY.format('FetchError')}",
     }
     assert _census(sources).findings()
+
+
+def test_census_builds_no_exception_through_an_import_cycle() -> None:
+    """A name two modules import from each other builds no exception."""
+    sources = {
+        "a.py": "from b import Refused",
+        "b.py": "from a import Refused",
+        "m.py": (
+            "from a import Refused\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n    raise _make(key, Refused)"
+        ),
+    }
+    assert not _census(sources).findings()
