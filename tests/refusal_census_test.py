@@ -1056,16 +1056,27 @@ class _Census:
     def _derived(self, base: str) -> set[str]:
         """Return each class of the package that derives from a base, by name.
 
-        The base itself too, and, until nothing changes, each class one of
-        whose bases is among them.
+        The base itself too, as `_closure` reads that.
         """
-        bases = {
+        return self._closure({base})
+
+    def _bases(self) -> dict[str, set[str]]:
+        """Return the names of the bases of each class of the package."""
+        return {
             name: {
-                _base_name(each) for class_def in class_defs for each in class_def.bases
+                _base_name(base) for class_def in class_defs for base in class_def.bases
             }
             for name, class_defs in self.class_defs.items()
         }
-        found = {base}
+
+    def _closure(self, seed: set[str]) -> set[str]:
+        """Return the classes named and each class deriving from one of them.
+
+        The names given, and then, until nothing changes, each class of the
+        package one of whose bases is among them.
+        """
+        bases = self._bases()
+        found = set(seed)
         changed = True
         while changed:
             changed = False
@@ -1118,7 +1129,8 @@ class _Census:
 
         A list, a tuple or a dict written out, with no item or entry
         unpacked into it, and a name the scope that binds it assigns only
-        such values to and puts no value into, as `_mutations` reads that.
+        such values to, puts no value into, as `_mutations` reads that, and
+        hands to no other name or call that may, as `_escapes` reads that.
         Otherwise the container itself, a call answering what the census
         cannot read: a name bound by a parameter, an import or nothing among
         them.
@@ -1129,7 +1141,11 @@ class _Census:
             values = self._assigned(container, module)
             # a name `_assigned` gives a value for has a scope that binds it
             scope = cast("ast.AST", self._binder(container, module)[0])
-            if not values or self._mutations(scope).get(container.id):
+            if (
+                not values
+                or self._mutations(scope).get(container.id)
+                or self._escapes(scope, container.id, module)
+            ):
                 return unknown
         found: list[ast.expr] = []
         for value in values:
@@ -1144,20 +1160,22 @@ class _Census:
         return found
 
     def _assigned(self, name: ast.Name, module: _Module) -> list[ast.expr]:
-        """Return each value the scope that binds a name assigns it.
+        """Return each value a name is assigned where it is read.
 
-        A binding of another kind but a `def`, a `class` or an import, an
+        By the scope that binds it and by each scope around the read that
+        declares it `global` or `nonlocal`, as `_binder` finds them. A
+        binding of another kind but a `def`, a `class` or an import, an
         unpacking or a comprehension's `for` among them, gives a call, which
         answers what the census cannot read; a parameter, a builtin and a
         name the source does not bind give nothing.
         """
-        scope = self._binder(name, module)[0]
+        scope, declared = self._binder(name, module)
         if scope is None:
             return []
         if isinstance(scope, _COMPREHENSIONS):
             return [ast.Call(func=name, args=[], keywords=[])]
         found: list[ast.expr] = []
-        for node in self._scope_nodes(scope):
+        for node in (n for each in (scope, *declared) for n in self._scope_nodes(each)):
             if not _rebinds(node, name.id) or isinstance(node, _DECLARED):
                 continue
             if isinstance(node, (ast.Assign, ast.AnnAssign)) and (
@@ -1258,27 +1276,13 @@ class _Census:
         any of them. A class with no base, or only plain ones, is not.
         """
         if self.exceptions is None:
-            bases = {
-                name: {
-                    _base_name(base)
-                    for class_def in class_defs
-                    for base in class_def.bases
+            self.exceptions = self._closure(
+                {
+                    name
+                    for name, named in self._bases().items()
+                    if named - set(self.class_defs) - _PLAIN_BASES
                 }
-                for name, class_defs in self.class_defs.items()
-            }
-            found = {
-                name
-                for name, named in bases.items()
-                if named - set(self.class_defs) - _PLAIN_BASES
-            }
-            changed = True
-            while changed:
-                changed = False
-                for name, named in bases.items():
-                    if name not in found and named & found:
-                        found.add(name)
-                        changed = True
-            self.exceptions = found
+            )
         return self.exceptions
 
     def findings(
@@ -4222,6 +4226,73 @@ _SHAPES = {
         (
             "from enum import EnumType\nclass _Meta(EnumType):\n"
             "    def make(cls, key):\n        return cls(key)"
+        ),
+    ),
+    "exception class passed through a global a call result is assigned to": (
+        (
+            "kind = str\ndef _kind():\n    return ValueError\n"
+            "def _make(key, kind):\n    return kind('a')\ndef f(key):\n"
+            "    global kind\n    kind = _kind()\n"
+            "    raise _make(key, kind)"
+        ),
+        (
+            "kind = str\ndef _kind():\n    return ValueError\n"
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    global kind\n    kind = _kind()\n"
+            "    raise _make(key, kind)"
+        ),
+    ),
+    "exception class passed through a nonlocal a call result is assigned to": (
+        (
+            "def _kind():\n    return ValueError\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n    kind = str\n"
+            "    def g():\n        nonlocal kind\n        kind = _kind()\n"
+            "        raise _make(key, kind)\n    return g"
+        ),
+        (
+            "def _kind():\n    return ValueError\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n    kind = str\n"
+            "    def g():\n        nonlocal kind\n        kind = _kind()\n"
+            "        raise _make(key, kind)\n    return g"
+        ),
+    ),
+    "exception class put into a list through another name": (
+        (
+            "KINDS = [str]\nalias = KINDS\nalias.append(ValueError)\n"
+            "def _make(key, kind):\n    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS[1])"
+        ),
+        (
+            "KINDS = [str]\nalias = KINDS\nalias.append(ValueError)\n"
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS[1])"
+        ),
+    ),
+    "exception class put into a list by a call it is handed to": (
+        (
+            "def _add(kinds):\n    kinds.append(ValueError)\n"
+            "KINDS = [str]\n_add(KINDS)\ndef _make(key, kind):\n"
+            "    return kind('a')\ndef f(key):\n"
+            "    raise _make(key, KINDS[1])"
+        ),
+        (
+            "def _add(kinds):\n    kinds.append(ValueError)\n"
+            "KINDS = [str]\n_add(KINDS)\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n"
+            "    raise _make(key, KINDS[1])"
+        ),
+    ),
+    "global a function declares and leaves as assigned": (
+        (
+            "kind = str\ndef _kind():\n    return ValueError\n"
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    global kind\n    raise _make(key, kind)"
+        ),
+        (
+            "kind = str\ndef _kind():\n    return ValueError\n"
+            "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+            "    global kind\n    kind = _kind()\n"
+            "    raise _make(key, kind)"
         ),
     ),
     "class of the package a parameter shadows": (
