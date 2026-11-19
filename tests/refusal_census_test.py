@@ -87,10 +87,13 @@ module of the package it is imported from; an attribute called is every
 method of that name in the package, and what it is called on is traced
 too, but for a method's own object or class and `super()`. A method takes
 first what it is called on, or nothing where it is called through a class
-of the package or through a `@classmethod`'s own class. A `@classmethod`
-takes its class first however it is called, and a `@staticmethod` takes
-nothing. Its decorator says which, not the name of its first parameter;
-a decorator that is not provably one of those or of
+of the package or through a `@classmethod`'s own class, but for a method
+of a metaclass, a class deriving from `type` through classes of the
+package: called on a class whose `metaclass=` keyword, or a base's of the
+package, names it or a class deriving from it, it takes that class first.
+A `@classmethod` takes its class first however it is called, and a
+`@staticmethod` takes nothing. Its decorator says which, not the name of
+its first parameter; a decorator that is not provably one of those or of
 `_KEEPING_DECORATORS`, taken from its home as `_decorator_name` reads
 that, may hand it anything, anywhere. So the census does not trace a
 parameter of a public function, of a lambda or of a method with such a
@@ -1013,11 +1016,11 @@ class _Census:
         unpacks what it passes, or where the function is a method with
         another decorator, as `_other_decorator` reads that. A method's own
         object is what each call is called on, or its first argument where
-        it is called through a class; a `@classmethod`'s own class is what
-        each call is called through, and None where it is called on an
-        object, whose class the census does not name. A parameter of a
-        public function or of a lambda, or of a function read as a value,
-        has its default alone.
+        it is called through a class, as `_handed` reads that; a
+        `@classmethod`'s own class is what each call is called through, and
+        None where it is called on an object, whose class the census does
+        not name. A parameter of a public function or of a lambda, or of a
+        function read as a value, has its default alone.
         """
         arg = next(arg for arg in _arguments(func) if arg.arg == name)
         func_args: ast.arguments = func.args  # type: ignore[attr-defined]
@@ -1423,7 +1426,66 @@ class _Census:
             return 0
         if _decorated(func, "classmethod", module):
             return 1
-        return 0 if self._through_class(call.func.value, caller) else 1
+        receiver = call.func.value
+        if not self._through_class(receiver, caller):
+            return 1
+        owner = cast("ast.ClassDef", module.parents[func])
+        return 1 if self._built_by(receiver, caller, owner.name) else 0
+
+    def _built_by(self, receiver: ast.expr, module: _Module, meta: str) -> bool:
+        """Return whether a class a method is called on is built by a metaclass.
+
+        The metaclass derives from `type`, as `_derives` reads that, and
+        the class, named or the one a `@classmethod` is handed first, is
+        built by it, as `_metaclass_is` reads that. Called through the
+        metaclass itself, a method is handed nothing first.
+        """
+        if not self._derives(meta, "type", frozenset()):
+            return False
+        method = self._receiver_of(receiver, module)
+        name = (
+            _called_name(receiver)
+            if method is None
+            else cast("ast.ClassDef", module.parents[method]).name
+        )
+        return name is not None and self._metaclass_is(name, meta, frozenset())
+
+    def _derives(self, name: str, base: str, seen: frozenset[str]) -> bool:
+        """Return whether a class is a base or derives from it, by their names.
+
+        Through the bases of each class of the package of that name.
+        """
+        if name == base:
+            return True
+        return name not in seen and any(
+            self._derives(_base_name(each), base, seen | {name})
+            for class_def in self.class_defs.get(name, [])
+            for each in class_def.bases
+        )
+
+    def _metaclass_is(self, name: str, meta: str, seen: frozenset[str]) -> bool:
+        """Return whether each class of the package of a name has a metaclass.
+
+        Its `metaclass=` keyword names the metaclass or a class deriving
+        from it, or one of its bases is a class of the package that has it.
+        """
+        class_defs = self.class_defs.get(name, [])
+        return (
+            name not in seen
+            and bool(class_defs)
+            and all(
+                any(
+                    self._derives(_base_name(k.value), meta, frozenset())
+                    for k in class_def.keywords
+                    if k.arg == "metaclass"
+                )
+                or any(
+                    self._metaclass_is(_base_name(each), meta, seen | {name})
+                    for each in class_def.bases
+                )
+                for class_def in class_defs
+            )
+        )
 
     def _through_class(self, receiver: ast.expr, module: _Module) -> bool:
         """Return whether what a method is called on is a class, not an object.
@@ -4229,6 +4291,18 @@ _SHAPES = {
         ),
         _ON_SELF.format(
             "        class _D(metaclass=(self := key)):\n            pass\n"
+        ),
+    ),
+    "a metaclass's method called on a class it builds": (
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls('a')\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise Refused._make(key)"
+        ),
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls(key)\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise Refused._make(key)"
         ),
     ),
     "an exception raised by name, an attribute of it set": (
