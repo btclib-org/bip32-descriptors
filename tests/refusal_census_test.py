@@ -983,8 +983,9 @@ class _Census:
         A name ending in `Error` or `Exception`, or a name a `class`
         statement, an assignment or an import binds to such a name or to an
         exception class of the package, as `_exception_classes` finds them,
-        in the scope that binds it or in a scope that declares it `global`
-        or `nonlocal`. Short of that, a parameter of the name, of any kind,
+        in the scope that binds it, and in the module too where that scope
+        is a class body, or in a scope that declares it `global` or
+        `nonlocal`. Short of that, a parameter of the name, of any kind,
         binds it to what a caller passes, which the outer scopes do not say:
         it is one where its default and what every call of the package
         passes there are, as `_passed` reads them. With `maybe` it may be
@@ -1010,8 +1011,14 @@ class _Census:
             arg.arg == name for arg in _arguments(scope)
         ):
             return self._parameter_builds(scope, name, module, seen, maybe=maybe)
-        return scope is not None and any(
-            self._binds_exception(binding, name) for binding in self._scope_nodes(scope)
+        if scope is None:
+            return False
+        # a class body reads a name it has not bound yet from the module
+        scopes = [scope, module.tree] if isinstance(scope, ast.ClassDef) else [scope]
+        return any(
+            self._binds_exception(binding, name)
+            for each in scopes
+            for binding in self._scope_nodes(each)
         )
 
     def _parameter_builds(
@@ -4518,6 +4525,16 @@ _SHAPES = {
         (
             "import sys\ne = sys.argv\ndef f(key):\n    class _D:\n"
             "        raise e\n        e = ValueError('a')"
+        ),
+    ),
+    "an exception a class body builds before it binds the name": (
+        (
+            "E = ValueError\ndef f(key):\n    class _D:\n        x = E('a')\n"
+            "        E = int"
+        ),
+        (
+            "E = ValueError\ndef f(key):\n    class _D:\n        x = E(key)\n"
+            "        E = int"
         ),
     ),
     "a call of a name the class body binds": (
