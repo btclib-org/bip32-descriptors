@@ -712,12 +712,13 @@ def _inside(node: ast.AST, holders: list[ast.AST], module: _Module) -> bool:
 def _binds_into(
     outer: ast.AST, inner: ast.AST, scope: ast.ClassDef, binds: set[int]
 ) -> tuple[int, int] | None:
-    """Return where a block last binds a name before a node, or None.
+    """Return where `outer` binds a name on the way to `inner`, or None.
 
-    A statement of the block of `outer` that holds `inner`, before it, that
-    binds the name, a loop aside, which may not run; or `outer` itself, a
-    loop, a `with` or an `except` whose body holds `inner`. `binds` holds
-    the ids of the nodes that bind the name.
+    `outer` itself, where it binds the name and its body holds `inner`, as
+    a loop, a `with` or an `except` does; otherwise the last statement
+    before `inner`, in the block of `outer` that holds it, that binds the
+    name, a loop aside, which may not run. `binds` holds the ids of the
+    nodes that bind the name.
     """
     found: tuple[int, int] | None = None
     for field_name in ("body", "orelse", "finalbody"):
@@ -882,7 +883,8 @@ class _Census:
     nodes: dict[int, list[ast.AST]] = field(default_factory=dict)
     mutations: dict[int, dict[str, list[ast.AST]]] = field(default_factory=dict)
     global_bindings: dict[int, dict[str, list[ast.AST]]] = field(default_factory=dict)
-    # the nodes of a class body that bind and unbind a name, by both
+    # by the id of a class body and a name, the nodes of that class body
+    # that bind the name, and those that unbind it
     class_names: dict[tuple[int, str], tuple[list[ast.AST], list[ast.AST]]] = field(
         default_factory=dict
     )
