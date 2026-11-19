@@ -1656,7 +1656,9 @@ class _Census:
         """Return whether a name, or an item of it, holds own exceptions alone.
 
         Each value put into it is an empty literal, None, or the exception
-        an `except` of the package's own classes binds.
+        an `except` of the package's own classes binds: the nearest `except`
+        around the value that binds its name, whatever another `except` of
+        the scope binds to the same name.
         """
         while isinstance(cause, ast.Subscript):
             cause = cause.value
@@ -1665,13 +1667,15 @@ class _Census:
         scope = self._local_scope(cause, module)
         if scope is None:
             return False
-        own = {
-            handler.name
-            for handler in self._scope_nodes(scope)
-            if isinstance(handler, ast.ExceptHandler)
-            and handler.name
-            and self._own(handler.type, module)
-        }
+
+        def own(value: ast.Name) -> bool:
+            parent = module.parents.get(value)
+            while parent is not None and parent is not scope:
+                if isinstance(parent, ast.ExceptHandler) and parent.name == value.id:
+                    return self._own(parent.type, module)
+                parent = module.parents.get(parent)
+            return False
+
         values: list[ast.expr | None] = []
         for node in self._filling(scope, cause.id):
             if _mutates(node, cause.id):
@@ -1684,7 +1688,7 @@ class _Census:
         return bool(values) and all(
             (isinstance(value, (ast.List, ast.Tuple)) and not value.elts)
             or (isinstance(value, ast.Constant) and value.value is None)
-            or (isinstance(value, ast.Name) and value.id in own)
+            or (isinstance(value, ast.Name) and own(value))
             for value in values
         )
 
@@ -3340,6 +3344,30 @@ _SHAPES = {
         (
             "def f(key):\n    seen = []\n    try:\n        pass\n"
             "    except ValueError as e:\n        seen.append(e)\n"
+            "    raise ValueError('a') from seen[-1]"
+        ),
+    ),
+    "cause kept by the except that binds it": (
+        (
+            "class _OwnError(Exception):\n    pass\ndef f(key):\n    saved = []\n"
+            "    try:\n        key.decode()\n    except _OwnError as err:\n"
+            "        saved.append(err)\n    except UnicodeError as err:\n"
+            "        pass\n    raise ValueError('a') from saved[0]"
+        ),
+        (
+            "class _OwnError(Exception):\n    pass\ndef f(key):\n    saved = []\n"
+            "    try:\n        key.decode()\n    except _OwnError as err:\n"
+            "        pass\n    except UnicodeError as err:\n"
+            "        saved.append(err)\n    raise ValueError('a') from saved[0]"
+        ),
+    ),
+    "cause kept outside an except": (
+        (
+            "def f(key):\n    seen = []\n    seen.append(None)\n"
+            "    raise ValueError('a') from seen[-1]"
+        ),
+        (
+            "def f(key, err):\n    seen = []\n    seen.append(err)\n"
             "    raise ValueError('a') from seen[-1]"
         ),
     ),
