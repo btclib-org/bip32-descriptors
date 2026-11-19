@@ -25,15 +25,18 @@ an exception: one deriving, through classes of the package, from a base
 that is neither one of them nor one of `_PLAIN_BASES`. A parameter of the
 name, of any kind, binds it to what a caller passes: a call of it is a
 site, whose arguments are traced, where its default or what a call of the
-package passes there, read as for a parameter below, is such a class, or
-where such a call unpacks its arguments; what it builds is taken for an
-exception only where every one of them is. It reads the exception of each
-`raise` too, but not what a function of the package returns, nor the
-exception an `except` around the `raise` binds, nor a name each value of
-which its scope assigns is `None`, such a call, or a call of a function of
-the package each of whose `return`s is one; a bare annotation assigns it
-nothing. Every argument of each has to be traced to values a refusal may
-print, and what the census cannot trace is a finding. It traces
+package passes there, read as for a parameter below, a method's own object
+or class included, is such a class, or where the census cannot read what a
+call passes there: a call that unpacks its arguments, a `@classmethod`
+called on an object, or a method with another decorator, as below; what
+it builds is taken for an exception only where every one of them is. It
+reads the exception of each `raise` too, but not what a function of the
+package returns, nor the exception an `except` around the `raise` binds,
+nor a name each value of which its scope assigns is `None`, such a call,
+or a call of a function of the package each of whose `return`s is one; a
+bare annotation assigns it nothing. Every argument of each has to be
+traced to values a refusal may print, and what the census cannot trace
+is a finding. It traces
 
 - a literal, a comparison, a name bound by a `def`, a `class` or an
   import but one of `_PROCESS_INPUT`, a builtin of `_PURE_BUILTINS` or
@@ -67,8 +70,9 @@ print, and what the census cannot trace is a finding. It traces
   written out, the column the name takes;
 - a local or module name, where it traces every value the name is bound
   to, what a `with` binds traced as the call it makes, and every value
-  put into it anywhere in the scope, by a method such as `append` or by
-  an assignment to an item or an attribute;
+  put into it anywhere in the scope, by a method such as `append`, or by
+  an assignment, a loop, a comprehension or a `with` that stores an item
+  or an attribute of it;
 - a parameter of a private function, where it traces what every call in
   the package passes there, and its default, read in the scope where the
   `def` stands;
@@ -81,12 +85,20 @@ print, and what the census cannot trace is a finding. It traces
 A name called is the `def` of the scope that binds it, or the one of the
 module of the package it is imported from; an attribute called is every
 method of that name in the package, and what it is called on is traced
-too, but for `self`, `cls` and `super()`. So the census does not trace a
-parameter of a public function or of a lambda, a method's `self`, a
-function read as a value rather than called, the exception an `except`
-binds, or what `_PROCESS_INPUT` names. Each of these holds what a caller,
-a server or another program handed over, and reaches a refusal only
-through `_code`, `_message_text`, `_position` or `_quoted`, or not at all.
+too, but for a method's own object or class and `super()`. A method takes
+first what it is called on, or nothing where it is called through a class
+of the package or through a `@classmethod`'s own class. A `@classmethod`
+takes its class first however it is called, and a `@staticmethod` takes
+nothing. Its decorator says which, not the name of its first parameter;
+a decorator that is not provably one of those or of
+`_KEEPING_DECORATORS`, taken from its home as `_decorator_name` reads
+that, may hand it anything, anywhere. So the census does not trace a
+parameter of a public function, of a lambda or of a method with such a
+decorator, a method's own object or class, a function read as a value
+rather than called, the exception an `except` binds, or what
+`_PROCESS_INPUT` names. Each of these holds what a caller, a server or
+another program handed over, and reaches a refusal only through `_code`,
+`_message_text`, `_position` or `_quoted`, or not at all.
 
 What a refusal still raises that the census does not trace is in `KEPT`,
 an exception one function raises by name, each entry with its reason. An
@@ -106,8 +118,10 @@ bound to in its own scope, a list, a dict, a set or what a call of
 finding: another name, an item of another container, and an argument of
 a call other than a refusal, one of `_READERS`, or a function of the
 package whose parameter neither has a value put into it nor is handed on
-in turn. A container reached any other way, through an attribute or what
-a call answers, is not followed past the name the census reads.
+in turn, called without unpacking an argument and not a method with
+another decorator, as above. A container reached any other way, through
+an attribute or what a call answers, is not followed past the name the
+census reads.
 
 An exception that is not one of the package's classes may hold the input,
 as a `UnicodeError` holds its bytes, so no refusal chains one or has it as
@@ -158,6 +172,7 @@ from __future__ import annotations
 import ast
 import io
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -178,8 +193,6 @@ _OUTSIDE_CALLS = frozenset(
     {"fields", "frozenset", "next", "sorted", "str", "sum", "zip"}
 )
 _OUTSIDE_METHODS = frozenset({"fromkeys", "get", "hex", "items", "join"})
-# the names a method is called on that make it one of its own class's
-_BOUND = frozenset({"self", "cls"})
 # what a module holds that the process was handed
 _PROCESS_INPUT = frozenset(
     {
@@ -305,8 +318,22 @@ _READERS = frozenset(
     }
 )
 _CONSTANT = re.compile(r"_*[A-Z][A-Z0-9_]*")
+# the decorators of the package's methods that hand a method what it is
+# called on first, as an undecorated one is handed it
+_KEEPING_DECORATORS = frozenset({"abstractmethod", "override", "property"})
+# the modules a method's decorator is imported from, by its name
+_DECORATOR_HOMES = {
+    "abstractmethod": ("abc",),
+    "classmethod": ("builtins",),
+    "override": ("typing", "typing_extensions"),
+    "property": ("builtins",),
+    "staticmethod": ("builtins",),
+}
 _FUNCTION = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 _COMPREHENSION = (ast.ListComp, ast.SetComp, ast.GeneratorExp)
+_COMPREHENSIONS = (*_COMPREHENSION, ast.DictComp)
+# a `type` statement, which Python parses from 3.12 on
+_TYPE_ALIAS = getattr(ast, "TypeAlias", ())
 _BINDING = (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr)
 _LOOP = (ast.For, ast.AsyncFor, ast.comprehension)
 _DECLARED = (ast.Import, ast.ImportFrom, *_FUNCTION, ast.ClassDef)
@@ -316,12 +343,13 @@ def _private(name: str) -> bool:
     return name.startswith("_") and not name.endswith("__")
 
 
-def _bound(receiver: ast.expr) -> bool:
-    """Return whether a method is called on `self`, `cls` or `super()`."""
-    if isinstance(receiver, ast.Call):
-        receiver = receiver.func
-        return isinstance(receiver, ast.Name) and receiver.id == "super"
-    return isinstance(receiver, ast.Name) and receiver.id in _BOUND
+def _on_super(receiver: ast.expr) -> bool:
+    """Return whether a method is called on what `super()` answers."""
+    return (
+        isinstance(receiver, ast.Call)
+        and isinstance(receiver.func, ast.Name)
+        and receiver.func.id == "super"
+    )
 
 
 def _called_name(func: ast.expr) -> str | None:
@@ -343,17 +371,66 @@ def _arguments(func: ast.AST) -> list[ast.arg]:
 
 
 def _own_nodes(scope: ast.AST) -> list[ast.AST]:
-    """Return the nodes of a scope, not entering a nested function or class."""
+    """Return the nodes of a scope, not entering a nested function or class.
+
+    A function's own are those of its body: what `_read_around` returns of it
+    is read in the scope around it, as is that of a nested function or class.
+    """
     found: list[ast.AST] = []
-    todo = list(ast.iter_child_nodes(scope))
+    if isinstance(scope, ast.Lambda):
+        todo: list[ast.AST] = [scope.body]
+    elif isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        todo = list(scope.body)
+    else:
+        todo = list(ast.iter_child_nodes(scope))
     while todo:
         node = todo.pop()
         found.append(node)
         if isinstance(node, (*_FUNCTION, ast.ClassDef)):
-            # its decorators are read in this scope, its body is not
-            todo.extend(getattr(node, "decorator_list", []))
+            todo.extend(_read_around(node))
             continue
         todo.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def _block_nodes(statements: list[ast.stmt]) -> list[ast.AST]:
+    """Return what a block runs: its statements and the nodes they hold.
+
+    A class's body runs where the class stands, so it is entered; a
+    function's or a lambda's runs when it is called, so only what
+    `_read_around` reads of it is.
+    """
+    found: list[ast.AST] = []
+    todo: list[ast.AST] = list(statements)
+    while todo:
+        node = todo.pop()
+        found.append(node)
+        if isinstance(node, _FUNCTION):
+            todo.extend(_read_around(node))
+            continue
+        todo.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def _read_around(node: ast.AST) -> list[ast.AST]:
+    """Return what the scope around a function or a class reads of it.
+
+    Its decorators, the defaults of its parameters, a function's annotations
+    and a class's bases and keywords. Python 3.11 to 3.13 run an annotation
+    where the `def` stands, unless the module postpones it; the census reads
+    it there whether or not it does.
+    """
+    found: list[ast.AST] = list(getattr(node, "decorator_list", []))
+    args: ast.arguments | None = getattr(node, "args", None)
+    if args is not None:
+        found.extend(args.defaults)
+        found.extend(d for d in args.kw_defaults if d is not None)
+        found.extend(a.annotation for a in _arguments(node) if a.annotation)
+    returns = getattr(node, "returns", None)
+    if returns is not None:
+        found.append(returns)
+    found.extend(getattr(node, "bases", []))
+    found.extend(getattr(node, "keywords", []))
     return found
 
 
@@ -372,8 +449,7 @@ def _cleanup(handler: ast.ExceptHandler) -> bool:
     exits = (ast.Raise, ast.Return, ast.Break, ast.Continue, ast.Yield, ast.YieldFrom)
     others = [
         node
-        for statement in handler.body
-        for node in [statement, *_own_nodes(statement)]
+        for node in _block_nodes(handler.body)
         if isinstance(node, exits) and node is not last
     ]
     return (
@@ -500,9 +576,10 @@ def _mutates(node: ast.AST, name: str) -> bool:
 
 
 def _mutated(node: ast.AST) -> list[str]:
-    """Return the names a node puts values into, by a call or an assignment.
+    """Return the names a node puts values into: by a call, or as a target.
 
-    `x.append(v)` puts `v` into `x`, and so do `x[k] = v` and `x.k = v`.
+    `x.append(v)` puts `v` into `x`, and so do `x[k] = v` and `x.k = v`, and
+    a loop, a comprehension or a `with` whose target is `x[k]` or `x.k`.
     """
     if isinstance(node, ast.Call):
         func = node.func
@@ -513,11 +590,8 @@ def _mutated(node: ast.AST) -> list[str]:
         ):
             return [func.value.id]
         return []
-    if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-        return []
-    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
     found: list[str] = []
-    for target in targets:
+    for target in _targets(node):
         for part in ast.walk(target):
             if isinstance(part, (ast.Subscript, ast.Attribute)):
                 root = part.value
@@ -528,30 +602,92 @@ def _mutated(node: ast.AST) -> list[str]:
     return found
 
 
-def _binds(node: ast.AST, name: str) -> bool:  # noqa: PLR0911
-    """Return whether a node binds a name in the scope it belongs to."""
-    if _mutates(node, name):
-        return True
-    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+def _targets(node: ast.AST) -> list[ast.expr]:
+    """Return what an assignment, a loop, a comprehension or a `with` stores."""
+    if isinstance(node, ast.Assign):
+        return node.targets
+    if isinstance(node, (ast.AnnAssign, ast.AugAssign, *_LOOP)):
+        return [node.target]
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return [i.optional_vars for i in node.items if i.optional_vars]
+    return []
+
+
+def _stores(target: ast.AST, name: str) -> bool:
+    """Return whether a target stores the name, not an item or attribute."""
+    return any(
+        isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, ast.Store)
+        for node in ast.walk(target)
+    )
+
+
+def _rebinds(node: ast.AST, name: str) -> bool:
+    """Return whether a node makes a name refer to another object.
+
+    A store of the name, by an assignment, a loop, a `with` or `:=`; an
+    `except ... as`, a `def`, a `class`, a `type` statement or an import of
+    it; and a pattern that captures it. Setting an attribute or an item of
+    what the name holds, or putting a value into it, does not, nor does a
+    bare annotation, a `global` or a `nonlocal`, which only declare it, nor
+    the target of a comprehension, whose scope is its own.
+    """
+    if isinstance(node, (*_BINDING, ast.For, ast.AsyncFor)):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        return any(name in _names(target) for target in targets)
-    if isinstance(node, (*_LOOP, ast.NamedExpr)):
-        return name in _names(node.target)
+        bare = isinstance(node, ast.AnnAssign) and node.value is None
+        return not bare and any(_stores(target, name) for target in targets)
     if isinstance(node, (ast.With, ast.AsyncWith)):
         return any(
-            item.optional_vars is not None and name in _names(item.optional_vars)
+            item.optional_vars is not None and _stores(item.optional_vars, name)
             for item in node.items
         )
     if isinstance(node, (ast.Import, ast.ImportFrom)):
         return any((a.asname or a.name).split(".")[0] == name for a in node.names)
-    if isinstance(node, (ast.Global, ast.Nonlocal)):
-        return name in node.names
-    if isinstance(
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    if isinstance(node, _TYPE_ALIAS):
+        return _stores(getattr(node, "name"), name)  # noqa: B009
+    return isinstance(
         node,
         (ast.ExceptHandler, ast.MatchAs, ast.MatchStar, *_FUNCTION, ast.ClassDef),
+    ) and (getattr(node, "name", None) == name)
+
+
+def _declares(node: ast.AST, name: str) -> bool:
+    """Return whether a node declares a name `global` or `nonlocal`."""
+    return isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names
+
+
+def _comprehension_binding(expr: ast.Name, module: _Module) -> ast.AST | None:
+    """Return the comprehension around a name that binds it, or None.
+
+    A comprehension is a scope of its own, but for the iterable of its first
+    `for`, which is read in the scope around it. A lambda between the name
+    and the comprehension binds the name where the name is in its body,
+    not in a default, and is a parameter of it or rebound in it, as
+    `_rebinds` reads that; a `def` or a `class` ends the search.
+    """
+    path: list[ast.AST] = [expr]
+    node = module.parents.get(expr)
+    while node is not None and not isinstance(
+        node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
     ):
-        return getattr(node, "name", None) == name
-    return False
+        if isinstance(node, ast.Lambda):
+            if node.body in path and (
+                any(arg.arg == expr.id for arg in _arguments(node))
+                or any(_rebinds(n, expr.id) for n in _own_nodes(node))
+            ):
+                return None
+        elif (
+            isinstance(node, _COMPREHENSIONS)
+            and node.generators[0].iter not in path
+            and any(_stores(each.target, expr.id) for each in node.generators)
+        ):
+            return node
+        path.append(node)
+        node = module.parents.get(node)
+    return None
 
 
 @dataclass
@@ -653,24 +789,54 @@ class _Census:
             return self.methods.get(func.attr)
         if not isinstance(func, ast.Name):
             return None
-        for scope in module.scopes(func):
-            bindings = [n for n in self._scope_nodes(scope) if _binds(n, func.id)]
-            if isinstance(scope, _FUNCTION) and any(
-                arg.arg == func.id for arg in _arguments(scope)
-            ):
+        bindings = self._rebindings(func, module)
+        if not bindings:
+            return None
+        found: list[ast.AST] = []
+        for binding in bindings:
+            if isinstance(binding, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found.append(binding)
+            elif isinstance(binding, ast.ImportFrom):
+                found.extend(self._imported(binding, func.id))
+            else:
                 return None
-            if not bindings:
-                continue
-            found: list[ast.AST] = []
-            for binding in bindings:
-                if isinstance(binding, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    found.append(binding)
-                elif isinstance(binding, ast.ImportFrom):
-                    found.extend(self._imported(binding, func.id))
-                else:
-                    return None
-            return found or None
-        return None
+        return found or None
+
+    def _local_scope(self, name: ast.Name, module: _Module) -> ast.AST | None:
+        """Return the function or module that binds a name by its own nodes.
+
+        The scope `_binder` finds, but None where that is a comprehension,
+        where the name is a parameter of it, or where a scope declares the
+        name `global` or `nonlocal`: values a caller or another scope puts
+        there are not among its nodes.
+        """
+        scope, declared = self._binder(name, module)
+        if (
+            scope is None
+            or declared
+            or isinstance(scope, _COMPREHENSIONS)
+            or (
+                isinstance(scope, _FUNCTION)
+                and any(arg.arg == name.id for arg in _arguments(scope))
+            )
+        ):
+            return None
+        return scope
+
+    def _rebindings(self, name: ast.Name, module: _Module) -> list[ast.AST] | None:
+        """Return the nodes binding a name where it is read, None where unknown.
+
+        The nodes of the scope `_binder` finds that `_rebinds` reads, and
+        none where nothing binds the name. A parameter, a comprehension's
+        target and a name a scope declares `global` or `nonlocal` are
+        unknown.
+        """
+        if self._binder(name, module) == (None, []):
+            return []
+        scope = self._local_scope(name, module)
+        if scope is None:
+            return None
+        return [n for n in self._scope_nodes(scope) if _rebinds(n, name.id)]
 
     def _imported(self, node: ast.ImportFrom, name: str) -> list[ast.AST]:
         """Return the `def`s an import of the package binds to a name."""
@@ -727,17 +893,10 @@ class _Census:
         """
         if not isinstance(exc, ast.Name):
             return False
-        scope = module.scopes(exc)[0]
-        if isinstance(scope, _FUNCTION) and any(
-            arg.arg == exc.id for arg in _arguments(scope)
-        ):
+        scope = self._local_scope(exc, module)
+        if scope is None:
             return False
-        # a bare annotation declares the name and assigns it nothing
-        bindings = [
-            n
-            for n in self._scope_nodes(scope)
-            if _binds(n, exc.id) and not (isinstance(n, ast.AnnAssign) and not n.value)
-        ]
+        bindings = self._filling(scope, exc.id)
         return bool(bindings) and all(
             isinstance(node, (ast.Assign, ast.AnnAssign))
             and self._builds_at_a_site(node.value, module)
@@ -789,30 +948,37 @@ class _Census:
 
         A name ending in `Error` or `Exception`, or a name a `class`
         statement, an assignment or an import binds to such a name or to an
-        exception class of the package, as `_exception_classes` finds them.
-        A parameter of the name, of any kind, binds it to what a caller
-        passes, which the outer scopes do not say: it is one where its
-        default and what every call of the package passes there are, as
-        `_passed` reads them. With `maybe` it may be one, and its arguments
-        are traced: where any of them is, or where a call unpacks what it
-        passes. Otherwise it is not taken for one.
+        exception class of the package, as `_exception_classes` finds them,
+        in the scope that binds it or in a scope that declares it `global`
+        or `nonlocal`. Short of that, a parameter of the name, of any kind,
+        binds it to what a caller passes, which the outer scopes do not say:
+        it is one where its default and what every call of the package
+        passes there are, as `_passed` reads them. With `maybe` it may be
+        one, and its arguments are traced: where any of them is, or where
+        `_passed` cannot say what a call passes. Otherwise it is not taken
+        for one.
         """
         name = _called_name(func) or ""
         if name.endswith(("Error", "Exception")):
             return True
         if not isinstance(func, ast.Name):
             return False
-        for scope in module.scopes(func):
-            if isinstance(scope, _FUNCTION) and any(
-                arg.arg == name for arg in _arguments(scope)
-            ):
-                return self._parameter_builds(scope, name, module, seen, maybe=maybe)
-            if any(
-                self._binds_exception(binding, name)
-                for binding in self._scope_nodes(scope)
-            ):
-                return True
-        return False
+        scope, declared = self._binder(func, module)
+        # a scope that declares the name `global` or `nonlocal` binds it too,
+        # whatever the scope that holds the name binds it to
+        if any(
+            self._binds_exception(binding, name)
+            for each in declared
+            for binding in self._scope_nodes(each)
+        ):
+            return True
+        if isinstance(scope, _FUNCTION) and any(
+            arg.arg == name for arg in _arguments(scope)
+        ):
+            return self._parameter_builds(scope, name, module, seen, maybe=maybe)
+        return scope is not None and any(
+            self._binds_exception(binding, name) for binding in self._scope_nodes(scope)
+        )
 
     def _parameter_builds(
         self,
@@ -843,15 +1009,19 @@ class _Census:
         """Return a parameter's default and what the package's calls pass.
 
         The calls are read as `_parameter` reads them: of a private
-        function, to a parameter neither starred nor a method's own object;
-        None where one unpacks what it passes. A parameter of a public
-        function or of a lambda, or of a function read as a value, has its
-        default alone.
+        function, to a parameter that is not starred; None where one
+        unpacks what it passes, or where the function is a method with
+        another decorator, as `_other_decorator` reads that. A method's own
+        object is what each call is called on, or its first argument where
+        it is called through a class; a `@classmethod`'s own class is what
+        each call is called through, and None where it is called on an
+        object, whose class the census does not name. A parameter of a
+        public function or of a lambda, or of a function read as a value,
+        has its default alone.
         """
         arg = next(arg for arg in _arguments(func) if arg.arg == name)
         func_args: ast.arguments = func.args  # type: ignore[attr-defined]
         positional = [*func_args.posonlyargs, *func_args.args]
-        bound = _method(func, module) and positional[0].arg in {"self", "cls"}
         defaults: dict[ast.arg, ast.expr | None] = dict(
             zip(
                 positional[len(positional) - len(func_args.defaults) :],
@@ -865,19 +1035,29 @@ class _Census:
         if (
             not _private(getattr(func, "name", ""))
             or arg in {func_args.vararg, func_args.kwarg}
-            or (bound and arg is positional[0])
             or id(func) in self.reads
         ):
             return found
+        if _other_decorator(func, module):
+            return None
         for caller, call in self.calls.get(id(func), []):
             if _unpacks(call):
                 return None
             found.extend((caller, k.value) for k in call.keywords if k.arg == name)
             if arg in positional:
-                position = positional.index(arg)
-                if bound and isinstance(call.func, ast.Attribute):
-                    position -= 1
-                if 0 <= position < len(call.args):
+                position = positional.index(arg) - self._handed(
+                    func, module, call, caller
+                )
+                if position < 0:
+                    # what the method is called on, which it takes first; a
+                    # `@classmethod` takes it only where it is a class
+                    value = cast("ast.Attribute", call.func).value
+                    if _decorated(
+                        func, "classmethod", module
+                    ) and not self._through_class(value, caller):
+                        return None
+                    found.append((caller, value))
+                elif position < len(call.args):
                     found.append((caller, call.args[position]))
         return found
 
@@ -892,7 +1072,7 @@ class _Census:
                 and (_names_exception(a.name) or a.name in classes)
                 for a in binding.names
             )
-        if isinstance(binding, (ast.Assign, ast.AnnAssign)) and _binds(binding, name):
+        if isinstance(binding, (ast.Assign, ast.AnnAssign)) and _rebinds(binding, name):
             source = _called_name(binding.value) if binding.value else None
             return source is not None and (
                 _names_exception(source) or source in classes
@@ -1058,10 +1238,8 @@ class _Census:
         not, and is recorded as used.
         """
         found: list[str] = []
-        for statement in body:
-            for node in [statement, *_own_nodes(statement)]:
-                if not isinstance(node, ast.Call):
-                    continue
+        for node in _block_nodes(body):
+            if isinstance(node, ast.Call):
                 callee = ast.unparse(node.func)
                 callees = self._callees(node.func, module)
                 if callees is None:
@@ -1095,22 +1273,16 @@ class _Census:
             return self._method_callees(func, module)
         if not isinstance(func, ast.Name):
             return None
-        for scope in module.scopes(func):
-            if isinstance(scope, _FUNCTION) and any(
-                arg.arg == func.id for arg in _arguments(scope)
-            ):
+        bindings = self._rebindings(func, module)
+        if bindings is None:
+            return None
+        found: list[ast.AST] = []
+        for binding in bindings:
+            runs = self._runs(binding, func.id)
+            if runs is None:
                 return None
-            bindings = [n for n in self._scope_nodes(scope) if _binds(n, func.id)]
-            if not bindings:
-                continue
-            found: list[ast.AST] = []
-            for binding in bindings:
-                runs = self._runs(binding, func.id)
-                if runs is None:
-                    return None
-                found.extend(runs)
-            return found
-        return []
+            found.extend(runs)
+        return found
 
     def _method_callees(
         self, func: ast.Attribute, module: _Module
@@ -1215,24 +1387,54 @@ class _Census:
         return self.raising
 
     def _is_self(self, expr: ast.expr, module: _Module) -> bool:
-        """Return whether an expression is the first parameter of a method."""
+        """Return whether an expression is a method's own object or class."""
+        return self._receiver_of(expr, module) is not None
+
+    def _receiver_of(self, expr: ast.expr, module: _Module) -> ast.AST | None:
+        """Return the method whose own object or class a name is, or None.
+
+        The scope that binds the name, as `_binder` reads it, is that method,
+        the name is its first parameter, and neither the method nor a scope
+        that declares the name `nonlocal` on the way rebinds it, as
+        `_rebinds` reads that.
+        """
         if not isinstance(expr, ast.Name):
-            return False
-        for scope in module.scopes(expr):
-            if isinstance(scope, _FUNCTION) and any(
-                arg.arg == expr.id for arg in _arguments(scope)
-            ):
-                positional = _positional(scope)
-                return (
-                    isinstance(module.parents.get(scope), ast.ClassDef)
-                    and bool(positional)
-                    and positional[0].arg == expr.id
-                    and all(
-                        _called_name(d) != "staticmethod"
-                        for d in getattr(scope, "decorator_list", [])
-                    )
-                )
-        return False
+            return None
+        scope, declared = self._binder(expr, module)
+        if not isinstance(scope, _FUNCTION):
+            return None
+        own = _receiver(scope, module)
+        rebound = any(
+            _rebinds(n, expr.id)
+            for each in [scope, *declared]
+            for n in self._scope_nodes(each)
+        )
+        return scope if own is not None and own.arg == expr.id and not rebound else None
+
+    def _handed(
+        self, func: ast.AST, module: _Module, call: ast.Call, caller: _Module
+    ) -> int:
+        """Return how many parameters a call fills before its first argument.
+
+        One where it hands a method what it is called on first, as the
+        module's docstring says a method takes it, and none otherwise.
+        """
+        if _receiver(func, module) is None or not isinstance(call.func, ast.Attribute):
+            return 0
+        if _decorated(func, "classmethod", module):
+            return 1
+        return 0 if self._through_class(call.func.value, caller) else 1
+
+    def _through_class(self, receiver: ast.expr, module: _Module) -> bool:
+        """Return whether what a method is called on is a class, not an object.
+
+        A class of the package, as `_own` finds one, or the class a
+        `@classmethod` is handed first, as `_receiver_of` reads it.
+        """
+        method = self._receiver_of(receiver, module)
+        if method is not None and _decorated(method, "classmethod", module):
+            return True
+        return self._own(receiver, module)
 
     def _chained(self, node: ast.Raise, module: _Module) -> list[str]:
         """Return what a `raise` chains that can hold the input.
@@ -1285,7 +1487,9 @@ class _Census:
             cause = cause.value
         if not isinstance(cause, ast.Name):
             return False
-        scope = module.scopes(cause)[0]
+        scope = self._local_scope(cause, module)
+        if scope is None:
+            return False
         own = {
             handler.name
             for handler in self._scope_nodes(scope)
@@ -1294,17 +1498,13 @@ class _Census:
             and self._own(handler.type, module)
         }
         values: list[ast.expr | None] = []
-        # and what any function the scope holds puts into it
-        nested = self._mutations(scope).get(cause.id, [])
-        for node in [*self._scope_nodes(scope), *nested]:
+        for node in self._filling(scope, cause.id):
             if _mutates(node, cause.id):
                 call = cast("ast.Call", node)
                 values.extend([*call.args, *(k.value for k in call.keywords)])
-            elif isinstance(node, (ast.Assign, ast.AnnAssign)) and _binds(
-                node, cause.id
-            ):
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 values.append(node.value)
-            elif _binds(node, cause.id):
+            else:
                 return False
         return bool(values) and all(
             (isinstance(value, (ast.List, ast.Tuple)) and not value.elts)
@@ -1349,8 +1549,10 @@ class _Census:
 
         A class is the package's where the scope that names it defines it,
         or imports it from a module of the package that does: a class of
-        another package is not, whatever its name. A parameter of the name,
-        of any kind, is a class a caller passes, which may be any.
+        another package is not, whatever its name. Each node that binds the
+        name where it is read, as `_rebindings` finds them, has to bind it to
+        a class of the package: a parameter of the name, of any kind, is a
+        class a caller passes, which may be any.
         """
         if isinstance(caught, ast.Tuple):
             return all(self._own(each, module) for each in caught.elts)
@@ -1360,34 +1562,30 @@ class _Census:
             return source is not None and self._defines(source, caught.attr, set())
         if not isinstance(caught, ast.Name):
             return False
-        for scope in module.scopes(caught):
-            if isinstance(scope, _FUNCTION) and any(
-                arg.arg == caught.id for arg in _arguments(scope)
-            ):
-                return False
-            if bindings := [
-                n for n in self._scope_nodes(scope) if _binds(n, caught.id)
-            ]:
-                return all(
-                    self._is_class(binding, caught.id, set()) for binding in bindings
-                )
-        return False
+        bindings = self._rebindings(caught, module)
+        return bool(bindings) and all(
+            self._is_class(binding, caught.id, set()) for binding in bindings or []
+        )
 
     def _module_bound(self, name: ast.Name, module: _Module) -> _Module | None:
-        """Return the module of the package an import binds to a name."""
-        for scope in module.scopes(name):
-            for node in self._scope_nodes(scope):
-                if isinstance(node, (ast.Import, ast.ImportFrom)) and _binds(
-                    node, name.id
-                ):
-                    alias = next(
-                        a for a in node.names if (a.asname or a.name) == name.id
-                    )
-                    dotted = alias.name
-                    if isinstance(node, ast.ImportFrom):
-                        dotted = f"{node.module}.{alias.name}"
-                    return self._module_of(dotted)
-        return None
+        """Return the module of the package an import binds to a name.
+
+        Each node that binds the name where it is read, as `_rebindings`
+        finds them, has to import that one module.
+        """
+        found: set[str] = set()
+        for node in self._rebindings(name, module) or []:
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                return None
+            alias = next(
+                a for a in node.names if (a.asname or a.name).split(".")[0] == name.id
+            )
+            # `import a.b` binds `a`, the package
+            dotted = alias.name if alias.asname else alias.name.split(".")[0]
+            if isinstance(node, ast.ImportFrom):
+                dotted = f"{node.module}.{alias.name}"
+            found.add(dotted)
+        return self._module_of(found.pop()) if len(found) == 1 else None
 
     def _module_of(self, dotted: str) -> _Module | None:
         """Return the package's module a dotted name is, None for another."""
@@ -1400,7 +1598,7 @@ class _Census:
         if (module.name, name) in seen:
             return False
         seen.add((module.name, name))
-        bindings = [n for n in self._scope_nodes(module.tree) if _binds(n, name)]
+        bindings = [n for n in self._scope_nodes(module.tree) if _rebinds(n, name)]
         return bool(bindings) and all(
             self._is_class(binding, name, seen) for binding in bindings
         )
@@ -1491,7 +1689,9 @@ class _Census:
                 # what a function of the package answers: each value it
                 # returns or yields, whichever `def` the call reaches
                 keys.update(("returns", id(function), "") for function in functions)
-                if isinstance(func, ast.Attribute) and not _bound(func.value):
+                if isinstance(func, ast.Attribute) and not (
+                    self._is_self(func.value, module) or _on_super(func.value)
+                ):
                     # a method found by its name alone: what it is called
                     # on may be no object of the package, and is traced
                     self._visit(func.value, module, leaves, keys)
@@ -1528,7 +1728,7 @@ class _Census:
             self._visit(expr.value, module, leaves, keys)
             return
         if isinstance(expr, _COMPREHENSION):
-            # its targets are bound in the enclosing scope, as a loop's are
+            # its targets are bound in its own scope, which `_binder` reads
             self._visit(expr.elt, module, leaves, keys)
             return
         if isinstance(expr, ast.IfExp):
@@ -1567,21 +1767,83 @@ class _Census:
             self.mutations[id(scope)] = found
         return self.mutations[id(scope)]
 
+    def _filling(self, scope: ast.AST, name: str) -> list[ast.AST]:
+        """Return the nodes that may put a value into a name a scope binds.
+
+        In a comprehension, each `for` whose target stores it; elsewhere,
+        each node of the scope that rebinds the name, as `_rebinds` reads
+        that, or declares it `global` or `nonlocal`, so that another scope
+        may put values into it. Then each node of the scope, or of a
+        function or a comprehension it holds, that puts a value into what
+        the name holds, as `_mutated` reads that.
+        """
+        found: list[ast.AST]
+        if isinstance(scope, _COMPREHENSIONS):
+            found = [each for each in scope.generators if _stores(each.target, name)]
+        else:
+            found = [
+                n
+                for n in self._scope_nodes(scope)
+                if _rebinds(n, name) or _declares(n, name)
+            ]
+        seen = {id(n) for n in found}
+        found.extend(
+            n for n in self._mutations(scope).get(name, []) if id(n) not in seen
+        )
+        return found
+
     def _scope_nodes(self, scope: ast.AST) -> list[ast.AST]:
         if id(scope) not in self.nodes:
             self.nodes[id(scope)] = _own_nodes(scope)
         return self.nodes[id(scope)]
 
-    def _name_key(self, node: ast.Name, module: _Module) -> _Key | None:
-        """Return the key of the innermost scope binding a name, or None."""
+    def _binder(
+        self, node: ast.Name, module: _Module
+    ) -> tuple[ast.AST | None, list[ast.AST]]:
+        """Return the scope that binds a name where it is read, or None.
+
+        A comprehension around the name that binds it, as
+        `_comprehension_binding` finds one; otherwise the innermost function
+        whose parameter the name is, or the innermost scope that rebinds it,
+        as `_rebinds` reads that. A scope that declares the name `nonlocal`
+        hands it to the functions around it, and one that declares it
+        `global` to the module, whether or not the module binds it. Each
+        scope that declares it is returned too, innermost first. None binds
+        a builtin, or a name the source does not bind.
+        """
+        comprehension = _comprehension_binding(node, module)
+        if comprehension is not None:
+            return comprehension, []
+        declared: list[ast.AST] = []
         for scope in module.scopes(node):
-            params = isinstance(scope, _FUNCTION) and any(
+            if isinstance(scope, _FUNCTION) and any(
                 arg.arg == node.id for arg in _arguments(scope)
-            )
-            if params or any(_binds(n, node.id) for n in self._scope_nodes(scope)):
-                self.scopes[id(scope)] = (module, scope)
-                return ("name", id(scope), node.id)
-        return None
+            ):
+                return scope, declared
+            nodes = self._scope_nodes(scope)
+            declarations = [n for n in nodes if _declares(n, node.id)]
+            if declarations and scope is not module.tree:
+                declared.append(scope)
+                if any(isinstance(n, ast.Global) for n in declarations):
+                    return module.tree, declared
+                continue
+            if any(_rebinds(n, node.id) for n in nodes):
+                return scope, declared
+        return None, declared
+
+    def _name_key(self, node: ast.Name, module: _Module) -> _Key | None:
+        """Return the key of the scope that holds a name's values, or None.
+
+        The innermost scope that declares the name, which is the one whose
+        values the census cannot all see, or else the one that binds it, as
+        `_binder` reads them.
+        """
+        scope, declared = self._binder(node, module)
+        holder = declared[0] if declared else scope
+        if holder is None:
+            return None
+        self.scopes[id(holder)] = (module, holder)
+        return ("name", id(holder), node.id)
 
     def _reach(self, start: _Key) -> frozenset[str]:  # noqa: C901, PLR0912
         """Return each untraced value a key reaches, through every key it reads.
@@ -1678,13 +1940,7 @@ class _Census:
                     arg.arg == name for arg in _arguments(scope)
                 ):
                     keys.add(("parameter", scope_id, name))
-                bindings = [n for n in self._scope_nodes(scope) if _binds(n, name)]
-                # and what any function the scope holds puts into it
-                bindings.extend(
-                    node
-                    for node in self._mutations(scope).get(name, [])
-                    if node not in bindings
-                )
+                bindings = self._filling(scope, name)
                 for node in bindings:
                     self._binding(node, name, module, leaves, keys)
                 if any(_builds_container(node) for node in bindings):
@@ -1786,19 +2042,25 @@ class _Census:
         """Return whether every package `def` a call runs only reads `node`.
 
         Where the parameter it is passed as has no value put into it in
-        that `def`, and is handed nowhere else.
+        that `def`, and is handed nowhere else. Where the call unpacks an
+        argument, or the `def` is a method with another decorator, as
+        `_other_decorator` reads that, which parameter that is is not known.
         """
         functions = self._resolve(call.func, module)
-        if not functions or node not in call.args or depth > len(self.functions):
+        if (
+            not functions
+            or node not in call.args
+            or _unpacks(call)
+            or depth > len(self.functions)
+        ):
             return False
         for function in functions:
             function_module = self.functions[id(function)][0]
+            if _other_decorator(function, function_module):
+                return False
             positional = _positional(function)
-            # a method called on its object is handed that object first
-            position = call.args.index(node) + (
-                bool(positional)
-                and positional[0].arg in _BOUND
-                and isinstance(call.func, ast.Attribute)
+            position = call.args.index(node) + self._handed(
+                function, function_module, call, module
             )
             if position >= len(positional):
                 return False
@@ -1916,12 +2178,18 @@ class _Census:
         origin = f"{module.where(arg)} parameter {name} of {func_name}"
         func_args: ast.arguments = func.args  # type: ignore[attr-defined]
         positional = [*func_args.posonlyargs, *func_args.args]
-        bound = _method(func, module) and positional[0].arg in {"self", "cls"}
+        receiver = _receiver(func, module)
         if not _private(func_name) or arg in {func_args.vararg, func_args.kwarg}:
             leaves.append(origin)
             return
-        if bound and arg is positional[0]:
-            # the object a method is called on, which no call passes
+        if _other_decorator(func, module):
+            # a method whose decorator may hand it anything, in any place
+            leaves.append(f"{origin}, decorated")
+            return
+        if arg is receiver:
+            # a method's own object or class, which the census does not
+            # trace: a call on an object hands it that object, and a call
+            # through the class hands it the first argument, which may be any
             leaves.append(origin)
             return
         if id(func) in self.reads:
@@ -1950,22 +2218,148 @@ class _Census:
                 continue
             passed = [k.value for k in call.keywords if k.arg == name]
             if arg in positional:
-                position = positional.index(arg)
-                if bound and isinstance(call.func, ast.Attribute):
-                    position -= 1
-                if 0 <= position < len(call.args):
+                position = positional.index(arg) - self._handed(
+                    func, module, call, caller
+                )
+                if position < len(call.args):
                     passed.append(call.args[position])
             for value in passed:
                 self._visit(value, caller, leaves, keys)
 
 
-def _method(func: ast.AST, module: _Module) -> bool:
-    """Return whether a function is a method with a positional parameter.
+def _receiver(func: ast.AST, module: _Module) -> ast.arg | None:
+    """Return a method's own object or class: its first positional parameter.
 
-    A method here is a function a class body defines.
+    A method here is a function a class body defines, and the decorator, not
+    the name, says what it is handed first: a `@staticmethod` has none, and
+    one with another decorator, as `_other_decorator` reads that, has none
+    the census can name.
     """
-    positional = [*func.args.posonlyargs, *func.args.args]  # type: ignore[attr-defined]
-    return bool(positional) and isinstance(module.parents.get(func), ast.ClassDef)
+    positional = _positional(func)
+    if (
+        not positional
+        or not isinstance(module.parents.get(func), ast.ClassDef)
+        or _other_decorator(func, module)
+    ):
+        return None
+    return None if _decorated(func, "staticmethod", module) else positional[0]
+
+
+def _decorator_name(decorator: ast.expr, module: _Module) -> str | None:
+    """Return the decorator a method's decorator provably is, or None.
+
+    One of `_DECORATOR_HOMES`, where its home is provably where it comes
+    from. A name is the decorator it is named after where no scope it is
+    read in binds it, and the one it imports where an absolute import from
+    that decorator's home is all that binds it there, as
+    `_decorator_bindings` finds what does; `X.attr` is `attr` where
+    `import`s of the home of `attr`, in every clause that binds `X`, are all
+    that binds it. Any other binding,
+    a parameter and a `*` import from elsewhere included, makes it None, and
+    so does any other decorator.
+    """
+    method = cast("ast.stmt", module.parents[decorator])
+    scopes = [module.parents[method], *module.scopes(decorator)]
+    if isinstance(decorator, ast.Attribute) and isinstance(decorator.value, ast.Name):
+        homes = _DECORATOR_HOMES.get(decorator.attr, ())
+        bindings = _decorator_bindings(decorator.value.id, scopes, method)
+        return (
+            decorator.attr
+            if bindings
+            and all(
+                isinstance(n, ast.Import)
+                # Python keeps the last clause, so every one binding `X` counts
+                and all(
+                    a.name in homes
+                    for a in n.names
+                    if (a.asname or a.name).split(".")[0] == decorator.value.id
+                )
+                for n in bindings
+            )
+            else None
+        )
+    if not isinstance(decorator, ast.Name):
+        return None
+    bindings = _decorator_bindings(decorator.id, scopes, method)
+    if bindings is None:
+        return None
+    if names := [_imported_decorator(n, decorator.id) for n in bindings]:
+        return names[0] if all(n == names[0] for n in names) else None
+    return decorator.id
+
+
+def _decorator_bindings(
+    name: str, scopes: list[ast.AST], method: ast.stmt
+) -> list[ast.AST] | None:
+    """Return what binds a name in the first of the scopes that binds it.
+
+    A node that rebinds it, as `_rebinds` reads that, a parameter of a
+    function, and a `*` import, which may bind any name. None where the
+    census cannot say which binding the method's decorator reads: the name
+    is declared `global` or `nonlocal` anywhere in a scope, a function it
+    holds included, which may rebind it there; or the class body, the first
+    scope, binds it other than by a statement of its own before the method,
+    so that Python may read it in the scopes around the class.
+    """
+    for scope in scopes:
+        if any(_declares(n, name) for n in ast.walk(scope)):
+            return None
+        nodes = _own_nodes(scope)
+        found: list[ast.AST] = [
+            n
+            for n in nodes
+            if _rebinds(n, name)
+            or (isinstance(n, ast.ImportFrom) and n.names[0].name == "*")
+        ]
+        if isinstance(scope, _FUNCTION):
+            found.extend(a for a in _arguments(scope) if a.arg == name)
+        if found and scope is scopes[0]:
+            body: list[ast.stmt] = getattr(scope, "body", [])
+            if any(n not in body[: body.index(method)] for n in found):
+                return None
+        if found:
+            return found
+    return []
+
+
+def _imported_decorator(binding: ast.AST, name: str) -> str | None:
+    """Return the decorator an absolute import from its home binds, or None.
+
+    Every clause of the import that binds the name has to import the same
+    decorator from its home.
+    """
+    if not isinstance(binding, ast.ImportFrom) or binding.level:
+        return None
+    found = [
+        bound if binding.module in _DECORATOR_HOMES.get(bound, ()) else None
+        for alias in binding.names
+        for bound in [name if alias.name == "*" else alias.name]
+        if (alias.asname or bound) == name
+    ]
+    return found[0] if found and all(f == found[0] for f in found) else None
+
+
+def _decorated(func: ast.AST, decorator: str, module: _Module) -> bool:
+    """Return whether a `def` carries a decorator `_decorator_name` names so."""
+    return any(
+        _decorator_name(d, module) == decorator
+        for d in getattr(func, "decorator_list", [])
+    )
+
+
+def _other_decorator(func: ast.AST, module: _Module) -> bool:
+    """Return whether a method carries a decorator the census does not know.
+
+    One `_decorator_name` reads as none of `staticmethod`, `classmethod` and
+    `_KEEPING_DECORATORS`: it may hand the method anything first, or
+    nothing, so the census cannot say which parameter a call's argument
+    lands in.
+    """
+    known = {"staticmethod", "classmethod", *_KEEPING_DECORATORS}
+    return isinstance(module.parents.get(func), ast.ClassDef) and any(
+        _decorator_name(d, module) not in known
+        for d in getattr(func, "decorator_list", [])
+    )
 
 
 def _unpacks(call: ast.Call) -> bool:
@@ -2288,6 +2682,25 @@ def test_measured_hides_its_own_entry_alone() -> None:
     assert len(census.findings(measured={("m.py", "f", "_position(key)"): ""})) == 1
     assert census.measured_used == {("m.py", "f", "_position(key)")}
 
+
+# a method called through its class, what `_make` hands `kind` first, a
+# statement before the call, and one after the class
+_THROUGH = (
+    "class _C:\n    def _make(self, key, kind):\n        return kind({})\n"
+    "    def f(self, key):\n{}        raise _C._make(self, key, ValueError)\n{}"
+)
+# a method called through a class method's class, what `_make` hands
+# `kind` first, and a statement before the call
+_ON_CLASS = (
+    "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+    "        return kind({})\n    @classmethod\n    def f(cls, key):\n"
+    "{}        raise cls._make(None, key, Refused)"
+)
+# a method called on its own object, and a statement before
+_ON_SELF = (
+    "class _C:\n    def _text(self):\n        return 'a'\n"
+    "    def f(self, key):\n{}        raise ValueError(self._text())"
+)
 
 # one module per shape the docstring claims, each refusing `key`, a public
 # function's parameter, or a value made from it: the census traces the
@@ -2750,6 +3163,10 @@ _SHAPES = {
         "def f(key):\n    raise ValueError('a') from None",
         "def f(key):\n    raise ValueError('a') from g()",
     ),
+    "cause a parameter holds": (
+        "def f(key):\n    cause = None\n    raise ValueError('a') from cause",
+        "def f(key, cause):\n    raise ValueError('a') from cause",
+    ),
     "cause bound by a loop": (
         (
             "class _OwnError(Exception):\n    pass\ndef f(key):\n    last = None\n"
@@ -2934,6 +3351,30 @@ _SHAPES = {
             "    raise ValueError(values)"
         ),
     ),
+    "a container handed to a method through its class": (
+        (
+            "class _C:\n    def _g(self, items):\n        return len(items)\n"
+            "    def f(self, key):\n        values = ['a']\n"
+            "        _C._g(self, values)\n        raise ValueError(values)"
+        ),
+        (
+            "class _C:\n    def _g(self, items, key):\n        items.append(key)\n"
+            "    def f(self, key):\n        values = ['a']\n"
+            "        _C._g(self, values, key)\n        raise ValueError(values)"
+        ),
+    ),
+    "a container handed to a method on its object": (
+        (
+            "class _C:\n    def _g(self, items):\n        return len(items)\n"
+            "    def f(self, key):\n        values = ['a']\n"
+            "        self._g(values)\n        raise ValueError(values)"
+        ),
+        (
+            "class _C:\n    def _g(self, items, key):\n        items.append(key)\n"
+            "    def f(self, key):\n        values = ['a']\n"
+            "        self._g(values, key)\n        raise ValueError(values)"
+        ),
+    ),
     "a container put into another": (
         (
             "def f(key):\n    values = ['a']\n    other = ('b',)\n"
@@ -2988,6 +3429,18 @@ _SHAPES = {
         (
             "class C:\n    def __init__(self, factory):\n        self.g = factory\n"
             "    def _f(self):\n        try:\n            pass\n"
+            "        except OSError:\n            self.g()"
+        ),
+    ),
+    "an attribute of another object called": (
+        (
+            "class C:\n    def __init__(self, factory):\n        self.g = factory\n"
+            "def f(key, other):\n    try:\n        pass\n    except OSError:\n"
+            "        other.g()"
+        ),
+        (
+            "class C:\n    def __init__(self, factory):\n        self.g = factory\n"
+            "    def _f(self, other):\n        try:\n            pass\n"
             "        except OSError:\n            self.g()"
         ),
     ),
@@ -3201,6 +3654,736 @@ _SHAPES = {
             "        raise self._make(key, Refused)"
         ),
     ),
+    "exception class a call through the class passes to a method's parameter": (
+        (
+            "class _C:\n    def _make(self, key, kind):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise _C._make(self, key, ValueError)"
+        ),
+        (
+            "class _C:\n    def _make(self, key, kind):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise _C._make(self, key, ValueError)"
+        ),
+    ),
+    "exception class a call through a class method's class passes": (
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\n    @classmethod\n    def f(cls, key):\n"
+            "        raise cls._make(None, key, Refused)"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\n    @classmethod\n    def f(cls, key):\n"
+            "        raise cls._make(None, key, Refused)"
+        ),
+    ),
+    "exception class a call passes to a method of a local object named cls": (
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\n    @classmethod\n    def f(cls, key):\n"
+            "        def _g():\n            cls = _C()\n"
+            "            raise cls._make(key, Refused)\n        _g()"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\n    @classmethod\n    def f(cls, key):\n"
+            "        def _g():\n            cls = _C()\n"
+            "            raise cls._make(key, Refused)\n        _g()"
+        ),
+    ),
+    "exception class a call passes to a method called on a name nothing binds": (
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\n    def f(self, key):\n"
+            "        raise unbound._make(key, Refused)"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\n    def f(self, key):\n"
+            "        raise unbound._make(key, Refused)"
+        ),
+    ),
+    "exception class a call on what super() answers passes to a method": (
+        (
+            "Refused = ValueError\nclass _B:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\nclass _C(_B):\n    def f(self, key):\n"
+            "        raise super()._make(key, Refused)"
+        ),
+        (
+            "Refused = ValueError\nclass _B:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\nclass _C(_B):\n    def f(self, key):\n"
+            "        raise super()._make(key, Refused)"
+        ),
+    ),
+    "exception class a class method takes, called on an object": (
+        (
+            "class Refused(Exception):\n    @classmethod\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "def f(key):\n    refusal = Refused()\n    raise refusal._make(key)"
+        ),
+        (
+            "class Refused(Exception):\n    @classmethod\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "def f(key):\n    refusal = Refused()\n    raise refusal._make(key)"
+        ),
+    ),
+    "exception class a class method takes, called through it": (
+        (
+            "class _C:\n    @classmethod\n    def _make(kind, key):\n"
+            "        return kind(key)\ndef f(key):\n    return _C._make(key)"
+        ),
+        (
+            "class _C(Exception):\n    @classmethod\n    def _make(kind, key):\n"
+            "        return kind(key)\ndef f(key):\n    return _C._make(key)"
+        ),
+    ),
+    "a class method's class rebound before a call through it": (
+        (
+            "class _C:\n    def _m(self, text, unused):\n"
+            "        raise ValueError(text)\n    @classmethod\n"
+            "    def f(cls, key):\n        cls = _C()\n        cls._m('a', key)"
+        ),
+        (
+            "class _C:\n    def _m(self, text, unused):\n"
+            "        raise ValueError(text)\n    @classmethod\n"
+            "    def f(cls, key):\n        cls = _C()\n        cls._m(key, 1)"
+        ),
+    ),
+    "exception class a call through a class read off a module passes": (
+        (
+            "import m\nRefused = ValueError\nclass _C:\n"
+            "    def _make(self, key, kind):\n        return kind('a')\n"
+            "def f(key):\n    raise m._C._make(None, key, Refused)"
+        ),
+        (
+            "import m\nRefused = ValueError\nclass _C:\n"
+            "    def _make(self, key, kind):\n        return kind(key)\n"
+            "def f(key):\n    raise m._C._make(None, key, Refused)"
+        ),
+    ),
+    "what a method called on super() answers": (
+        (
+            "class _B:\n    def _text(self, key):\n        return 'a'\n"
+            "class _C(_B):\n    def f(self, key):\n"
+            "        raise ValueError(super()._text(key))"
+        ),
+        (
+            "class _B:\n    def _text(self, key):\n        return key\n"
+            "class _C(_B):\n    def f(self, key):\n"
+            "        raise ValueError(super()._text(key))"
+        ),
+    ),
+    "a method called on its own object of another name": (
+        (
+            "class _C:\n    def _text(this):\n        return 'a'\n"
+            "    def _f(this, other):\n        raise ValueError(this._text())\n"
+            "    def g(self, key):\n        self._f(key)"
+        ),
+        (
+            "class _C:\n    def _text(this):\n        return 'a'\n"
+            "    def _f(this, other):\n        raise ValueError(other._text())\n"
+            "    def g(self, key):\n        self._f(key)"
+        ),
+    ),
+    "a method called on its own object, rebound": (
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    def f(self, key):\n        raise ValueError(self._text())"
+        ),
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    def f(self, key):\n        self = key\n"
+            "        raise ValueError(self._text())"
+        ),
+    ),
+    "a method called on a class method's class, rebound in a nested function": (
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    @classmethod\n    def f(cls, key):\n        def _g():\n"
+            "            raise ValueError(cls._text())\n        _g()"
+        ),
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    @classmethod\n    def f(cls, key):\n        def _g():\n"
+            "            cls = key\n            raise ValueError(cls._text())\n"
+            "        _g()"
+        ),
+    ),
+    "a method called on its own object, an attribute of it set": (
+        (
+            "class C:\n    def _text(self):\n        return 'a'\n"
+            "    def _m(self):\n        self.n = 1\n"
+            "        raise ValueError(self._text())"
+        ),
+        (
+            "class C:\n    def _text(self):\n        return 'a'\n"
+            "    def _m(self, key):\n        self = key\n"
+            "        raise ValueError(self._text())"
+        ),
+    ),
+    "an attribute of its own object called, another attribute of it set": (
+        (
+            "class C:\n    def __init__(self, factory):\n        self.g = factory\n"
+            "    def _f(self):\n        self.n = 1\n        try:\n            pass\n"
+            "        except OSError:\n            self._g()\n"
+            "    def _g(self):\n        return 1"
+        ),
+        (
+            "class C:\n    def __init__(self, factory):\n        self.g = factory\n"
+            "    def _f(self):\n        self.n = 1\n        try:\n            pass\n"
+            "        except OSError:\n            self.g()"
+        ),
+    ),
+    "an attribute of its own object called, an item of it set or put into it": (
+        (
+            "class C:\n    def __init__(self, factory):\n        self.g = factory\n"
+            "    def _f(self):\n        self.pos += 1\n        self[0] = 1\n"
+            "        self.append(1)\n        try:\n            pass\n"
+            "        except OSError:\n            self._g()\n"
+            "    def _g(self):\n        return 1"
+        ),
+        (
+            "class C:\n    def __init__(self, factory):\n        self.g = factory\n"
+            "    def _f(self):\n        self.pos += 1\n        self[0] = 1\n"
+            "        self.append(1)\n        try:\n            pass\n"
+            "        except OSError:\n            self.g()"
+        ),
+    ),
+    "exception class a call through a class method's class passes, an attribute set": (
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\n    @classmethod\n    def f(cls, key):\n"
+            "        cls.count += 1\n        raise cls._make(None, key, Refused)"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\n    @classmethod\n    def f(cls, key):\n"
+            "        cls.count += 1\n        raise cls._make(None, key, Refused)"
+        ),
+    ),
+    "exception class a call through the class passes, an attribute of it set": (
+        _THROUGH.format("'a'", "        _C.count = 1\n", ""),
+        _THROUGH.format("key", "        _C.count = 1\n", ""),
+    ),
+    "exception class a call through the class passes, an attribute of it added to": (
+        _THROUGH.format("'a'", "        _C.n += 1\n", ""),
+        _THROUGH.format("key", "        _C.n += 1\n", ""),
+    ),
+    "exception class a call through the class passes, an item of it set": (
+        _THROUGH.format("'a'", "        _C.table['a'] = 0\n", ""),
+        _THROUGH.format("key", "        _C.table['a'] = 0\n", ""),
+    ),
+    "exception class a call through the class passes, the module setting it": (
+        _THROUGH.format("'a'", "", "_C.count = 1\n"),
+        _THROUGH.format("key", "", "_C.count = 1\n"),
+    ),
+    "exception class a call through a class read off a module passes, set": (
+        (
+            "import m\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\n_C.count = 1\n"
+            "def f(key):\n    raise m._C._make(None, key, ValueError)"
+        ),
+        (
+            "import m\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\n_C.count = 1\n"
+            "def f(key):\n    raise m._C._make(None, key, ValueError)"
+        ),
+    ),
+    "a class of the package caught, an attribute of it set": (
+        (
+            "class _E(Exception):\n    pass\ndef f(key):\n    try:\n        pass\n"
+            "    except _E:\n        _E.n = 1\n        raise"
+        ),
+        (
+            "class _E(Exception):\n    pass\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        _E.n = 1\n        raise"
+        ),
+    ),
+    "a method called on its own object, annotated": (
+        _ON_SELF.format("        self: _C\n"),
+        _ON_SELF.format("        self: _C = key\n"),
+    ),
+    "exception class a call through a class method's class passes, annotated": (
+        _ON_CLASS.format("'a'", "        cls: type\n"),
+        _ON_CLASS.format("key", "        cls: type\n"),
+    ),
+    "a method called on its own object, a comprehension binding its name": (
+        _ON_SELF.format("        _ = [self for self in ()]\n"),
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    def f(self, key):\n"
+            "        raise ValueError([self._text() for self in key])"
+        ),
+    ),
+    "an attribute of its own object called in a comprehension's first iterable": (
+        (
+            "class C:\n    def __init__(self, factory):\n        self.g = factory\n"
+            "    def _f(self):\n        try:\n            pass\n"
+            "        except OSError:\n            _ = [1 for self in self._g()]\n"
+            "    def _g(self):\n        return 1"
+        ),
+        (
+            "class C:\n    def __init__(self, factory):\n        self.g = factory\n"
+            "    def _f(self):\n        try:\n            pass\n"
+            "        except OSError:\n            _ = [1 for self in self.g()]"
+        ),
+    ),
+    "exception class a call through a class method's class passes, a comprehension": (
+        _ON_CLASS.format("'a'", "        _ = [cls for cls in ()]\n"),
+        _ON_CLASS.format("key", "        _ = [cls for cls in ()]\n"),
+    ),
+    "exception class a call passes to a method of a comprehension's target": (
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\n    def f(self, key):\n"
+            "        raise [_C._make(key, Refused) for _C in ()][0]"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\n    def f(self, key):\n"
+            "        raise [_C._make(key, Refused) for _C in ()][0]"
+        ),
+    ),
+    "a function of the package an attribute of which is set, called": (
+        (
+            "def f(key):\n    def show():\n        return 'a'\n"
+            "    show.kind = ValueError\n    raise ValueError(show())"
+        ),
+        (
+            "def f(key):\n    def show():\n        return key.hex()\n"
+            "    show.kind = ValueError\n    raise ValueError(show())"
+        ),
+    ),
+    "a function of the package an attribute of which the module sets": (
+        (
+            "def _text(key):\n    return 'a'\n_text.cache = {}\n"
+            "def f(key):\n    raise ValueError(_text(key))"
+        ),
+        (
+            "def _text(key):\n    return key\n_text.cache = {}\n"
+            "def f(key):\n    raise ValueError(_text(key))"
+        ),
+    ),
+    "a function of the package an attribute of which is set, called handling": (
+        (
+            "def _g():\n    return 1\n_g.n = 1\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        _g()"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\n_g.n = 1\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        _g()"
+        ),
+    ),
+    "a function of the package annotated before its def": (
+        (
+            "_text: object\ndef _text(key):\n    return 'a'\n"
+            "def f(key):\n    raise ValueError(_text(key))"
+        ),
+        (
+            "_text: object\ndef _text(key):\n    return key\n"
+            "def f(key):\n    raise ValueError(_text(key))"
+        ),
+    ),
+    "a function of the package whose name a comprehension binds": (
+        (
+            "def _text(key):\n    return 'a'\n_ = [_text for _text in ()]\n"
+            "def f(key):\n    raise ValueError(_text(key))"
+        ),
+        (
+            "def _text(key):\n    return key\n_ = [_text for _text in ()]\n"
+            "def f(key):\n    raise ValueError(_text(key))"
+        ),
+    ),
+    "a local whose name a comprehension binds": (
+        "def f(key):\n    x = 'a'\n    _ = [x for x in key]\n    raise ValueError(x)",
+        "def f(key):\n    x = 'a'\n    raise ValueError([x for x in key])",
+    ),
+    "a module name a parameter shadows, a method called through it": (
+        (
+            "import m\nRefused = ValueError\nclass _C:\n"
+            "    def _make(self, key, kind):\n        return kind('a')\n"
+            "class _Box:\n    def __init__(self):\n        self._C = _C()\n"
+            "def _f(m, key):\n    raise m._C._make(key, Refused)\n"
+            "def g(key):\n    _f(_Box(), key)"
+        ),
+        (
+            "import m\nRefused = ValueError\nclass _C:\n"
+            "    def _make(self, key, kind):\n        return kind(key)\n"
+            "class _Box:\n    def __init__(self):\n        self._C = _C()\n"
+            "def _f(m, key):\n    raise m._C._make(key, Refused)\n"
+            "def g(key):\n    _f(_Box(), key)"
+        ),
+    ),
+    "a module name a local shadows, a method called through it": (
+        (
+            "import m\nRefused = ValueError\nclass _C:\n"
+            "    def _make(self, key, kind):\n        return kind('a')\n"
+            "class _Box:\n    def __init__(self):\n        self._C = _C()\n"
+            "def g(key):\n    m = _Box()\n    raise m._C._make(key, Refused)"
+        ),
+        (
+            "import m\nRefused = ValueError\nclass _C:\n"
+            "    def _make(self, key, kind):\n        return kind(key)\n"
+            "class _Box:\n    def __init__(self):\n        self._C = _C()\n"
+            "def g(key):\n    m = _Box()\n    raise m._C._make(key, Refused)"
+        ),
+    ),
+    "a module name a parameter shadows, a class caught off it": (
+        (
+            "import m\nclass _E(Exception):\n    pass\ndef f(key):\n    try:\n"
+            "        pass\n    except m._E:\n        raise"
+        ),
+        (
+            "import m\nclass _E(Exception):\n    pass\ndef _f(m, key):\n    try:\n"
+            "        pass\n    except m._E:\n        raise\ndef g(key):\n    _f(key, key)"
+        ),
+    ),
+    "a method called through a name a comprehension binds, in a lambda": (
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\n    def f(self, key):\n"
+            "        return [lambda: _C._make(key, Refused) for _C in (self,)]"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\n    def f(self, key):\n"
+            "        return [lambda: _C._make(key, Refused) for _C in (self,)]"
+        ),
+    ),
+    "a method called on its own object, declared nonlocal": (
+        _ON_SELF.format(
+            "        def _g():\n            nonlocal self\n"
+            "            raise ValueError(self._text())\n        _g()\n"
+        ),
+        _ON_SELF.format(
+            "        def _g():\n            nonlocal self\n            self = key\n"
+            "            raise ValueError(self._text())\n        _g()\n"
+        ),
+    ),
+    "a method called on its own object, rebound in a default": (
+        _ON_SELF.format("        def _g(x=(other := key)):\n            pass\n"),
+        _ON_SELF.format("        def _g(x=(self := key)):\n            pass\n"),
+    ),
+    "a method called on its own object, rebound in a lambda's default": (
+        _ON_SELF.format("        _ = lambda x=(other := key): x\n"),
+        _ON_SELF.format("        _ = lambda x=(self := key): x\n"),
+    ),
+    "a method called on its own object, rebound in a class's bases": (
+        _ON_SELF.format("        class _D((other := object)):\n            pass\n"),
+        _ON_SELF.format("        class _D((self := key)):\n            pass\n"),
+    ),
+    "a method called on its own object, stored in a class body": (
+        _ON_SELF.format("        class _D:\n            self = key\n"),
+        _ON_SELF.format("        self = key\n"),
+    ),
+    "a method called on a dict comprehension's target named as its object": (
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    def f(self, key):\n"
+            "        raise ValueError({1: self._text() for k in key})"
+        ),
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    def f(self, key):\n"
+            "        raise ValueError({1: self._text() for self in key})"
+        ),
+    ),
+    "a method called on a comprehension's second target named as its object": (
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    def f(self, key):\n"
+            "        raise ValueError([self._text() for k in key for j in k])"
+        ),
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    def f(self, key):\n"
+            "        raise ValueError([self._text() for k in key for self in k])"
+        ),
+    ),
+    "a parameter a nested function puts a value into": (
+        (
+            "def f(key):\n    def _g():\n        key.append(1)\n"
+            "        raise ValueError('a')\n    _g()"
+        ),
+        (
+            "def f(key):\n    def _g():\n        key.append(1)\n"
+            "        raise ValueError(key)\n    _g()"
+        ),
+    ),
+    "a parameter a nested function sets an attribute of": (
+        (
+            "def f(key):\n    def _g():\n        key.n = 1\n"
+            "        raise ValueError('a')\n    _g()"
+        ),
+        (
+            "def f(key):\n    def _g():\n        key.n = 1\n"
+            "        raise ValueError(key)\n    _g()"
+        ),
+    ),
+    "a parameter a nested function indexes a container by": (
+        (
+            "def f(key):\n    def _g():\n        d = {}\n        d[key] = 1\n"
+            "        raise ValueError('a')\n    _g()"
+        ),
+        (
+            "def f(key):\n    def _g():\n        d = {}\n        d[key] = 1\n"
+            "        raise ValueError(key)\n    _g()"
+        ),
+    ),
+    "a call of a comprehension's target while handling": (
+        (
+            "def f(key, actions):\n    try:\n        pass\n    except OSError:\n"
+            "        _ = [len(action) for action in actions]"
+        ),
+        (
+            "def f(key, actions):\n    try:\n        pass\n    except OSError:\n"
+            "        _ = [action() for action in actions]"
+        ),
+    ),
+    "a local an attribute of which is set to an exception class, called": (
+        "def f(key):\n    show = ValueError\n    raise ValueError(show())",
+        (
+            "def f(key):\n    show = lambda: key.hex()\n"
+            "    show.kind = ValueError\n    raise ValueError(show())"
+        ),
+    ),
+    "a lambda's parameter a comprehension around it also binds": (
+        "def f(key):\n    return [lambda: ValueError(x) for x in ('a',)]",
+        "def f(key):\n    return [lambda x: ValueError(x) for x in ('a',)]",
+    ),
+    "a method called on its own object, stored in its own default": (
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    def f(self, key, x=(self := 1)):\n"
+            "        raise ValueError(self._text())"
+        ),
+        (
+            "class _C:\n    def _text(self):\n        return 'a'\n"
+            "    def f(self, key, x=(other := 1)):\n        self = key\n"
+            "        raise ValueError(self._text())"
+        ),
+    ),
+    "a class built while handling, whose body calls a raising function": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        class _D:\n            _g()"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        class _D:\n            _g()"
+        ),
+    ),
+    "a function defined while handling, whose body calls a raising one": (
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        def _h():\n            _g()"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        def _h():\n            _g()\n"
+            "        _h()"
+        ),
+    ),
+    "a class built in a finally, whose body calls a raising function": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    finally:\n        class _D:\n            _g()"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n        pass\n"
+            "    finally:\n        class _D:\n            _g()"
+        ),
+    ),
+    "exception class a function declares global": (
+        "Refused = ValueError\ndef f(key):\n    global Refused\n    return Refused('a')",
+        "Refused = ValueError\ndef f(key):\n    global Refused\n    return Refused(key)",
+    ),
+    "exception class a nested function declares nonlocal": (
+        (
+            "def f(key):\n    Refused = ValueError\n    def _g():\n"
+            "        nonlocal Refused\n        return Refused('a')\n    return _g()"
+        ),
+        (
+            "def f(key):\n    Refused = ValueError\n    def _g():\n"
+            "        nonlocal Refused\n        return Refused(key)\n    return _g()"
+        ),
+    ),
+    "a lambda's default naming its own parameter, in a comprehension": (
+        "def f(key):\n    return [lambda x=ValueError(x): 0 for x in ('a',)]",
+        "def f(key):\n    return [lambda x=ValueError(key): 0 for x in ('a',)]",
+    ),
+    "a method called on its own object, rebound in a decorator": (
+        _ON_SELF.format(
+            "        @(other := key)\n        def _g():\n            pass\n"
+        ),
+        _ON_SELF.format(
+            "        @(self := key)\n        def _g():\n            pass\n"
+        ),
+    ),
+    "a method called on its own object, rebound in a keyword-only default": (
+        _ON_SELF.format("        def _g(*, x=(other := key)):\n            pass\n"),
+        _ON_SELF.format("        def _g(*, x=(self := key)):\n            pass\n"),
+    ),
+    "a method called on its own object, rebound in a class keyword": (
+        _ON_SELF.format(
+            "        class _D(metaclass=(other := type)):\n            pass\n"
+        ),
+        _ON_SELF.format(
+            "        class _D(metaclass=(self := key)):\n            pass\n"
+        ),
+    ),
+    "an exception raised by name, an attribute of it set": (
+        "def f(key):\n    e = ValueError('a')\n    raise e",
+        "def f(key):\n    e = ValueError('a')\n    e.args = (key,)\n    raise e",
+    ),
+    "a class of the package caught, declared global": (
+        (
+            "class _E(Exception):\n    pass\ndef f(key):\n    try:\n        pass\n"
+            "    except _E:\n        raise"
+        ),
+        (
+            "class _E(Exception):\n    pass\ndef f(key):\n    global _E\n"
+            "    try:\n        pass\n    except _E:\n        raise"
+        ),
+    ),
+    "a class caught off a package a dotted import binds": (
+        (
+            "import m.sub\nclass _E(Exception):\n    pass\ndef f(key):\n    try:\n"
+            "        pass\n    except m._E:\n        raise"
+        ),
+        (
+            "import os.path\ndef f(key):\n    try:\n        pass\n"
+            "    except os.error:\n        raise"
+        ),
+    ),
+    "exception class a call passes to a method called on a class method's argument": (
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind('a')\n    @classmethod\n    def f(cls, obj, key):\n"
+            "        raise obj._make(key, Refused)"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(self, key, kind):\n"
+            "        return kind(key)\n    @classmethod\n    def f(cls, obj, key):\n"
+            "        raise obj._make(key, Refused)"
+        ),
+    ),
+    "a method called on a static method's parameter named cls": (
+        (
+            "class _C:\n    @staticmethod\n    def _g(cls):\n"
+            "        raise ValueError(cls._text())\n    def _text(self):\n"
+            "        return 'a'\n    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "class _C:\n    @staticmethod\n    def _g(cls):\n"
+            "        raise ValueError(cls._text())\n    def _text(self):\n"
+            "        return 'a'\n    def f(self, key):\n        self._g(key)"
+        ),
+    ),
+    "exception class a call passes to a class method's parameter": (
+        (
+            "Refused = ValueError\nclass _C:\n    @classmethod\n"
+            "    def _make(klass, key, kind):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise _C._make(key, Refused)"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    @classmethod\n"
+            "    def _make(klass, key, kind):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise _C._make(key, Refused)"
+        ),
+    ),
+    "exception class a call passes to a static method's parameter named cls": (
+        (
+            "class Refused(Exception):\n    pass\nclass _C:\n    @staticmethod\n"
+            "    def _make(cls, key):\n        return cls('a')\n"
+            "    def f(self, key):\n        raise self._make(Refused, key)"
+        ),
+        (
+            "class Refused(Exception):\n    pass\nclass _C:\n    @staticmethod\n"
+            "    def _make(cls, key):\n        return cls(key)\n"
+            "    def f(self, key):\n        raise self._make(Refused, key)"
+        ),
+    ),
+    "exception class a call passes to a method whose object has another name": (
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(this, key, kind):\n"
+            "        return kind('a')\n    def f(self, key):\n"
+            "        raise self._make(key, Refused)"
+        ),
+        (
+            "Refused = ValueError\nclass _C:\n    def _make(this, key, kind):\n"
+            "        return kind(key)\n    def f(self, key):\n"
+            "        raise self._make(key, Refused)"
+        ),
+    ),
+    "exception class a chain of calls may pass by unpacking": (
+        (
+            "class Refused(Exception):\n    pass\ndef _make(kind, key):\n"
+            "    return kind('a')\ndef _mid(kind, key):\n    return _make(kind, key)\n"
+            "def f(kind, key):\n    raise _mid(*(kind, key))"
+        ),
+        (
+            "class Refused(Exception):\n    pass\ndef _make(kind, key):\n"
+            "    return kind(key)\ndef _mid(kind, key):\n    return _make(kind, key)\n"
+            "def f(kind, key):\n    raise _mid(*(kind, key))"
+        ),
+    ),
+    "call of a parameter a chain of calls passes, whose result a refusal prints": (
+        (
+            "class Refused(Exception):\n    pass\ndef _make(kind):\n    return kind('a')\n"
+            "def _mid(kind):\n    return _make(kind)\n"
+            "def f():\n    raise ValueError(_mid(Refused))"
+        ),
+        (
+            "class Refused(Exception):\n    pass\ndef _make(kind):\n    return kind('a')\n"
+            "def _mid(kind):\n    return _make(kind)\n"
+            "def f(kind):\n    raise ValueError(_mid(*(kind,)))"
+        ),
+    ),
+    "exception class a call through the class passes to a method's object": (
+        (
+            "class _C:\n    def _make(self, key):\n        return self('a')\n"
+            "    def f(self, key):\n        raise _C._make(ValueError, key)"
+        ),
+        (
+            "class _C:\n    def _make(self, key):\n        return self(key)\n"
+            "    def f(self, key):\n        raise _C._make(ValueError, key)"
+        ),
+    ),
+    "call of a method's object a call through the class passes, printed": (
+        (
+            "class _C:\n    def _make(self):\n        return self('a')\n"
+            "    def f(self, key):\n        raise ValueError(_C._make(ValueError))"
+        ),
+        (
+            "class _C:\n    def _make(self):\n        return self('a')\n"
+            "    def f(self, key):\n"
+            "        raise ValueError(_C._make(ValueError), self._make())"
+        ),
+    ),
+    "a method's own object": (
+        (
+            "class _C:\n    def _g(self):\n        raise ValueError('a')\n"
+            "    def f(self):\n        self._g()"
+        ),
+        (
+            "class _C:\n    def _g(self):\n        raise ValueError(self)\n"
+            "    def f(self):\n        self._g()"
+        ),
+    ),
+    "a starred parameter of a method": (
+        (
+            "class _C:\n    def _m(*args):\n        raise ValueError('a')\n"
+            "    def f(self):\n        self._m(1)"
+        ),
+        (
+            "class _C:\n    def _m(*args):\n        raise ValueError(args)\n"
+            "    def f(self):\n        self._m(1)"
+        ),
+    ),
+    "a function's parameter named self": (
+        "def _g(self, key):\n    raise ValueError(self)\ndef f(key):\n    _g(1, key)",
+        "def _g(self, key):\n    raise ValueError(self)\ndef f(key):\n    _g(key, key)",
+    ),
     "exception class a parameter a call leaves takes by default": (
         (
             "Refused = ValueError\ndef _make(key, kind=Refused):\n    return kind('a')\n"
@@ -3264,6 +4447,559 @@ _SHAPES = {
             "        int(key)\n    finally:\n        _g()"
         ),
     ),
+    "exception class a function binds where it declares it global": (
+        (
+            "def f(key):\n    global Refused\n    Refused = ValueError\n"
+            "    return Refused('a')"
+        ),
+        (
+            "def f(key):\n    global Refused\n    Refused = ValueError\n"
+            "    return Refused(key)"
+        ),
+    ),
+    "exception class a function binds where it declares it nonlocal": (
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        return Refused('a')\n    return _g()"
+        ),
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        return Refused(key)\n    return _g()"
+        ),
+    ),
+    "exception class a function binds where it declares nonlocal a parameter": (
+        (
+            "def f(key, Refused=None):\n    def _g():\n        nonlocal Refused\n"
+            "        Refused = ValueError\n        return Refused('a')\n    return _g()"
+        ),
+        (
+            "def f(key, Refused=None):\n    def _g():\n        nonlocal Refused\n"
+            "        Refused = ValueError\n        return Refused(key)\n    return _g()"
+        ),
+    ),
+    "exception class an outer nonlocal binds, called under an inner one": (
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        def _h():\n            nonlocal Refused\n"
+            "            return Refused('a')\n        return _h()\n    return _g()"
+        ),
+        (
+            "def f(key):\n    Refused = None\n    def _g():\n"
+            "        nonlocal Refused\n        Refused = ValueError\n"
+            "        def _h():\n            nonlocal Refused\n"
+            "            return Refused(key)\n        return _h()\n    return _g()"
+        ),
+    ),
+    "raising call in a parameter's annotation of a def in an except": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        def h(x: _g()):\n            pass"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        def h(x: _g()):\n"
+            "            pass"
+        ),
+    ),
+    "raising call in the return annotation of a def in an except": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        def h(x) -> _g():\n            pass"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    except OSError:\n        def h(x) -> _g():\n"
+            "            pass"
+        ),
+    ),
+    "raising call in a starred parameter's annotation of a def in a finally": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    finally:\n        def h(*x: _g()):\n            pass"
+        ),
+        (
+            "def _g():\n    raise ValueError('a')\ndef f(key):\n    try:\n"
+            "        pass\n    finally:\n        def h(*x: _g()):\n            pass"
+        ),
+    ),
+    "name a lambda in a comprehension binds with :=": (
+        (
+            "def f(key):\n"
+            "    return [lambda: ((x := 'a'), ValueError(x))[1] for x in (key,)]"
+        ),
+        (
+            "def f(key):\n"
+            "    return [lambda: ((x := key), ValueError(x))[1] for x in ('a',)]"
+        ),
+    ),
+    "item a loop stores": (
+        (
+            "def f(key):\n    bucket = [None]\n    for bucket[0] in ('a',):\n"
+            "        pass\n    raise ValueError(bucket[0])"
+        ),
+        (
+            "def f(key):\n    bucket = [None]\n    for bucket[0] in (key,):\n"
+            "        pass\n    raise ValueError(bucket[0])"
+        ),
+    ),
+    "item a comprehension stores": (
+        (
+            "def f(key):\n    bucket = [None]\n    _ = [0 for bucket[0] in ('a',)]\n"
+            "    raise ValueError(bucket[0])"
+        ),
+        (
+            "def f(key):\n    bucket = [None]\n    _ = [0 for bucket[0] in (key,)]\n"
+            "    raise ValueError(bucket[0])"
+        ),
+    ),
+    "item a with stores": (
+        (
+            "def _open(x):\n    return x\ndef f(key):\n    bucket = [None]\n"
+            "    with _open('a') as bucket[0]:\n        pass\n"
+            "    raise ValueError(bucket[0])"
+        ),
+        (
+            "def _open(x):\n    return x\ndef f(key):\n    bucket = [None]\n"
+            "    with _open(key) as bucket[0]:\n        pass\n"
+            "    raise ValueError(bucket[0])"
+        ),
+    ),
+    "container handed through a class with an unpacked argument": (
+        (
+            "class _C:\n    def _g(self, unused, items, key):\n"
+            "        return len(items)\n    def f(self, key):\n        values = []\n"
+            "        _C._g(self, 0, values, key)\n        raise ValueError(values)"
+        ),
+        (
+            "class _C:\n    def _g(self, unused, items, key):\n"
+            "        return len(items)\n    def f(self, key):\n        values = []\n"
+            "        _C._g(*(self, 0), values, key)\n        raise ValueError(values)"
+        ),
+    ),
+    "staticmethod imported under another name": (
+        (
+            "from builtins import staticmethod as static\nclass _C:\n    @static\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, 'a')"
+        ),
+        (
+            "from builtins import staticmethod as static\nclass _C:\n    @static\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "classmethod imported under another name": (
+        (
+            "from builtins import classmethod as klass\nclass _C:\n    @klass\n"
+            "    def _make(kind, key):\n        return ValueError(key)\n"
+            "    def f(self, key):\n        raise _C._make('a')"
+        ),
+        (
+            "from builtins import classmethod as klass\nclass _C:\n    @klass\n"
+            "    def _make(kind, key):\n        return ValueError(key)\n"
+            "    def f(self, key):\n        raise _C._make(key)"
+        ),
+    ),
+    "parameter of a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return staticmethod(f)\nclass _C:\n    @_deco\n"
+            "    def _make(kind):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError)"
+        ),
+        (
+            "def _deco(f):\n    return staticmethod(f)\nclass _C:\n    @_deco\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a module defines under the name of a typing one": (
+        (
+            "def override(f):\n    return staticmethod(f)\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "def override(f):\n    return staticmethod(f)\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a module defines under the name of a builtin one": (
+        (
+            "def staticmethod(f):\n    return f\nclass _C:\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "def staticmethod(f):\n    return f\nclass _C:\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator read as an attribute of a module other than its home": (
+        (
+            "import mylib\nclass _C:\n    @mylib.override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "import mylib\nclass _C:\n    @mylib.override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator named after a typing one under a star import from elsewhere": (
+        (
+            "from mylib import *\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "from mylib import *\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a parameter around the class binds under a typing name": (
+        (
+            "def _mk(override):\n    class _C:\n        @override\n"
+            "        def _make(kind, key):\n            return kind('a')\n"
+            "        def f(self, key):\n            raise self._make(ValueError, key)\n"
+            "    return _C"
+        ),
+        (
+            "def _mk(override):\n    class _C:\n        @override\n"
+            "        def _make(kind, key):\n            return kind(key)\n"
+            "        def f(self, key):\n            raise self._make(ValueError, key)\n"
+            "    return _C"
+        ),
+    ),
+    "decorator imported from elsewhere under the name of a typing one": (
+        (
+            "from mylib import override\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "from mylib import override\nclass _C:\n    @override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a class body defines under the name of a builtin one": (
+        (
+            "class _C:\n    def staticmethod(f):\n        return f\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "class _C:\n    def staticmethod(f):\n        return f\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorators imported from their homes under other names": (
+        (
+            "from abc import abstractmethod as a\nfrom typing import override as o\n"
+            "from typing_extensions import override as e\nclass _C:\n    @a\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n    @o\n"
+            "    def _h(self, x):\n        raise ValueError(x)\n    @e\n"
+            "    def _i(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')\n        self._h('a')\n"
+            "        self._i('a')"
+        ),
+        (
+            "from abc import abstractmethod as a\nfrom typing import override as o\n"
+            "from mylib import override as e\nclass _C:\n    @a\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n    @o\n"
+            "    def _h(self, x):\n        raise ValueError(x)\n    @e\n"
+            "    def _i(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')\n        self._h('a')\n"
+            "        self._i('a')"
+        ),
+    ),
+    "decorator name an import from its home and an assignment both bind": (
+        (
+            "def _d(f):\n    return f\n"
+            "from builtins import staticmethod as static\nclass _C:\n"
+            "    @static\n    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, ValueError, 'a')"
+        ),
+        (
+            "def _d(f):\n    return f\nstatic = _d\n"
+            "from builtins import staticmethod as static\nclass _C:\n"
+            "    @static\n    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, ValueError, 'a')"
+        ),
+    ),
+    "decorator read as an attribute of its home imported under another name": (
+        (
+            "import typing as t\nclass _C:\n    @t.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "import typing as t\nclass _C:\n    @typing.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "decorator read as an attribute of a name imported from elsewhere": (
+        (
+            "import typing\nclass _C:\n    @typing.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "from mylib import typing\nclass _C:\n    @typing.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "decorator named after a typing one under a star import from its home": (
+        (
+            "from typing import *\nclass _C:\n    @override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "from mylib import *\nclass _C:\n    @override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "decorator imported from its home by a relative import": (
+        (
+            "from builtins import staticmethod as mode\nclass _C:\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "from .builtins import staticmethod as mode\nclass _C:\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+    ),
+    "decorator one import binds twice, to two decorators": (
+        (
+            "from builtins import staticmethod as mode\nclass _C:\n    @mode\n"
+            "    def _g(cls, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "from builtins import staticmethod as mode, classmethod as mode\n"
+            "class _C:\n    @mode\n"
+            "    def _g(cls, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+    ),
+    "decorator a class body imports only on one branch": (
+        (
+            "def mode(f):\n    return f\nclass _C:\n"
+            "    from builtins import staticmethod as mode\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "def mode(f):\n    return f\nclass _C:\n    if len('a'):\n"
+            "        from builtins import staticmethod as mode\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+    ),
+    "decorator a class body imports after the method": (
+        (
+            "def mode(f):\n    return f\nclass _C:\n"
+            "    from builtins import staticmethod as mode\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "def mode(f):\n    return f\nclass _C:\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')\n"
+            "    from builtins import staticmethod as mode"
+        ),
+    ),
+    "decorator a class body declares global": (
+        (
+            "def mode(f):\n    return f\ndef _mk():\n    from builtins import staticmethod as mode\n"
+            "    class _C:\n        @mode\n"
+            "        def _g(self, text, unused='a'):\n            raise ValueError(text)\n"
+            "        def f(self, key):\n            self._g(key, 'a')\n    return _C"
+        ),
+        (
+            "def mode(f):\n    return f\ndef _mk():\n    from builtins import staticmethod as mode\n"
+            "    class _C:\n        global mode\n        @mode\n"
+            "        def _g(self, text, unused='a'):\n            raise ValueError(text)\n"
+            "        def f(self, key):\n            self._g(key, 'a')\n    return _C"
+        ),
+    ),
+    "decorator named after a builtin one a class body declares global": (
+        (
+            "class _C:\n    @staticmethod\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "class _C:\n    global staticmethod\n    @staticmethod\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+    ),
+    "decorator's module an import binds twice, to its home and elsewhere": (
+        (
+            "import typing, mylib as typing\nclass _C:\n"
+            "    @typing.override\n    def _make(kind, key):\n"
+            "        return kind('a')\n    def f(self, key):\n"
+            "        raise self._make(ValueError, key)"
+        ),
+        (
+            "import typing, mylib as typing\nclass _C:\n"
+            "    @typing.override\n    def _make(kind, key):\n"
+            "        return kind(key)\n    def f(self, key):\n"
+            "        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a function around the class lets a sibling rebind": (
+        (
+            "def _id(f):\n    return f\ndef _mk():\n"
+            "    from builtins import staticmethod as mode\n"
+            "    def _set():\n        nonlocal mode\n        mode = _id\n"
+            "    _set()\n    class _C:\n        @mode\n"
+            "        def _make(self, kind, key):\n"
+            "            return kind('a')\n        def f(self, key):\n"
+            "            raise self._make(ValueError, key)\n    return _C"
+        ),
+        (
+            "def _id(f):\n    return f\ndef _mk():\n"
+            "    from builtins import staticmethod as mode\n"
+            "    def _set():\n        nonlocal mode\n        mode = _id\n"
+            "    _set()\n    class _C:\n        @mode\n"
+            "        def _make(self, kind, key):\n"
+            "            return kind(key)\n        def f(self, key):\n"
+            "            raise self._make(ValueError, key)\n    return _C"
+        ),
+    ),
+    "decorator named after a builtin one a function declares global": (
+        (
+            "def _id(f):\n    return f\ndef _set():\n"
+            "    global staticmethod\n    staticmethod = _id\n_set()\n"
+            "class _C:\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n"
+            "        raise self._make(ValueError, key)"
+        ),
+        (
+            "def _id(f):\n    return f\ndef _set():\n"
+            "    global staticmethod\n    staticmethod = _id\n_set()\n"
+            "class _C:\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n"
+            "        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator read as an attribute of a package a submodule import binds": (
+        (
+            "import mylib.sub\nclass _C:\n    @mylib.override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "import mylib.sub\nclass _C:\n    @mylib.override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator of a method a call answers": (
+        (
+            "def _wrap():\n    return lambda f: f\nclass _C:\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "def _wrap():\n    return lambda f: f\nclass _C:\n    @_wrap()\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "decorator of a method read as an attribute of its home": (
+        (
+            "import typing\nclass _C:\n    @typing.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "import mylib\nclass _C:\n    @mylib.override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "own object of a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    def _text(self):\n"
+            "        return 'a'\n    @property\n    def f(self):\n"
+            "        raise ValueError(self._text())"
+        ),
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    def _text(self):\n"
+            "        return 'a'\n    @_deco\n    def f(self):\n"
+            "        raise ValueError(self._text())"
+        ),
+    ),
+    "container handed to a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return f\nclass _C:\n"
+            "    def _g(self, items, key):\n        return len(items)\n"
+            "    def f(self, key):\n        values = []\n        self._g(values, key)\n"
+            "        raise ValueError(values)"
+        ),
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @_deco\n"
+            "    def _g(self, items, key):\n        return len(items)\n"
+            "    def f(self, key):\n        values = []\n        self._g(values, key)\n"
+            "        raise ValueError(values)"
+        ),
+    ),
+    "argument of a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @override\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @_deco\n"
+            "    def _g(self, x):\n        raise ValueError(x)\n"
+            "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "exception class handed to a method with a decorator the census does not know": (
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @override\n"
+            "    def _make(self, kind, other):\n        err = kind('a')\n"
+            "        raise err\n    def f(self, key):\n"
+            "        self._make(ValueError, ValueError)"
+        ),
+        (
+            "def _deco(f):\n    return f\nclass _C:\n    @_deco\n"
+            "    def _make(self, kind, other):\n        err = kind('a')\n"
+            "        raise err\n    def f(self, key):\n"
+            "        self._make(ValueError, ValueError)"
+        ),
+    ),
+    "parameter of a decorated function that is not a method": (
+        (
+            "def _deco(f):\n    return f\n@_deco\ndef _g(x):\n"
+            "    raise ValueError(x)\ndef f(key):\n    _g('a')"
+        ),
+        (
+            "def _deco(f):\n    return f\n@_deco\ndef _g(x):\n"
+            "    raise ValueError(x)\ndef f(key):\n    _g(key)"
+        ),
+    ),
 }
 
 
@@ -3272,6 +5008,55 @@ def test_census_controls(traced: str, flagged: str) -> None:
     """The census traces one module of a shape and flags the other."""
     assert not _census({"m.py": traced}).findings()
     assert _census({"m.py": flagged}).findings()
+
+
+@pytest.mark.parametrize(
+    "rebinding",
+    [
+        "self = key",
+        "self += key",
+        "self: _C = key",
+        "self, other = key",
+        "*self, other = key",
+        "for self in key:\n            pass",
+        "async for self in key:\n            pass",
+        "with key as self:\n            pass",
+        "async with key as self:\n            pass",
+        "(self := key)",
+        "try:\n            pass\n        except OSError as self:\n            pass",
+        "try:\n            pass\n        except* OSError as self:\n            pass",
+        (
+            "def _g():\n            global self\n"
+            "            raise ValueError(self._text())\n        _g()"
+        ),
+        "def self():\n            pass",
+        "async def self():\n            pass",
+        "class self:\n            pass",
+        "import self",
+        "import self.sub",
+        "from os import path as self",
+        pytest.param(
+            "type self = int",
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 12), reason="a `type` statement is 3.12's"
+            ),
+        ),
+        "match key:\n            case self:\n                pass",
+        "match key:\n            case [*self]:\n                pass",
+        "match key:\n            case {**self}:\n                pass",
+    ],
+)
+def test_census_reads_a_rebound_receiver(rebinding: str) -> None:
+    """A method's own object rebound holds what the method does not own.
+
+    Each module compiles, so `async for` and `async with` stand in an
+    `async def`.
+    """
+    source = _ON_SELF.format(f"        {rebinding}\n")
+    if rebinding.startswith("async"):
+        source = source.replace("def f(", "async def f(")
+    compile(source, "m.py", "exec")
+    assert _census({"m.py": source}).findings()
 
 
 _ERRORS = "class FetchError(Exception):\n    pass"
