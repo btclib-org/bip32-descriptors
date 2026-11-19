@@ -1880,8 +1880,9 @@ def _sec(
 def _plain_data(node: Miniscript) -> bytes:
     """Return the bytes a node's data holds, through none of its methods.
 
-    The script pushes them: `serialize` sizes a push by `len()`, which a
-    subclass answers as it likes.
+    What the script pushes and a spending path holds: `serialize` sizes a
+    push by `len()`, as a caller may size a path's digest, and a subclass
+    answers `len()` as it likes.
     """
     return bytes.__getitem__(node.data, slice(None))
 
@@ -4306,7 +4307,11 @@ def _assert_lock_time(name: str, value: int | None) -> None:
 
 
 def _assert_hash_lock(hash_lock: tuple[str, bytes]) -> None:
-    """Refuse what is not a hash fragment with a digest of its size."""
+    """Refuse what is not a hash fragment with a digest of its size.
+
+    The digest is sized by the bytes it holds, which no subclass's
+    `__len__` answers.
+    """
     assert_type(hash_lock, tuple, "hash")
     if len(hash_lock) != 2:
         raise BTClibValueError("a hash is a fragment and a digest")
@@ -4315,7 +4320,7 @@ def _assert_hash_lock(hash_lock: tuple[str, bytes]) -> None:
     assert_type(digest, bytes, "digest")
     if fragment not in _HASH_OP_CODES:
         raise BTClibValueError("unknown hash fragment")
-    if len(digest) != _DATA_SIZE[fragment]:
+    if bytes.__len__(digest) != _DATA_SIZE[fragment]:
         err_msg = (
             f"{_label(fragment, _NAMES)} takes {_DATA_SIZE[fragment]} bytes of data"
         )
@@ -4849,7 +4854,7 @@ def _leaf_paths(node: Miniscript, order: _Order) -> list[SpendingPath]:
     if fragment == "after":
         return [SpendingPath(after=node.threshold)]
     if fragment in _HASH_OP_CODES:
-        return [SpendingPath(hashes=((fragment, node.data),))]
+        return [SpendingPath(hashes=((fragment, _plain_data(node)),))]
     # "1" is satisfied by nothing at all, and "0" not at all
     return [SpendingPath()] if fragment == "1" else []
 

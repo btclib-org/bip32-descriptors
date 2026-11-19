@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
+from btclib.hashes import sha256
 from btclib.key import PrvKeyData
 
 from bip32_descriptors.descriptors import parse
@@ -31,7 +32,13 @@ from bip32_descriptors.descriptors.descriptors import (
     MiniscriptDescriptor,
     WshDescriptor,
 )
-from bip32_descriptors.descriptors.miniscript import P2WSH, TAPSCRIPT, Miniscript
+from bip32_descriptors.descriptors.miniscript import (
+    P2WSH,
+    TAPSCRIPT,
+    Miniscript,
+    SpendContext,
+    SpendingPath,
+)
 from bip32_descriptors.descriptors.miniscript import parse as parse_miniscript
 from tests import says_length
 from tests.secret_free import assert_secret_free
@@ -212,3 +219,39 @@ def test_data_is_pushed_as_the_bytes_it_holds(
     plain_wsh = WshDescriptor(MiniscriptDescriptor(plain))
     assert wsh.script_pub_key().script == plain_wsh.script_pub_key().script
     assert wsh.address() == plain_wsh.address()
+
+
+@pytest.mark.parametrize("length", [1, 33])
+def test_a_hash_lock_is_spent_as_the_bytes_it_holds(length: int) -> None:
+    """Its spending paths and its satisfaction are those of its plain bytes.
+
+    A path holds the digest as the bytes the node holds. Issue
+    btclib-org/bip32-descriptors#355.
+    """
+    preimage = bytes(32)
+    digest = sha256(preimage)
+    plain = parse_miniscript(f"and_v(v:pk({_C}),sha256({digest.hex()}))", P2WSH)
+    node = _with_data(plain, says_length(digest, length))
+    paths = node.spending_paths
+    assert paths == plain.spending_paths
+    held = [data for path in paths for _, data in path.hashes]
+    assert held == [digest]
+    assert type(held[0]) is bytes
+    signature = "30" * 71 + "01"
+    spend = SpendContext(sha256_preimages={digest: preimage})
+    witness = plain.satisfy({_C: signature}, spend)
+    assert witness == [preimage, bytes.fromhex(signature)]
+    assert node.satisfy({_C: signature}, spend) == witness
+
+
+@pytest.mark.parametrize("length", [31, 33])
+def test_a_spending_path_sizes_a_digest_by_its_bytes(length: int) -> None:
+    """Built for a digest of 32 bytes, refused for one of 31, whatever it says.
+
+    Issue btclib-org/bip32-descriptors#355.
+    """
+    digest = bytes(32)
+    path = SpendingPath(hashes=(("sha256", says_length(digest, length)),))
+    assert path == SpendingPath(hashes=(("sha256", digest),))
+    with pytest.raises(BTClibValueError, match="takes 32 bytes of data$"):
+        SpendingPath(hashes=(("sha256", says_length(digest[1:], 32)),))
