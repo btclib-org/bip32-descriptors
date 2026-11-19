@@ -373,13 +373,14 @@ def _arguments(func: ast.AST) -> list[ast.arg]:
 def _own_nodes(scope: ast.AST) -> list[ast.AST]:
     """Return the nodes of a scope, not entering a nested function or class.
 
-    A function's own are those of its body: what `_read_around` returns of it
-    is read in the scope around it, as is that of a nested function or class.
+    A function's or a class's own are those of its body: what `_read_around`
+    returns of it is read in the scope around it, as is that of a nested
+    function or class.
     """
     found: list[ast.AST] = []
     if isinstance(scope, ast.Lambda):
         todo: list[ast.AST] = [scope.body]
-    elif isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    elif isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         todo = list(scope.body)
     else:
         todo = list(ast.iter_child_nodes(scope))
@@ -702,14 +703,14 @@ class _Module:
                 self.parents[child] = node
 
     def scopes(self, node: ast.AST) -> list[ast.AST]:
-        """Return the enclosing scopes, innermost first, then the module.
+        """Return the enclosing functions and classes, innermost first.
 
-        A default, an annotation or a decorator of a `def` or a lambda is
-        read where it stands, so that `def` is not one of its scopes. A
-        class body is a scope of its own statements, and of the defaults,
-        annotations and decorators of what it defines, but not of a
-        function's body, a nested class's or a comprehension's, its first
-        iterable aside.
+        The module comes last. A default, an annotation or a decorator of a
+        `def` or a lambda is read where it stands, so that `def` is not one
+        of its scopes. A class body is a scope of its own statements, and of
+        the defaults, annotations and decorators of what it defines, but not
+        of a function's body, a nested class's or a comprehension's, its
+        first iterable aside.
         """
         found: list[ast.AST] = []
         # whether a function, a class or a comprehension shuts out a class body
@@ -727,7 +728,7 @@ class _Module:
             ):
                 found.append(current)
                 shut = True
-            elif isinstance(current, (*_COMPREHENSION, ast.DictComp)):
+            elif isinstance(current, _COMPREHENSIONS):
                 if below is not current.generators[0].iter:
                     shut = True
             elif isinstance(current, ast.ClassDef) and child in current.body:
@@ -845,14 +846,18 @@ class _Census:
         The nodes of the scope `_binder` finds that `_rebinds` reads, and
         none where nothing binds the name. A parameter, a comprehension's
         target and a name a scope declares `global` or `nonlocal` are
-        unknown.
+        unknown. A class body reads a name it has not bound yet from the
+        module, so the module's nodes count for it too.
         """
         if self._binder(name, module) == (None, []):
             return []
         scope = self._local_scope(name, module)
         if scope is None:
             return None
-        return [n for n in self._scope_nodes(scope) if _rebinds(n, name.id)]
+        found = [n for n in self._scope_nodes(scope) if _rebinds(n, name.id)]
+        if isinstance(scope, ast.ClassDef):
+            found += [n for n in self._scope_nodes(module.tree) if _rebinds(n, name.id)]
+        return found
 
     def _imported(self, node: ast.ImportFrom, name: str) -> list[ast.AST]:
         """Return the `def`s an import of the package binds to a name."""
@@ -1956,6 +1961,11 @@ class _Census:
                     arg.arg == name for arg in _arguments(scope)
                 ):
                     keys.add(("parameter", scope_id, name))
+                if isinstance(scope, ast.ClassDef):
+                    # a class body reads a name it has not bound yet from the
+                    # module
+                    self.scopes[id(module.tree)] = (module, module.tree)
+                    keys.add(("name", id(module.tree), name))
                 bindings = self._filling(scope, name)
                 for node in bindings:
                     self._binding(node, name, module, leaves, keys)
@@ -4452,6 +4462,38 @@ _SHAPES = {
     "exception raised out of a container": (
         "def f(key):\n    errors = [ValueError('a')]\n    raise errors[0]",
         "def f(key):\n    errors = [key]\n    raise errors[0]",
+    ),
+    "a value a class's own bases bind in the scope around it": (
+        (
+            "def f(key, c):\n    x = 'b'\n    class _D((x := 'a') if c else object):\n"
+            "        raise ValueError(x)"
+        ),
+        (
+            "def f(key, c):\n    x = key\n    class _D((x := 'a') if c else object):\n"
+            "        raise ValueError(x)"
+        ),
+    ),
+    "a call a class body makes before it binds the name": (
+        (
+            "def _g():\n    return 1\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        class _D:\n            _g()\n"
+            "            def _g():\n                return 1"
+        ),
+        (
+            "_g = print\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        class _D:\n            _g()\n"
+            "            def _g():\n                return 1"
+        ),
+    ),
+    "a value a class body reads before it binds the name": (
+        (
+            "x = 'b'\ndef f(key):\n    class _D:\n        raise ValueError(x)\n"
+            "        x = 'a'"
+        ),
+        (
+            "import sys\nx = sys.argv\ndef f(key):\n    class _D:\n"
+            "        raise ValueError(x)\n        x = 'a'"
+        ),
     ),
     "a call of a name the class body binds": (
         (
