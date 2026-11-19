@@ -183,6 +183,7 @@ from __future__ import annotations
 
 import ast
 import io
+import itertools
 import re
 import sys
 from collections.abc import Mapping
@@ -674,19 +675,109 @@ def _declares(node: ast.AST, name: str) -> bool:
     return isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names
 
 
-def _bound_before(
-    scope: ast.ClassDef, read: ast.AST, bindings: list[ast.AST], module: _Module
-) -> bool:
-    """Return whether a class body has bound a name where it reads it.
+def _unbinds(node: ast.AST, name: str) -> bool:
+    """Return whether a node unbinds a name.
 
-    One of the bindings is a statement of the class body itself, before the
-    statement that holds the read.
+    A `del` of it, and an `except` that binds it: Python deletes that name
+    where the `except` ends.
     """
-    statement = read
-    while module.parents[statement] is not scope:
-        statement = module.parents[statement]
-    before = scope.body[: scope.body.index(cast("ast.stmt", statement))]
-    return any(binding in before for binding in bindings)
+    if isinstance(node, ast.Delete):
+        return any(
+            isinstance(part, ast.Name)
+            and part.id == name
+            and isinstance(part.ctx, ast.Del)
+            for target in node.targets
+            for part in ast.walk(target)
+        )
+    return isinstance(node, ast.ExceptHandler) and node.name == name
+
+
+def _at(node: ast.AST, *, end: bool = False) -> tuple[int, int]:
+    """Return where a node starts in the source, or where it ends."""
+    if end:
+        return getattr(node, "end_lineno", 0), getattr(node, "end_col_offset", 0)
+    return getattr(node, "lineno", 0), getattr(node, "col_offset", 0)
+
+
+def _inside(node: ast.AST, holders: list[ast.AST], module: _Module) -> bool:
+    """Return whether a node is inside one of the holders."""
+    parent = module.parents.get(node)
+    while parent is not None:
+        if any(parent is holder for holder in holders):
+            return True
+        parent = module.parents.get(parent)
+    return False
+
+
+def _binds_into(
+    outer: ast.AST, inner: ast.AST, scope: ast.ClassDef, binds: set[int]
+) -> tuple[int, int] | None:
+    """Return where a block last binds a name before a node, or None.
+
+    A statement of the block of `outer` that holds `inner`, before it, that
+    binds the name, a loop aside, which may not run; or `outer` itself, a
+    loop, a `with` or an `except` whose body holds `inner`. `binds` holds
+    the ids of the nodes that bind the name.
+    """
+    found: tuple[int, int] | None = None
+    for field_name in ("body", "orelse", "finalbody"):
+        block = getattr(outer, field_name, None)
+        if not isinstance(block, list) or all(s is not inner for s in block):
+            continue
+        for statement in block[: block.index(inner)]:
+            if id(statement) in binds and not isinstance(
+                statement, (ast.For, ast.AsyncFor)
+            ):
+                found = _at(statement)
+        if outer is not scope and field_name == "body" and id(outer) in binds:
+            found = _at(outer)
+    return found
+
+
+def _class_holds(
+    scope: ast.ClassDef,
+    read: ast.Name,
+    binding: list[ast.AST],
+    unbinding: list[ast.AST],
+    module: _Module,
+) -> tuple[bool, bool]:
+    """Return whether a class body may hold a name where it reads it, and must.
+
+    `binding` and `unbinding` are the nodes of the class body that bind the
+    name, as `_rebinds` reads that, and that unbind it, as `_unbinds` does.
+    It must hold the name where a block on the way to the read binds it,
+    as `_binds_into` reads that, and where nothing unbinds it between that
+    binding and the read, nor anywhere in a loop that holds the read inside
+    that binding, which may run the read again. It may where it must, or
+    where a node that binds the name starts before the read, or is in a
+    loop that holds the read.
+    """
+    binds = {id(node) for node in binding}
+    path: list[ast.AST] = [read]
+    while path[-1] is not scope:
+        path.append(module.parents[path[-1]])
+    path.reverse()
+    loops: list[ast.AST] = []
+    # the loops that hold the read inside the binding found so far
+    again: list[ast.AST] = []
+    bound: tuple[int, int] | None = None
+    for outer, inner in itertools.pairwise(path):
+        if isinstance(outer, (ast.For, ast.AsyncFor, ast.While)):
+            loops.append(outer)
+            again.append(outer)
+        found = _binds_into(outer, inner, scope, binds)
+        if found is not None:
+            bound, again = found, []
+    where = _at(read)
+    must = bound is not None and not any(
+        bound < _at(node, end=isinstance(node, ast.ExceptHandler)) < where
+        or _inside(node, again, module)
+        for node in unbinding
+    )
+    may = must or any(
+        _at(node) < where or _inside(node, loops, module) for node in binding
+    )
+    return may, must
 
 
 def _comprehension_binding(expr: ast.Name, module: _Module) -> ast.AST | None:
@@ -736,10 +827,11 @@ class _Module:
 
         The module comes last. A default, an annotation or a decorator of a
         `def` or a lambda is read where it stands, so that `def` is not one
-        of its scopes. A class body is a scope of its own statements, and of
-        the defaults, annotations and decorators of what it defines, but not
-        of a function's body, a nested class's or a comprehension's, its
-        first iterable aside.
+        of its scopes. A class body is a scope of its own statements, of the
+        defaults, annotations and decorators of what it defines, and of the
+        bases and keywords of a class it defines, but not of a function's
+        body, a nested class's or a comprehension's, its first iterable
+        aside.
         """
         found: list[ast.AST] = []
         # whether a function, a class or a comprehension shuts out a class body
@@ -790,6 +882,10 @@ class _Census:
     nodes: dict[int, list[ast.AST]] = field(default_factory=dict)
     mutations: dict[int, dict[str, list[ast.AST]]] = field(default_factory=dict)
     global_bindings: dict[int, dict[str, list[ast.AST]]] = field(default_factory=dict)
+    # the nodes of a class body that bind and unbind a name, by both
+    class_names: dict[tuple[int, str], tuple[list[ast.AST], list[ast.AST]]] = field(
+        default_factory=dict
+    )
     edges: dict[_Key, tuple[list[str], set[_Key]]] = field(default_factory=dict)
     reached: dict[_Key, frozenset[str]] = field(default_factory=dict)
     # each class of the package by its name, the `def`s that may raise, and
@@ -870,31 +966,58 @@ class _Census:
             return None
         return scope
 
-    def _rebindings(self, name: ast.Name, module: _Module) -> list[ast.AST] | None:
+    def _rebindings(
+        self, name: ast.Name, module: _Module, *, runs: bool = False
+    ) -> list[ast.AST] | None:
         """Return the nodes binding a name where it is read, None where unknown.
 
-        The nodes of the scope `_binder` finds that `_rebinds` reads, and
-        none where nothing binds the name. A parameter, a comprehension's
-        target and a name a scope declares `global` or `nonlocal` are
-        unknown. A class body reads a name it has not bound yet from the
-        module, so the module's nodes count for it too. Where the module
-        binds none, that read is of a builtin or of nothing, which is
-        unknown, unless `_bound_before` says the class body has bound it.
+        The nodes of the scopes `_read_from` finds that `_rebinds` reads,
+        and none where nothing binds the name. A parameter, a
+        comprehension's target and a name a scope declares `global` or
+        `nonlocal` are unknown, and so is a builtin a class body may read,
+        unless `runs` asks only what the read may run: a builtin runs
+        nothing of the package.
         """
         if self._binder(name, module) == (None, []):
             return []
         scope = self._local_scope(name, module)
         if scope is None:
             return None
-        found = [n for n in self._scope_nodes(scope) if _rebinds(n, name.id)]
-        if isinstance(scope, ast.ClassDef):
-            outside = [
-                n for n in self._scope_nodes(module.tree) if _rebinds(n, name.id)
-            ]
-            if not outside and not _bound_before(scope, name, found, module):
-                return None
-            found += outside
-        return found
+        scopes, builtin = self._read_from(scope, name, module)
+        if builtin and not runs:
+            return None
+        return [
+            n
+            for each in scopes
+            for n in self._scope_nodes(each)
+            if _rebinds(n, name.id)
+        ]
+
+    def _read_from(
+        self, scope: ast.AST, name: ast.Name, module: _Module
+    ) -> tuple[list[ast.AST], bool]:
+        """Return the scopes a name may be read from, and whether a builtin may.
+
+        The scope `_binder` finds. Where that is a class body that need not
+        hold the name where it reads it, as `_class_holds` says, Python reads
+        the module next, and the builtins where the module does not bind
+        the name, and never a function around the class. The class body is
+        one of the scopes then only where it may hold the name.
+        """
+        if not isinstance(scope, ast.ClassDef):
+            return [scope], False
+        key = (id(scope), name.id)
+        if key not in self.class_names:
+            nodes = self._scope_nodes(scope)
+            self.class_names[key] = (
+                [n for n in nodes if _rebinds(n, name.id)],
+                [n for n in nodes if _unbinds(n, name.id)],
+            )
+        may, must = _class_holds(scope, name, *self.class_names[key], module)
+        if must:
+            return [scope], False
+        outside = any(_rebinds(n, name.id) for n in self._scope_nodes(module.tree))
+        return [*([scope] if may else []), module.tree], not outside
 
     def _imported(self, node: ast.ImportFrom, name: str) -> list[ast.AST]:
         """Return the `def`s an import of the package binds to a name."""
@@ -943,35 +1066,36 @@ class _Census:
         )
 
     def _local_filling(
-        self, scope: ast.AST, name: str, module: _Module
-    ) -> list[ast.AST]:
-        """Return what `_filling` finds in the scope `_local_scope` returns.
+        self, scope: ast.AST, name: ast.Name, module: _Module
+    ) -> list[ast.AST] | None:
+        """Return what `_filling` finds in the scopes a name is read from.
 
-        A class body reads a name it has not bound yet from the module, so
-        the module's are added to a class body's.
+        `scope` is the one `_local_scope` returns, and the scopes are those
+        `_read_from` finds; None where a builtin may be read.
         """
-        found = self._filling(scope, name)
-        if isinstance(scope, ast.ClassDef):
-            found = [*found, *self._filling(module.tree, name)]
-        return found
+        scopes, builtin = self._read_from(scope, name, module)
+        if builtin:
+            return None
+        return [node for each in scopes for node in self._filling(each, name.id)]
 
     def _built_at_a_site(self, exc: ast.expr, module: _Module) -> bool:
         """Return whether a name raised holds only exceptions built at a site.
 
         Each value its scope assigns it is `None`, a call that builds an
         exception, which is a site of its own, or a call of a function of
-        the package each of whose `return`s is one.
+        the package each of whose `return`s is one. A builtin it may be is
+        none of these.
         """
         if not isinstance(exc, ast.Name):
             return False
         scope = self._local_scope(exc, module)
         if scope is None:
             return False
-        bindings = self._local_filling(scope, exc.id, module)
+        bindings = self._local_filling(scope, exc, module)
         return bool(bindings) and all(
             isinstance(node, (ast.Assign, ast.AnnAssign))
             and self._builds_at_a_site(node.value, module)
-            for node in bindings
+            for node in bindings or []
         )
 
     def _builds_at_a_site(self, value: ast.expr | None, module: _Module) -> bool:
@@ -1020,15 +1144,15 @@ class _Census:
         A name ending in `Error` or `Exception`, or a name a `class`
         statement, an assignment or an import binds to such a name or to an
         exception class of the package, as `_exception_classes` finds them,
-        in the scope that binds it, and in the module too where that scope
-        is a class body, or in a scope that declares it `global` or
-        `nonlocal`. Short of that, a parameter of the name, of any kind,
-        binds it to what a caller passes, which the outer scopes do not say:
-        it is one where its default and what every call of the package
-        passes there are, as `_passed` reads them. With `maybe` it may be
-        one, and its arguments are traced: where any of them is, or where
-        the census cannot say what a call passes, as `_parameter_builds`
-        reads that. Otherwise it is not taken for one.
+        in the scopes it is read from, as `_read_from` finds them, or in a
+        scope that declares it `global` or `nonlocal`. Short of that, a
+        parameter of the name, of any kind, binds it to what a caller
+        passes, which the outer scopes do not say: it is one where its
+        default and what every call of the package passes there are, as
+        `_passed` reads them. With `maybe` it may be one, and its arguments
+        are traced: where any of them is, or where the census cannot say
+        what a call passes, as `_parameter_builds` reads that. Otherwise it
+        is not taken for one.
         """
         name = _called_name(func) or ""
         if name.endswith(("Error", "Exception")):
@@ -1050,11 +1174,9 @@ class _Census:
             return self._parameter_builds(scope, name, module, seen, maybe=maybe)
         if scope is None:
             return False
-        # a class body reads a name it has not bound yet from the module
-        scopes = [scope, module.tree] if isinstance(scope, ast.ClassDef) else [scope]
         return any(
             self._binds_exception(binding, name)
-            for each in scopes
+            for each in self._read_from(scope, func, module)[0]
             for binding in self._scope_nodes(each)
         )
 
@@ -1192,9 +1314,10 @@ class _Census:
         """Return the items of a container where each binding writes them out.
 
         A list, a tuple or a dict written out, with no item or entry
-        unpacked into it, and a name the scope that binds it assigns only
-        such values to, puts no value into, as `_mutations` reads that, and
-        hands to no other name or call that may, as `_escapes` reads that.
+        unpacked into it, and a name the scopes it is read from, as
+        `_read_from` finds them, assign only such values to, put no value
+        into, as `_mutations` reads that, and hand to no other name or call
+        that may, as `_escapes` reads that.
         Otherwise the container itself, a call answering what the census
         cannot read: a name bound by a parameter, an import or nothing among
         them.
@@ -1205,10 +1328,11 @@ class _Census:
             values = self._assigned(container, module)
             # a name `_assigned` gives a value for has a scope that binds it
             scope = cast("ast.AST", self._binder(container, module)[0])
-            if (
-                not values
-                or self._mutations(scope).get(container.id)
-                or self._escapes(scope, container.id, module)
+            scopes = self._read_from(scope, container, module)[0]
+            if not values or any(
+                self._mutations(each).get(container.id)
+                or self._escapes(each, container.id, module)
+                for each in scopes
             ):
                 return unknown
         found: list[ast.expr] = []
@@ -1226,8 +1350,9 @@ class _Census:
     def _assigned(self, name: ast.Name, module: _Module) -> list[ast.expr]:
         """Return each value a name is assigned where it is read.
 
-        By the scope that binds it and by each scope around the read that
-        declares it `global` or `nonlocal`, as `_binder` finds them. A
+        By the scopes it is read from, as `_read_from` finds them, and by
+        each scope around the read that declares it `global` or `nonlocal`,
+        as `_binder` finds them. A
         binding of another kind but a `def`, a `class` or an import, an
         unpacking or a comprehension's `for` among them, gives a call, which
         answers what the census cannot read; a parameter, a builtin and a
@@ -1239,7 +1364,8 @@ class _Census:
         if isinstance(scope, _COMPREHENSIONS):
             return [ast.Call(func=name, args=[], keywords=[])]
         found: list[ast.expr] = []
-        for node in (n for each in (scope, *declared) for n in self._scope_nodes(each)):
+        scopes = [*self._read_from(scope, name, module)[0], *declared]
+        for node in (n for each in scopes for n in self._scope_nodes(each)):
             if not _rebinds(node, name.id) or isinstance(node, _DECLARED):
                 continue
             if isinstance(node, (ast.Assign, ast.AnnAssign)) and (
@@ -1501,10 +1627,11 @@ class _Census:
         """Return the `def`s of the package a call may run, None where unknown.
 
         An attribute called is what `_method_callees` says. A name is the
-        `def` of the scope binding it, the one of the package it is
-        imported from, or the constructor of a class of the package; a name
-        nothing binds is a builtin, and one imported by name from outside
-        the package runs none of it. A name bound any other way, a
+        `def` of each scope it is read from, as `_rebindings` finds them,
+        the one of the package it is imported from, or the constructor of a
+        class of the package; a builtin, which a name nothing binds is and
+        a class body may read, and a name imported by name from outside the
+        package run none of it. A name bound any other way, a
         parameter or a local, is unknown, and so is a callee that is no
         name.
         """
@@ -1512,7 +1639,7 @@ class _Census:
             return self._method_callees(func, module)
         if not isinstance(func, ast.Name):
             return None
-        bindings = self._rebindings(func, module)
+        bindings = self._rebindings(func, module, runs=True)
         if bindings is None:
             return None
         found: list[ast.AST] = []
@@ -1719,10 +1846,9 @@ class _Census:
     def _own_kept(self, cause: ast.expr, module: _Module) -> bool:
         """Return whether a name, or an item of it, holds own exceptions alone.
 
-        Each value put into it is an empty literal, None, or the exception
-        an `except` of the package's own classes binds. In a class body,
-        that `except` may be the module's only where the class body does
-        not bind the name itself.
+        Each value put into it, in the scopes `_local_filling` reads, is an
+        empty literal, None, or a name `_own_caught` says holds an exception
+        of the package's own classes.
         """
         while isinstance(cause, ast.Subscript):
             cause = cause.value
@@ -1731,16 +1857,8 @@ class _Census:
         scope = self._local_scope(cause, module)
         if scope is None:
             return False
-        nodes = self._scope_nodes(scope)
-        own = self._own_handlers(nodes, module)
-        if isinstance(scope, ast.ClassDef):
-            own |= {
-                name
-                for name in self._own_handlers(self._scope_nodes(module.tree), module)
-                if not any(_rebinds(node, name) for node in nodes)
-            }
         values: list[ast.expr | None] = []
-        for node in self._local_filling(scope, cause.id, module):
+        for node in self._local_filling(scope, cause, module) or []:
             if _mutates(node, cause.id):
                 call = cast("ast.Call", node)
                 values.extend([*call.args, *(k.value for k in call.keywords)])
@@ -1751,19 +1869,37 @@ class _Census:
         return bool(values) and all(
             (isinstance(value, (ast.List, ast.Tuple)) and not value.elts)
             or (isinstance(value, ast.Constant) and value.value is None)
-            or (isinstance(value, ast.Name) and value.id in own)
+            or (isinstance(value, ast.Name) and self._own_caught(value, module))
             for value in values
         )
 
-    def _own_handlers(self, nodes: list[ast.AST], module: _Module) -> set[str]:
-        """Return the names the `except`s among nodes bind to own classes."""
-        return {
-            handler.name
-            for handler in nodes
-            if isinstance(handler, ast.ExceptHandler)
-            and handler.name
-            and self._own(handler.type, module)
-        }
+    def _own_caught(self, name: ast.Name, module: _Module) -> bool:
+        """Return whether a name holds an exception of own classes where read.
+
+        Each `except` is read in the scope it binds the name in. Where the
+        read is in the body of an `except` that binds the name, of its own
+        scope, and nothing else in that `except` binds or unbinds the name,
+        as `_rebinds` and `_unbinds` read that, it is that `except`'s.
+        Otherwise each node that binds the name where it is read, as
+        `_rebindings` finds them, is an `except` of own classes.
+        """
+        node: ast.AST | None = module.parents.get(name)
+        while node is not None and not isinstance(
+            node, (*_FUNCTION, ast.ClassDef, *_COMPREHENSIONS, ast.Module)
+        ):
+            if isinstance(node, ast.ExceptHandler) and node.name == name.id:
+                if not any(
+                    _rebinds(each, name.id) or _unbinds(each, name.id)
+                    for each in _own_nodes(node)
+                ):
+                    return self._own(node.type, module)
+                break
+            node = module.parents.get(node)
+        bindings = self._rebindings(name, module)
+        return bool(bindings) and all(
+            isinstance(binding, ast.ExceptHandler) and self._own(binding.type, module)
+            for binding in bindings or []
+        )
 
     def _raised_again(self, node: ast.Raise, module: _Module) -> list[str]:
         """Return what a bare `raise` relays: what the `except` caught."""
@@ -1893,11 +2029,13 @@ class _Census:
             # nothing, a literal, or a bool whatever it compares
             return
         if isinstance(expr, ast.Name):
-            key = self._name_key(expr, module)
+            key, builtin = self._name_key(expr, module)
             if key is not None:
                 keys.add(key)
-            elif expr.id not in _PURE_BUILTINS and not expr.id.endswith(
-                ("Error", "Exception", "Warning")
+            if (
+                builtin
+                and expr.id not in _PURE_BUILTINS
+                and not expr.id.endswith(("Error", "Exception", "Warning"))
             ):
                 # a builtin that reads what the process holds or was handed
                 leaves.append(f"{module.where(expr)} {expr.id}, a builtin")
@@ -2114,19 +2252,27 @@ class _Census:
                 return scope, declared
         return None, declared
 
-    def _name_key(self, node: ast.Name, module: _Module) -> _Key | None:
-        """Return the key of the scope that holds a name's values, or None.
+    def _name_key(self, node: ast.Name, module: _Module) -> tuple[_Key | None, bool]:
+        """Return the key that holds a name's values, and whether a builtin may.
 
-        The innermost scope that declares the name, which is the one whose
-        values the census cannot all see, or else the one that binds it, as
-        `_binder` reads them.
+        The key is the innermost scope's that declares the name, which is
+        the one whose values the census cannot all see, or else the one's
+        that binds it, as `_binder` reads them, and None where none does.
+        A class body's key reads the module's too, so a class body that
+        cannot hold the name where it reads it, as `_read_from` says, gives
+        the module's. A builtin may be read where nothing binds the name,
+        and where `_read_from` says so.
         """
         scope, declared = self._binder(node, module)
         holder = declared[0] if declared else scope
         if holder is None:
-            return None
+            return None, True
+        builtin = False
+        if not declared and isinstance(holder, ast.ClassDef):
+            scopes, builtin = self._read_from(holder, node, module)
+            holder = scopes[0]
         self.scopes[id(holder)] = (module, holder)
-        return ("name", id(holder), node.id)
+        return ("name", id(holder), node.id), builtin
 
     def _reach(self, start: _Key) -> frozenset[str]:  # noqa: C901, PLR0912
         """Return each untraced value a key reaches, through every key it reads.
@@ -5366,6 +5512,201 @@ _SHAPES = {
             "    class C:\n        saved = []\n        try:\n            key.decode()\n"
             "        except UnicodeError as err:\n            saved.append(err)\n"
             "        raise ValueError('a') from saved[0]"
+        ),
+    ),
+    "a builtin a class body reads before it binds the name": (
+        (
+            "input = 'b'\ndef f(key):\n    class C:\n        raise ValueError(input)\n"
+            "        input = 'a'"
+        ),
+        "def f(key):\n    class C:\n        raise ValueError(input)\n        input = 'a'",
+    ),
+    "an exception class a class body passes before it binds the name": (
+        (
+            "import os\nE = int\ndef _build(kind, key):\n    return kind(key)\n"
+            "def f(key):\n    class C:\n        _build(E, key)\n"
+            "        E = getattr(os, 'x')"
+        ),
+        (
+            "import os\nE = getattr(os, 'x')\ndef _build(kind, key):\n"
+            "    return kind(key)\ndef f(key):\n    class C:\n        _build(E, key)\n"
+            "        E = int"
+        ),
+    ),
+    "an item a class body passes before it binds the name": (
+        (
+            "import os\nKINDS = [int]\ndef _build(kind, key):\n    return kind(key)\n"
+            "def f(key):\n    class C:\n        _build(KINDS[0], key)\n"
+            "        KINDS = [getattr(os, 'x')]"
+        ),
+        (
+            "import os\nKINDS = [getattr(os, 'x')]\ndef _build(kind, key):\n"
+            "    return kind(key)\ndef f(key):\n    class C:\n"
+            "        _build(KINDS[0], key)\n        KINDS = [int]"
+        ),
+    ),
+    "an item of a module name a class body passes, the module filling it": (
+        (
+            "import os\nKINDS = [int]\nOTHER = []\nOTHER.append(getattr(os, 'x'))\n"
+            "def _build(kind, key):\n    return kind(key)\ndef f(key):\n"
+            "    class C:\n        _build(KINDS[0], key)\n        KINDS = [int]"
+        ),
+        (
+            "import os\nKINDS = [int]\nKINDS.append(getattr(os, 'x'))\n"
+            "def _build(kind, key):\n    return kind(key)\ndef f(key):\n"
+            "    class C:\n        _build(KINDS[0], key)\n        KINDS = [int]"
+        ),
+    ),
+    "an exception a class body keeps from the function around it": (
+        (
+            "class _OwnError(Exception):\n    pass\ntry:\n    pass\n"
+            "except _OwnError as err:\n    pass\ndef f(key):\n    try:\n"
+            "        key.decode()\n    except _OwnError as err:\n        class C:\n"
+            "            saved = []\n            saved.append(err)\n"
+            "            raise ValueError('a') from saved[0]"
+        ),
+        (
+            "class _OwnError(Exception):\n    pass\ntry:\n    pass\n"
+            "except _OwnError as err:\n    pass\ndef f(key):\n    try:\n"
+            "        key.decode()\n    except UnicodeError as err:\n        class C:\n"
+            "            saved = []\n            saved.append(err)\n"
+            "            raise ValueError('a') from saved[0]"
+        ),
+    ),
+    "an exception a class body keeps in a module name it binds later": (
+        (
+            "class _OwnError(Exception):\n    pass\nsaved = []\ntry:\n"
+            "    b''.decode()\nexcept _OwnError as err:\n    saved.append(err)\n"
+            "def f(key):\n    class C:\n        try:\n            key.decode()\n"
+            "        except UnicodeError as err:\n            pass\n"
+            "        raise ValueError('a') from saved[0]\n        saved = []"
+        ),
+        (
+            "class _OwnError(Exception):\n    pass\nsaved = []\ntry:\n"
+            "    b''.decode()\nexcept UnicodeError as err:\n    saved.append(err)\n"
+            "def f(key):\n    class C:\n        try:\n            key.decode()\n"
+            "        except _OwnError as err:\n            pass\n"
+            "        raise ValueError('a') from saved[0]\n        saved = []"
+        ),
+    ),
+    "an exception a class body keeps before its handler binds the name": (
+        (
+            "class _OwnError(Exception):\n    pass\ntry:\n    b''.decode()\n"
+            "except UnicodeError as caught:\n    err = caught\ndef f(key):\n"
+            "    class C:\n        saved = []\n        try:\n            key.decode()\n"
+            "        except _OwnError as err:\n            saved.append(err)\n"
+            "        raise ValueError('a') from saved[0]"
+        ),
+        (
+            "class _OwnError(Exception):\n    pass\ntry:\n    b''.decode()\n"
+            "except UnicodeError as caught:\n    err = caught\ndef f(key):\n"
+            "    class C:\n        saved = []\n        saved.append(err)\n"
+            "        try:\n            key.decode()\n"
+            "        except _OwnError as err:\n            pass\n"
+            "        raise ValueError('a') from saved[0]"
+        ),
+    ),
+    "an exception a class body keeps after its handler ends": (
+        (
+            "class _OwnError(Exception):\n    pass\ntry:\n    b''.decode()\n"
+            "except UnicodeError as caught:\n    err = caught\ndef f(key):\n"
+            "    class C:\n        saved = []\n        try:\n            key.decode()\n"
+            "        except _OwnError as err:\n            saved.append(err)\n"
+            "        raise ValueError('a') from saved[0]"
+        ),
+        (
+            "class _OwnError(Exception):\n    pass\ntry:\n    b''.decode()\n"
+            "except UnicodeError as caught:\n    err = caught\ndef f(key):\n"
+            "    class C:\n        saved = []\n        try:\n            key.decode()\n"
+            "        except _OwnError as err:\n            pass\n"
+            "        saved.append(err)\n        raise ValueError('a') from saved[0]"
+        ),
+    ),
+    "an exception kept from one of two handlers that bind its name": (
+        (
+            "class _OwnError(Exception):\n    pass\ndef f(key):\n    saved = []\n"
+            "    try:\n        key.decode()\n    except _OwnError as err:\n"
+            "        saved.append(err)\n    except UnicodeError as err:\n"
+            "        pass\n    raise ValueError('a') from saved[0]"
+        ),
+        (
+            "class _OwnError(Exception):\n    pass\ndef f(key):\n    saved = []\n"
+            "    try:\n        key.decode()\n    except _OwnError as err:\n"
+            "        pass\n    except UnicodeError as err:\n"
+            "        saved.append(err)\n    raise ValueError('a') from saved[0]"
+        ),
+    ),
+    "a call a class body makes after it deletes the name": (
+        (
+            "def f(key):\n    class C:\n        secret = key\n        def vars():\n"
+            "            return 'safe'\n        text = vars()\n        del vars\n"
+            "        raise ValueError(text)"
+        ),
+        (
+            "def f(key):\n    class C:\n        secret = key\n        def vars():\n"
+            "            return 'safe'\n        del vars\n        text = vars()\n"
+            "        raise ValueError(text)"
+        ),
+    ),
+    "a call in an except of a class body, before and after it binds the name": (
+        (
+            "def f(key):\n    try:\n        pass\n    except OSError:\n        class C:\n"
+            "            len('a')\n            def len(x):\n"
+            "                raise ValueError('b')"
+        ),
+        (
+            "def f(key):\n    try:\n        pass\n    except OSError:\n        class C:\n"
+            "            def len(x):\n                raise ValueError('b')\n"
+            "            len('a')"
+        ),
+    ),
+    "a value a class body reads in a loop that binds it later": (
+        (
+            "x = 'b'\ndef f(key):\n    class C:\n        for _ in range(2):\n"
+            "            y = ValueError(x)\n            x = 'a'"
+        ),
+        (
+            "x = 'b'\ndef f(key):\n    class C:\n        for _ in range(2):\n"
+            "            y = ValueError(x)\n            x = key"
+        ),
+    ),
+    "a call a class body makes in a loop that deletes the name": (
+        (
+            "def f(key):\n    class C:\n        secret = key\n        def vars():\n"
+            "            return 'safe'\n        text = ''\n"
+            "        for _ in range(2):\n"
+            "            text = vars()\n        del vars\n        raise ValueError(text)"
+        ),
+        (
+            "def f(key):\n    class C:\n        secret = key\n        def vars():\n"
+            "            return 'safe'\n        text = ''\n"
+            "        for _ in range(2):\n"
+            "            text = vars()\n            del vars\n"
+            "        raise ValueError(text)"
+        ),
+    ),
+    "a cause a class body reads before it binds the name": (
+        (
+            "saved = []\ndef f(key):\n    class C:\n"
+            "        raise ValueError('a') from saved[0]\n        saved = [None]"
+        ),
+        (
+            "def f(key):\n    class C:\n        raise ValueError('a') from saved[0]\n"
+            "        saved = [None]"
+        ),
+    ),
+    "an exception kept from a handler whose body rebinds its name": (
+        (
+            "class _OwnError(Exception):\n    pass\ndef f(key, other):\n"
+            "    saved = []\n    try:\n        key.decode()\n"
+            "    except _OwnError as err:\n        saved.append(err)\n"
+            "    raise ValueError('a') from saved[0]"
+        ),
+        (
+            "class _OwnError(Exception):\n    pass\ndef f(key, other):\n"
+            "    saved = []\n    try:\n        key.decode()\n"
+            "    except _OwnError as err:\n        err = other\n"
+            "        saved.append(err)\n    raise ValueError('a') from saved[0]"
         ),
     ),
     "a call of a name the class body binds": (
