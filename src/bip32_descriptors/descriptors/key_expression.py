@@ -290,9 +290,17 @@ def _wifs_filed_in(wifs: MutableMapping[str, str]) -> Iterator[None]:
         _FILED_WIFS.reset(token)
 
 
+def _held(octets: bytes) -> bytes:
+    """Return the bytes a bytes object holds, through none of its methods."""
+    return bytes.__getitem__(octets, slice(None))
+
+
 def _pub_key_text(key: KeyExpression) -> str:
-    """Return the hex `KeyExpression.__str__` writes for a fixed key."""
-    pub_key = b"" if key.pub_key is None else key.pub_key
+    """Return the hex `KeyExpression.__str__` writes for a fixed key.
+
+    The hex of the bytes `pub_key` holds, through none of its methods.
+    """
+    pub_key = b"" if key.pub_key is None else _held(key.pub_key)
     return (pub_key[1:] if key.x_only else pub_key).hex()
 
 
@@ -375,7 +383,7 @@ def _printed_pub_key(key: KeyExpression) -> str:
     wifs, network = _PRINTED_WIFS.get() or (None, "")
     if not wifs:
         return text
-    pub_key = b"" if key.pub_key is None else key.pub_key
+    pub_key = b"" if key.pub_key is None else _held(key.pub_key)
     keys = (b"\x02" + pub_key[1:], b"\x03" + pub_key[1:]) if key.x_only else (pub_key,)
     found: dict[bytes, str] = {}
     for spelling in dict.fromkeys(s for k in keys for s in _spellings(k)):
@@ -1042,7 +1050,8 @@ def _assert_pub_key(key: KeyExpression) -> None:
     size = len(pub_key)
     if size not in {33, 65}:
         raise BTClibValueError(f"invalid public key length in bytes: {_size(pub_key)}")
-    prefix = pub_key[0]
+    # the octet the key holds, whatever a subclass's indexing answers
+    prefix = bytes.__getitem__(pub_key, 0)
     if (size == 33 and prefix not in {2, 3}) or (size == 65 and prefix != 4):
         # 06 and 07 are the hybrid encoding, which nothing in bitcoin
         # produces and Bitcoin Core refuses in a descriptor too; the size
