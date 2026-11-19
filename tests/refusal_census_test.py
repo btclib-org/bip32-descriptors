@@ -2250,26 +2250,29 @@ def _decorator_name(decorator: ast.expr, module: _Module) -> str | None:
 
     One of `_DECORATOR_HOMES`, where its home is provably where it comes
     from. A name is the decorator it is named after where no scope it is
-    read in binds it, and the one it imports where an import from that
-    decorator's home is all that binds it there; `X.attr` is `attr` where
-    an `import` of the home of `attr` is all that binds `X`. Any other
-    binding, a parameter and a `*` import from elsewhere included, makes it
-    None, and so does any other decorator.
+    read in binds it, and the one it imports where an absolute import from
+    that decorator's home is all that binds it there, as
+    `_decorator_bindings` finds what does; `X.attr` is `attr` where
+    `import`s of the home of `attr`, in every clause that binds `X`, are all
+    that binds it. Any other binding,
+    a parameter and a `*` import from elsewhere included, makes it None, and
+    so does any other decorator.
     """
-    # read in the body of the class that holds the method first
-    holder = module.parents[module.parents[decorator]]
-    scopes = [holder, *module.scopes(decorator)]
+    method = cast("ast.stmt", module.parents[decorator])
+    scopes = [module.parents[method], *module.scopes(decorator)]
     if isinstance(decorator, ast.Attribute) and isinstance(decorator.value, ast.Name):
         homes = _DECORATOR_HOMES.get(decorator.attr, ())
-        bindings = _decorator_bindings(decorator.value.id, scopes)
+        bindings = _decorator_bindings(decorator.value.id, scopes, method)
         return (
             decorator.attr
             if bindings
             and all(
                 isinstance(n, ast.Import)
-                and any(
-                    (a.asname or a.name) == decorator.value.id and a.name in homes
+                # Python keeps the last clause, so every one binding `X` counts
+                and all(
+                    a.name in homes
                     for a in n.names
+                    if (a.asname or a.name).split(".")[0] == decorator.value.id
                 )
                 for n in bindings
             )
@@ -2277,45 +2280,63 @@ def _decorator_name(decorator: ast.expr, module: _Module) -> str | None:
         )
     if not isinstance(decorator, ast.Name):
         return None
-    if names := [
-        _imported_decorator(n, decorator.id)
-        for n in _decorator_bindings(decorator.id, scopes)
-    ]:
+    bindings = _decorator_bindings(decorator.id, scopes, method)
+    if bindings is None:
+        return None
+    if names := [_imported_decorator(n, decorator.id) for n in bindings]:
         return names[0] if all(n == names[0] for n in names) else None
     return decorator.id
 
 
-def _decorator_bindings(name: str, scopes: list[ast.AST]) -> list[ast.AST]:
+def _decorator_bindings(
+    name: str, scopes: list[ast.AST], method: ast.stmt
+) -> list[ast.AST] | None:
     """Return what binds a name in the first of the scopes that binds it.
 
     A node that rebinds it, as `_rebinds` reads that, a parameter of a
-    function, and a `*` import, which may bind any name.
+    function, and a `*` import, which may bind any name. None where the
+    census cannot say which binding the method's decorator reads: the name
+    is declared `global` or `nonlocal` anywhere in a scope, a function it
+    holds included, which may rebind it there; or the class body, the first
+    scope, binds it other than by a statement of its own before the method,
+    so that Python may read it in the scopes around the class.
     """
     for scope in scopes:
+        if any(_declares(n, name) for n in ast.walk(scope)):
+            return None
+        nodes = _own_nodes(scope)
         found: list[ast.AST] = [
             n
-            for n in _own_nodes(scope)
+            for n in nodes
             if _rebinds(n, name)
             or (isinstance(n, ast.ImportFrom) and n.names[0].name == "*")
         ]
         if isinstance(scope, _FUNCTION):
             found.extend(a for a in _arguments(scope) if a.arg == name)
+        if found and scope is scopes[0]:
+            body: list[ast.stmt] = getattr(scope, "body", [])
+            if any(n not in body[: body.index(method)] for n in found):
+                return None
         if found:
             return found
     return []
 
 
 def _imported_decorator(binding: ast.AST, name: str) -> str | None:
-    """Return the decorator an import from its home binds to a name, or None."""
-    if not isinstance(binding, ast.ImportFrom):
+    """Return the decorator an absolute import from its home binds, or None.
+
+    Every clause of the import that binds the name has to import the same
+    decorator from its home.
+    """
+    if not isinstance(binding, ast.ImportFrom) or binding.level:
         return None
-    for alias in binding.names:
-        bound = name if alias.name == "*" else alias.name
-        if (alias.asname or bound) == name and binding.module in (
-            _DECORATOR_HOMES.get(bound, ())
-        ):
-            return bound
-    return None
+    found = [
+        bound if binding.module in _DECORATOR_HOMES.get(bound, ()) else None
+        for alias in binding.names
+        for bound in [name if alias.name == "*" else alias.name]
+        if (alias.asname or bound) == name
+    ]
+    return found[0] if found and all(f == found[0] for f in found) else None
 
 
 def _decorated(func: ast.AST, decorator: str, module: _Module) -> bool:
@@ -4748,6 +4769,149 @@ _SHAPES = {
             "from mylib import *\nclass _C:\n    @override\n"
             "    def _g(self, x):\n        raise ValueError(x)\n"
             "    def f(self, key):\n        self._g('a')"
+        ),
+    ),
+    "decorator imported from its home by a relative import": (
+        (
+            "from builtins import staticmethod as mode\nclass _C:\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "from .builtins import staticmethod as mode\nclass _C:\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+    ),
+    "decorator one import binds twice, to two decorators": (
+        (
+            "from builtins import staticmethod as mode\nclass _C:\n    @mode\n"
+            "    def _g(cls, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "from builtins import staticmethod as mode, classmethod as mode\n"
+            "class _C:\n    @mode\n"
+            "    def _g(cls, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+    ),
+    "decorator a class body imports only on one branch": (
+        (
+            "def mode(f):\n    return f\nclass _C:\n"
+            "    from builtins import staticmethod as mode\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "def mode(f):\n    return f\nclass _C:\n    if len('a'):\n"
+            "        from builtins import staticmethod as mode\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+    ),
+    "decorator a class body imports after the method": (
+        (
+            "def mode(f):\n    return f\nclass _C:\n"
+            "    from builtins import staticmethod as mode\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "def mode(f):\n    return f\nclass _C:\n    @mode\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')\n"
+            "    from builtins import staticmethod as mode"
+        ),
+    ),
+    "decorator a class body declares global": (
+        (
+            "def mode(f):\n    return f\ndef _mk():\n    from builtins import staticmethod as mode\n"
+            "    class _C:\n        @mode\n"
+            "        def _g(self, text, unused='a'):\n            raise ValueError(text)\n"
+            "        def f(self, key):\n            self._g(key, 'a')\n    return _C"
+        ),
+        (
+            "def mode(f):\n    return f\ndef _mk():\n    from builtins import staticmethod as mode\n"
+            "    class _C:\n        global mode\n        @mode\n"
+            "        def _g(self, text, unused='a'):\n            raise ValueError(text)\n"
+            "        def f(self, key):\n            self._g(key, 'a')\n    return _C"
+        ),
+    ),
+    "decorator named after a builtin one a class body declares global": (
+        (
+            "class _C:\n    @staticmethod\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+        (
+            "class _C:\n    global staticmethod\n    @staticmethod\n"
+            "    def _g(self, text, unused='a'):\n        raise ValueError(text)\n"
+            "    def f(self, key):\n        self._g(key, 'a')"
+        ),
+    ),
+    "decorator's module an import binds twice, to its home and elsewhere": (
+        (
+            "import typing, mylib as typing\nclass _C:\n"
+            "    @typing.override\n    def _make(kind, key):\n"
+            "        return kind('a')\n    def f(self, key):\n"
+            "        raise self._make(ValueError, key)"
+        ),
+        (
+            "import typing, mylib as typing\nclass _C:\n"
+            "    @typing.override\n    def _make(kind, key):\n"
+            "        return kind(key)\n    def f(self, key):\n"
+            "        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator a function around the class lets a sibling rebind": (
+        (
+            "def _id(f):\n    return f\ndef _mk():\n"
+            "    from builtins import staticmethod as mode\n"
+            "    def _set():\n        nonlocal mode\n        mode = _id\n"
+            "    _set()\n    class _C:\n        @mode\n"
+            "        def _make(self, kind, key):\n"
+            "            return kind('a')\n        def f(self, key):\n"
+            "            raise self._make(ValueError, key)\n    return _C"
+        ),
+        (
+            "def _id(f):\n    return f\ndef _mk():\n"
+            "    from builtins import staticmethod as mode\n"
+            "    def _set():\n        nonlocal mode\n        mode = _id\n"
+            "    _set()\n    class _C:\n        @mode\n"
+            "        def _make(self, kind, key):\n"
+            "            return kind(key)\n        def f(self, key):\n"
+            "            raise self._make(ValueError, key)\n    return _C"
+        ),
+    ),
+    "decorator named after a builtin one a function declares global": (
+        (
+            "def _id(f):\n    return f\ndef _set():\n"
+            "    global staticmethod\n    staticmethod = _id\n_set()\n"
+            "class _C:\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n"
+            "        raise self._make(ValueError, key)"
+        ),
+        (
+            "def _id(f):\n    return f\ndef _set():\n"
+            "    global staticmethod\n    staticmethod = _id\n_set()\n"
+            "class _C:\n    @staticmethod\n"
+            "    def _make(self, kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n"
+            "        raise self._make(ValueError, key)"
+        ),
+    ),
+    "decorator read as an attribute of a package a submodule import binds": (
+        (
+            "import mylib.sub\nclass _C:\n    @mylib.override\n"
+            "    def _make(kind, key):\n        return kind('a')\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
+        ),
+        (
+            "import mylib.sub\nclass _C:\n    @mylib.override\n"
+            "    def _make(kind, key):\n        return kind(key)\n"
+            "    def f(self, key):\n        raise self._make(ValueError, key)"
         ),
     ),
     "decorator of a method a call answers": (
