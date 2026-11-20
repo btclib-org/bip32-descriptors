@@ -290,17 +290,14 @@ def _wifs_filed_in(wifs: MutableMapping[str, str]) -> Iterator[None]:
         _FILED_WIFS.reset(token)
 
 
-def _held(octets: bytes) -> bytes:
-    """Return the bytes a bytes object holds, through none of its methods."""
-    return bytes.__getitem__(octets, slice(None))
-
-
 def _pub_key_text(key: KeyExpression) -> str:
     """Return the hex `KeyExpression.__str__` writes for a fixed key.
 
     The hex of the bytes `pub_key` holds, through none of its methods.
     """
-    pub_key = b"" if key.pub_key is None else _held(key.pub_key)
+    pub_key = (
+        b"" if key.pub_key is None else bytes.__getitem__(key.pub_key, slice(None))
+    )
     return (pub_key[1:] if key.x_only else pub_key).hex()
 
 
@@ -383,7 +380,10 @@ def _printed_pub_key(key: KeyExpression) -> str:
     wifs, network = _PRINTED_WIFS.get() or (None, "")
     if not wifs:
         return text
-    pub_key = b"" if key.pub_key is None else _held(key.pub_key)
+    # the bytes it holds, which `_spellings` sizes
+    pub_key = (
+        b"" if key.pub_key is None else bytes.__getitem__(key.pub_key, slice(None))
+    )
     keys = (b"\x02" + pub_key[1:], b"\x03" + pub_key[1:]) if key.x_only else (pub_key,)
     found: dict[bytes, str] = {}
     for spelling in dict.fromkeys(s for k in keys for s in _spellings(k)):
@@ -579,9 +579,16 @@ class KeyExpression:
         """Return False for an uncompressed SEC public key, True otherwise.
 
         An extended key is compressed by construction: BIP32 has no
-        uncompressed serialization.
+        uncompressed serialization. A key is sized by the bytes it holds,
+        which no subclass's `__len__` answers.
         """
-        return self.pub_key is None or len(self.pub_key) == 33
+        pub_key = self.pub_key
+        if pub_key is None:
+            return True
+        if not isinstance(pub_key, bytes):
+            # a forged key may hold another type, refused for it elsewhere
+            return len(pub_key) == 33  # type: ignore[unreachable]
+        return bytes.__len__(pub_key) == 33
 
     def sec(
         self,
@@ -635,7 +642,9 @@ class KeyExpression:
             )
             return pub_keyinfo_from_xkey(derive_(synthetic, musig_path), network)[0]
         if self.pub_key is not None:
-            return self.pub_key
+            # the bytes it holds, which a script and a witness write:
+            # `serialize` sizes a push by `len()`, which a subclass answers
+            return bytes.__getitem__(self.pub_key, slice(None))
         der_path = list(self.der_path)
         if self.wildcard is not None:
             der_path.append(self.wildcard + index)
@@ -1037,7 +1046,9 @@ def _assert_pub_key(key: KeyExpression) -> None:
     uncompressed WIF in a taproot position to one of 65, which this
     refuses with the message `parse` gives for it.
 
-    A key that is no point is refused outside `_script_keys` only.
+    A key that is no point is refused outside `_script_keys` only. The key
+    is sized, and read as a point, by the bytes it holds, which no
+    subclass's `__len__` answers.
     """
     pub_key = key.pub_key
     if pub_key is None:
@@ -1047,7 +1058,7 @@ def _assert_pub_key(key: KeyExpression) -> None:
     if not isinstance(pub_key, bytes):
         err_msg = f"invalid pub_key type: {_type_name(pub_key)}"  # type: ignore[unreachable]
         raise BTClibTypeError(err_msg)
-    size = len(pub_key)
+    size = bytes.__len__(pub_key)
     if size not in {33, 65}:
         raise BTClibValueError(f"invalid public key length in bytes: {_size(pub_key)}")
     # the octet the key holds, whatever a subclass's indexing answers
@@ -1059,7 +1070,7 @@ def _assert_pub_key(key: KeyExpression) -> None:
         raise BTClibValueError(f"invalid public key prefix for {_size(pub_key)} bytes")
     # as Bitcoin Core's descriptor parser does
     if not _SCRIPT_KEYS.get():
-        point_from_pub_key(pub_key)
+        point_from_pub_key(bytes.__getitem__(pub_key, slice(None)))
     if key.x_only and size != 33:
         raise BTClibValueError(_UNCOMPRESSED_REFUSED)
     if key.x_only and prefix == 3:
@@ -1304,10 +1315,11 @@ def _assert_compressed(key: KeyExpression) -> None:
 def _assert_point(key: KeyExpression) -> None:
     """Refuse a key that is no point, as `parse` refuses it.
 
-    `KeyExpression` builds one inside `_script_keys` only.
+    `KeyExpression` builds one inside `_script_keys` only. The key is read
+    by the bytes it holds, as `_assert_pub_key` reads it.
     """
     if key.pub_key is not None:
-        point_from_pub_key(key.pub_key)
+        point_from_pub_key(bytes.__getitem__(key.pub_key, slice(None)))
 
 
 # Bitcoin Core's own message, refusing a key path with two multipath steps
