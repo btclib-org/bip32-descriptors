@@ -8,7 +8,7 @@ import dataclasses
 import pickle
 import re
 import string
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from btclib.alias import Octets
@@ -24,7 +24,7 @@ from bip32_descriptors.bip32 import (
     encode_to_bip32_derivs,
 )
 from bip32_descriptors.bip32.der_path import _HARDENING
-from tests import NOT_STRIPPED
+from tests import NOT_STRIPPED, says_length
 from tests.conftest import JsonGolden
 
 # the secp256k1 generator, compressed and uncompressed
@@ -239,6 +239,47 @@ def test_assert_valid_hd_key_paths_checks_the_point() -> None:
         with pytest.raises(BTClibValueError, match="invalid public key: not a point"):
             assert_valid_hd_key_paths({pub_key: key_origin})
     assert_valid_hd_key_paths({b"\x06" + _G65[1:]: key_origin})
+
+
+# lengths a key says: below both SEC sizes, between them and above both
+@pytest.mark.parametrize("length", [2, 34, 66])
+def test_assert_valid_hd_key_paths_sizes_a_key_by_its_bytes(length: int) -> None:
+    """A key is sized and read as a point by the bytes it holds.
+
+    Its length saying more or less than it holds changes nothing. Issue
+    btclib-org/bip32-descriptors#355.
+    """
+    key_origin = BIP32KeyOrigin("deadbeef", [0])
+    assert len(says_length(_G33, length)) == length
+    assert_valid_hd_key_paths({says_length(_G33, length): key_origin})
+    assert_valid_hd_key_paths({says_length(_G65, length): key_origin})
+    with pytest.raises(BTClibValueError, match="invalid public key length: 34$"):
+        assert_valid_hd_key_paths({says_length(_G33 + b"\x00", 33): key_origin})
+
+
+def test_assert_valid_hd_key_paths_reads_an_xpub_by_its_bytes() -> None:
+    """A key is read as a point unless it holds 78 bytes, whatever it says.
+
+    One of 33 bytes whose length says 78 is refused as no point, and one of
+    78 bytes whose length says 33 is not read as one. Issue
+    btclib-org/bip32-descriptors#355.
+    """
+    key_origin = BIP32KeyOrigin("deadbeef", [0])
+    no_point = b"\x02" + b"\xff" * 32
+    with pytest.raises(BTClibValueError, match="^invalid public key: not a point$"):
+        assert_valid_hd_key_paths({says_length(no_point, 78): key_origin})
+    assert_valid_hd_key_paths({says_length(bytes(78), 33): key_origin})
+
+
+def test_assert_valid_hd_key_paths_refuses_a_key_of_another_type() -> None:
+    """A key that is no bytes is refused for its type, not sized.
+
+    Issue btclib-org/bip32-descriptors#355.
+    """
+    key_origin = BIP32KeyOrigin("deadbeef", [0])
+    hd_key_paths = cast("dict[bytes, BIP32KeyOrigin]", {_G33.hex(): key_origin})
+    with pytest.raises(BTClibTypeError, match="public key"):
+        assert_valid_hd_key_paths(hd_key_paths)
 
 
 def test_assert_valid_hd_key_paths_checks_every_entry() -> None:
