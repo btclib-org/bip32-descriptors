@@ -12,6 +12,9 @@ btclib-org/bip32-descriptors#133.
 
 Subexpressions given as no tuple, naming the type alone. Issue
 btclib-org/bip32-descriptors#287.
+
+Data sized by the bytes it holds, whatever a subclass's `__len__` says.
+Issue btclib-org/bip32-descriptors#355.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from typing import Any
 
 import pytest
 from btclib.exceptions import BTClibTypeError, BTClibValueError
+from btclib.hashes import sha256
 from btclib.key import PrvKeyData
 
 from bip32_descriptors.descriptors import parse
@@ -28,8 +32,15 @@ from bip32_descriptors.descriptors.descriptors import (
     MiniscriptDescriptor,
     WshDescriptor,
 )
-from bip32_descriptors.descriptors.miniscript import P2WSH, TAPSCRIPT, Miniscript
+from bip32_descriptors.descriptors.miniscript import (
+    P2WSH,
+    TAPSCRIPT,
+    Miniscript,
+    SpendContext,
+    SpendingPath,
+)
 from bip32_descriptors.descriptors.miniscript import parse as parse_miniscript
+from tests import says_length
 from tests.secret_free import assert_secret_free
 
 _C = PrvKeyData(3).pub.sec.hex()
@@ -156,3 +167,91 @@ def test_a_subexpression_of_another_context_is_refused_in_any_position() -> None
     with pytest.raises(BTClibValueError, match=err_msg) as e:
         Miniscript("thresh", TAPSCRIPT, (one, one, Miniscript("1")), threshold=1)
     assert_secret_free(e.value, [P2WSH])
+
+
+@pytest.mark.parametrize("length", [33, 31])
+def test_data_is_sized_by_its_bytes(length: int) -> None:
+    """Built as its plain bytes are, and refused for the size it holds.
+
+    Issue btclib-org/bip32-descriptors#355.
+    """
+    digest = bytes.fromhex(_RANDOM_HEX)
+    assert len(says_length(digest, length)) == length
+    node = Miniscript("sha256", P2WSH, data=says_length(digest, length))
+    assert node == Miniscript("sha256", P2WSH, data=digest)
+    with pytest.raises(BTClibValueError, match="takes 32 bytes of data, 31 given$"):
+        Miniscript("sha256", P2WSH, data=says_length(digest[1:], 32))
+
+
+def _with_data(node: Miniscript, data: bytes) -> Miniscript:
+    """Return `node` built again, with `data` in place of the data it holds."""
+    if node.data:
+        return replace(node, data=data)
+    return replace(node, subs=tuple(_with_data(sub, data) for sub in node.subs))
+
+
+# a 20-byte hash for ``rawpkh()``, the data of its ``raw_pk_h``
+_HASH160_HEX = "9a1c78a507689f6f54b847ad1cef1e614ee23f1e"
+
+
+@pytest.mark.parametrize("length", [1, 33])
+@pytest.mark.parametrize(
+    "text,data",
+    [
+        (f"and_v(v:pk({_C}),sha256({_RANDOM_HEX}))", _RANDOM_HEX),
+        (f"and_v(v:rawpkh({_HASH160_HEX}),pkh({_C}))", _HASH160_HEX),
+    ],
+    ids=["sha256", "rawpkh"],
+)
+def test_data_is_pushed_as_the_bytes_it_holds(
+    text: str, data: str, length: int
+) -> None:
+    """The script, and the ``wsh()`` of it, are those of its plain bytes.
+
+    `serialize` sizes a push by `len()`, so the data goes in as the bytes
+    it holds. Issue btclib-org/bip32-descriptors#355.
+    """
+    plain = parse_miniscript(text, P2WSH)
+    node = _with_data(plain, says_length(bytes.fromhex(data), length))
+    assert bytes.fromhex(data) in plain.script()
+    assert node.script() == plain.script()
+    wsh = WshDescriptor(MiniscriptDescriptor(node))
+    plain_wsh = WshDescriptor(MiniscriptDescriptor(plain))
+    assert wsh.script_pub_key().script == plain_wsh.script_pub_key().script
+    assert wsh.address() == plain_wsh.address()
+
+
+@pytest.mark.parametrize("length", [1, 33])
+def test_a_hash_lock_is_spent_as_the_bytes_it_holds(length: int) -> None:
+    """Its spending paths and its satisfaction are those of its plain bytes.
+
+    A path holds the digest as the bytes the node holds. Issue
+    btclib-org/bip32-descriptors#355.
+    """
+    preimage = bytes(32)
+    digest = sha256(preimage)
+    plain = parse_miniscript(f"and_v(v:pk({_C}),sha256({digest.hex()}))", P2WSH)
+    node = _with_data(plain, says_length(digest, length))
+    paths = node.spending_paths
+    assert paths == plain.spending_paths
+    held = [data for path in paths for _, data in path.hashes]
+    assert held == [digest]
+    assert type(held[0]) is bytes
+    signature = "30" * 71 + "01"
+    spend = SpendContext(sha256_preimages={digest: preimage})
+    witness = plain.satisfy({_C: signature}, spend)
+    assert witness == [preimage, bytes.fromhex(signature)]
+    assert node.satisfy({_C: signature}, spend) == witness
+
+
+@pytest.mark.parametrize("length", [31, 33])
+def test_a_spending_path_sizes_a_digest_by_its_bytes(length: int) -> None:
+    """Built for a digest of 32 bytes, refused for one of 31, whatever it says.
+
+    Issue btclib-org/bip32-descriptors#355.
+    """
+    digest = bytes(32)
+    path = SpendingPath(hashes=(("sha256", says_length(digest, length)),))
+    assert path == SpendingPath(hashes=(("sha256", digest),))
+    with pytest.raises(BTClibValueError, match="takes 32 bytes of data$"):
+        SpendingPath(hashes=(("sha256", says_length(digest[1:], 32)),))

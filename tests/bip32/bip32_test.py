@@ -11,6 +11,7 @@ import string
 import sys
 from collections.abc import Iterator
 from dataclasses import FrozenInstanceError, fields, replace
+from enum import Enum, IntEnum
 from hashlib import shake_256
 from typing import Any
 
@@ -914,6 +915,121 @@ def test_derive_from_account() -> None:
     err_msg = "unhardened account/master key"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account(mxpub, 0, 0)
+
+
+class _Index(IntEnum):
+    """An `IntEnum` whose `str()` is its name, as `Enum.__str__` writes it."""
+
+    ONE = 1
+
+    __str__ = Enum.__str__
+
+
+class _SpellsFive(int):
+    """An int whose own conversions and text answer 5, whatever its value."""
+
+    @override
+    def __int__(self) -> int:
+        return 5
+
+    @override
+    def __index__(self) -> int:
+        return 5
+
+    @override
+    def __str__(self) -> str:
+        return "5"
+
+    @override
+    def __repr__(self) -> str:
+        return "5"
+
+    @override
+    def __format__(self, format_spec: str) -> str:
+        return "5"
+
+
+class _ComparesAsZero(int):
+    """An int that compares and hashes as 0, whatever its value."""
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return other == 0
+
+    @override
+    def __ne__(self, other: object) -> bool:
+        return other != 0
+
+    @override
+    def __hash__(self) -> int:
+        return 0
+
+    @override
+    def __lt__(self, other: int) -> bool:
+        return other > 0
+
+    @override
+    def __le__(self, other: int) -> bool:
+        return other >= 0
+
+    @override
+    def __gt__(self, other: int) -> bool:
+        return other < 0
+
+    @override
+    def __ge__(self, other: int) -> bool:
+        return other <= 0
+
+
+_ACCOUNT_XPRV = derive(rootxprv_from_seed("00" * 32), "m/44h/0h/0h")
+
+
+def test_derive_from_account_derives_an_int_enum_as_its_value() -> None:
+    """An `IntEnum` branch or index whose `str()` is its name is its value."""
+    account = _ACCOUNT_XPRV
+    assert derive_from_account(account, _Index.ONE, 0) == derive_from_account(
+        account, 1, 0
+    )
+    assert derive_from_account(account, 0, _Index.ONE) == derive_from_account(
+        account, 0, 1
+    )
+    assert derive_from_account_(
+        account, _Index.ONE, _Index.ONE
+    ) == derive_from_account_(account, 1, 1)
+
+
+def test_derive_from_account_derives_the_value_not_its_text() -> None:
+    """A subclass of value 0 whose methods answer 5 derives as 0."""
+    lie = _SpellsFive(0)
+    # the input answers 5 wherever its own methods are asked
+    assert (int(lie), lie.__index__()) == (5, 5)
+    assert {str(lie), repr(lie), format(lie, "")} == {"5"}
+    account = _ACCOUNT_XPRV
+    plain = derive_from_account(account, 0, 0)
+    assert derive_from_account(account, _SpellsFive(0), 0) == plain
+    assert derive_from_account(account, 0, _SpellsFive(0)) == plain
+    assert derive_from_account_(
+        account, _SpellsFive(0), _SpellsFive(0)
+    ) == derive_from_account_(account, 0, 0)
+
+
+def test_derive_from_account_checks_the_value_not_its_comparisons() -> None:
+    """A subclass that compares as 0 is refused as the value it is."""
+    lie = _ComparesAsZero(5)
+    # the input answers as 0 wherever its own methods are asked
+    assert (lie == 0, lie != 0, hash(lie)) == (True, False, 0)
+    assert (lie < 1, lie <= 0, lie > 0, lie >= 1) == (True, True, False, False)
+    account = _ACCOUNT_XPRV
+    err_msg = r"^invalid branch number: an int of 3 bits not in \(0, 1\)$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account(account, _ComparesAsZero(5), 0)
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_(account, _ComparesAsZero(5), 0)
+    err_msg = r"^invalid address index: an int of 17 bits is higher than 65535\.$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account(account, 0, _ComparesAsZero(0xFFFF + 1))
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_(account, 0, _ComparesAsZero(0xFFFF + 1))
 
 
 def test_crack() -> None:
@@ -2014,6 +2130,43 @@ def test_derive_from_account_range_refuses_before_it_walks() -> None:
     err_msg = "unhardened account/master key"
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account_range_(xpub_from_xprv(rootxprv_from_seed(seed)), 0, [0])
+
+
+def test_derive_from_account_range_derives_an_int_enum_as_its_value() -> None:
+    """An `IntEnum` branch or index whose `str()` is its name is its value."""
+    account = _ACCOUNT_XPRV
+    assert derive_from_account_range(
+        account, _Index.ONE, [_Index.ONE, 0]
+    ) == derive_from_account_range(account, 1, [1, 0])
+    assert derive_from_account_range_(
+        account, _Index.ONE, [_Index.ONE, 0]
+    ) == derive_from_account_range_(account, 1, [1, 0])
+
+
+def test_derive_from_account_range_derives_the_value_not_its_text() -> None:
+    """A subclass of value 0 whose methods answer 5 derives as 0."""
+    account = _ACCOUNT_XPRV
+    assert derive_from_account_range(
+        account, _SpellsFive(0), [_SpellsFive(0), 1]
+    ) == derive_from_account_range(account, 0, [0, 1])
+    assert derive_from_account_range_(
+        account, _SpellsFive(0), [_SpellsFive(0), 1]
+    ) == derive_from_account_range_(account, 0, [0, 1])
+
+
+def test_derive_from_account_range_checks_the_value_not_its_comparisons() -> None:
+    """A subclass that compares as 0 is refused as the value it is."""
+    account = _ACCOUNT_XPRV
+    err_msg = r"^invalid branch number: an int of 3 bits not in \(0, 1\)$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_range(account, _ComparesAsZero(5), [0])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_range_(account, _ComparesAsZero(5), [0])
+    err_msg = r"^invalid address index: an int of 17 bits is higher than 65535\.$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_range(account, 0, [0, _ComparesAsZero(0xFFFF + 1)])
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive_from_account_range_(account, 0, [0, _ComparesAsZero(0xFFFF + 1)])
 
 
 class _ChangingIndexes(list[int]):

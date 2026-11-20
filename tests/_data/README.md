@@ -65,11 +65,35 @@ to compare against says so in prose instead. The verdicts used:
   gives both verdicts.
 
 `pulled` is the date the current content was taken from upstream, into
-btclib or into this repository. `behind` counts upstream revisions
-of that path since the pin. It is a staleness figure, not a defect: a
-vector file is a fixed set of cases and refreshing it is a decision, not a
-chore. `ref` names the branch a pin's path lives on, where that is not the
-repository's own default branch.
+btclib or into this repository. `behind` counts upstream revisions of
+that path since the pin, except on an entry carrying a `pattern`, below.
+It is a staleness figure, not a defect: a vector file is a fixed set of
+cases and refreshing it is a decision, not a chore. `ref` names the
+branch a pin's path lives on, where that is not the repository's own
+default branch.
+
+`pattern` marks a file derived from upstream rather than copied from it:
+the file is every match of that pattern in the regular files under
+`path` (`git grep` reads no symlink), one per line, sorted bytewise and
+deduplicated, as `LC_ALL=C git grep -aohP` of the pattern at `commit`
+over `path`, piped to `LC_ALL=C sort -u`, prints it. `-a` has git read
+every file as text and print its matches: without it, git can take a
+file holding a NUL for binary and print a line saying the binary file
+matches instead. `.github/scripts/check_vendored_vectors.py` reads every
+file as text too, finds the matches as its `_line_matches` says,
+following git's loop and naming where it departs from it, and, for an
+entry whose `behind` reads zero, derives the file again at the tip of
+the path, weekly. It reports the entry where that is not the file here,
+where the file is not here at all, and, as it reports any entry, where
+no commit on the branch it walks touches the path. A commit upstream
+that leaves the derived lines as they are reports nothing, and the value
+of `commit` decides nothing. `behind` there counts the lines the
+derivation and the file do not share, not revisions.
+
+The script reads the pattern with Python's `re` and matches it against
+bytes, as `git grep -P` matches it with PCRE under `LC_ALL=C`: under a
+Unicode locale git matches characters instead. A pattern is written in
+what both read alike.
 
 A vector this package fails is vendored anyway and marked `xfail`, never
 left out: an absent vector hides the defect it would have shown, and
@@ -820,30 +844,76 @@ package's header.
 
 ```text
 repo    sipa/miniscript
-path    compiler.cpp, index.html, test.gram
+path    compiler.cpp
+commit  5f38c2d4d6489c47a19e0d43128f8e0fb92d372d  2023-02-16
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
+```
+
+```text
+repo    sipa/miniscript
+path    index.html
 commit  6806dfb15a1fafabf7dd28aae3c9d2bc49db01f1  2023-03-16
 pulled  2026-11-15
-behind  0 revisions; that commit is the tip of the repository
+behind  0 revisions; that commit is the tip of the path
+```
+
+```text
+repo    sipa/miniscript
+path    test.gram
+commit  40767b27a965e21551c6e4a2de96b6564ce26659  2019-08-12
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
+```
+
+```text
+repo    sipa/miniscript
+path    main.cpp
+commit  033238fd9b8126bce29446eaf018af2bdbc8c906  2022-04-20
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
+```
+
+```text
+repo    sipa/miniscript
+path    compiler.h
+commit  fd9bed0d3a8cabe4541bb18eabf1fda2984b4b33  2023-02-16
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
+```
+
+```text
+repo    sipa/miniscript
+path    bitcoin/
+commit  930e2f22cfd3575db21c8bb44920d64a781793e9  2023-02-16
+pulled  2026-11-15
+behind  0 revisions; that commit is the tip of the path
 ```
 
 Verdict: **recorded**. `descriptors.compiler` is a port of
 `compiler.cpp`, so each answer of `tests/descriptors/compiler_test.py`'s
 `WEBSITE`, `GRAMMAR` and `COMPOSED` is the miniscript sipa's compiler
 answers, or None where it answers none, recorded from a build of the
-pinned commit. The policies of `WEBSITE` are the examples of the project's
-website, `index.html`. Those of `GRAMMAR` are drawn at random from its
-test grammar, `test.gram`, each `pk(C)` of a draw named apart, since the
-grammar names every key `C` and the compiler refuses a key named twice.
-Those of `COMPOSED` are composed here, with weights, every hash lock and
-both kinds of lock time, which the grammar does not draw. `RUST_DIFFERS`
-holds sipa's answer beside rust-miniscript's, below.
+newest pin above, 6806dfb15a1fafabf7dd28aae3c9d2bc49db01f1, whose tree
+holds each path above as that path's own pin does. The policies of
+`WEBSITE` are the examples of the project's website, `index.html`. Those
+of `GRAMMAR` are drawn at random from its test grammar, `test.gram`, each
+`pk(C)` of a draw named apart, since the grammar names every key `C` and
+the compiler refuses a key named twice. Those of `COMPOSED` are composed
+here, with weights, every hash lock and both kinds of lock time, which
+the grammar does not draw. `RUST_DIFFERS` holds sipa's answer beside
+rust-miniscript's, below.
 
 The repository has no test that runs the compiler: the website's examples
 and the grammar are its test cases, and the compiler's answers are what
 the program `main.cpp` prints for them. `main.cpp` expands each `H` to a
 digest, of eights or of nines, as the test does.
 
-From the repository root, this builds the pinned commit and prints the
+`main.cpp`, `compiler.h` and `bitcoin/` are pinned too, because the build
+below reads them: a change there can change an answer. `bitcoin/` is
+pinned as a directory, to the last commit touching any file under it.
+
+From the repository root, this builds the newest pin and prints the
 cases whose recorded answer is not what it answers. It prints an empty
 list. `-ffp-contract=off` keeps the C++ compiler from fusing a
 multiplication and an addition, which Python's floats never do; a build
@@ -880,7 +950,7 @@ rm -rf "${src:?}"
 The policies and the answers are sipa/miniscript's, under the MIT
 licence its files state, and `tests/descriptors/compiler_test.py`
 carries that notice below this package's header. sipa/miniscript has no
-tapscript compiler at the pin, so neither has the port.
+tapscript compiler at the newest pin, so neither has the port.
 
 ### Not vendored as a file: rust-miniscript's compiler tests
 

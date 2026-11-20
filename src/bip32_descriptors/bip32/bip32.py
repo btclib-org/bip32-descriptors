@@ -66,6 +66,7 @@ from ecc.curves import (
 from typing_extensions import override
 
 from bip32_descriptors._refusal import (
+    _exact_int,
     _label,
     _message_text,
     _position,
@@ -528,9 +529,7 @@ def _rootxprv_from_seed(seed: Octets, version: Octets) -> BIP32KeyData:
     """Return BIP32 root master extended private key from seed."""
     seed = bytes_from_octets(seed)
     bit_length = len(seed) * 8
-    # the bit count is diagnostic enough: never echo the seed itself. It
-    # is written from the bytes the seed holds, and not from the `__len__`
-    # of the bytes subclass `bytes_from_octets` can answer
+    # the bit count is diagnostic enough: never echo the seed itself
     if bit_length < 128:
         raise BTClibValueError(f"too few bits for seed: {_seed_bits(seed)}")
     if bit_length > 512:
@@ -1222,6 +1221,9 @@ def _assert_valid_branch(
     # function runs first at every call site and on the same `max_index`
     if not is_integer(max_index):
         raise BTClibTypeError(f"non-integer max_index: {_message_text(max_index)}")
+    # the branch's digits decide the checks below, and none of the
+    # comparisons or the hash its int subclass can override
+    branch = _exact_int(branch)
     if branch >= HARDENED_OFFSET:
         raise BTClibValueError("invalid private derivation at branch level")
     if branch > max_index:
@@ -1244,6 +1246,8 @@ def _assert_valid_address_index(address_index: int, max_index: int) -> None:
         raise BTClibTypeError(
             f"non-integer address index: {_message_text(address_index)}"
         )
+    # the index's digits decide, as the branch's do in `_assert_valid_branch`
+    address_index = _exact_int(address_index)
     if address_index >= HARDENED_OFFSET:
         raise BTClibValueError("invalid private derivation at address index level")
     if address_index > max_index:
@@ -1262,7 +1266,10 @@ def _derive_from_account(
     _assert_valid_branch(mxkey, branch, branches_0_1_only, max_index)
     _assert_valid_address_index(address_index, max_index)
 
-    return _derive(mxkey, f"m/{branch}/{address_index}", None)
+    # the path holds the values the checks above read: an int subclass's
+    # own text can spell its name, or another number
+    path = f"m/{_exact_int(branch)}/{_exact_int(address_index)}"
+    return _derive(mxkey, path, None)
 
 
 def derive_from_account_(
@@ -1351,8 +1358,13 @@ def derive_from_account_range_(
     # check_validity=False: the branch key is not the answer and is not
     # handed back, and the depth-zero rule would be asked of a depth this
     # has just walked to -- as `_derive` says of its own return
-    branch_key = _derive(account, f"m/{branch}", None)
-    derived = [_derive(branch_key, f"m/{index}", None) for index in address_indexes]
+    #
+    # each step is the exact value of its branch or index, as in
+    # `_derive_from_account`
+    branch_key = _derive(account, f"m/{_exact_int(branch)}", None)
+    derived = [
+        _derive(branch_key, f"m/{_exact_int(index)}", None) for index in address_indexes
+    ]
     # the output check, once per key, as the single-address spelling makes
     # it on the one key it answers
     for key in derived:

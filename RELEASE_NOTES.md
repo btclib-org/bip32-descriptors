@@ -9,6 +9,108 @@ number says when a release was cut, and promises nothing about
 compatibility, so a breaking change is announced in this file — read it
 before upgrading, rather than a digit.
 
+## v2026.11.17
+
+This release needs btclib 2026.11.10, ecc 2026.11.8 and base58-bech32
+2026.10.23 or later, as v2026.11.14 does. The `secp256k1` extra installs
+`ecc[secp256k1]` 2026.11.8 or later.
+
+griffe finds no break against v2026.11.14. `api_gaps.py` finds one,
+`BIP32KeyOrigin.der_path`, below. The other breaks below are in what is
+refused and with which message, which neither compares.
+
+`Descriptor.spending_paths` and `Miniscript.spending_paths` answer the
+ways a script can be spent, as a tuple of `SpendingPath` (issue #356).
+Each holds the quorums that sign, each a `Quorum`, a threshold of KEY
+expressions; the `older()` and `after()` values it waits for; the hash
+locks it reveals; and the number of the `tr()` leaf it spends, `None`
+for the key path. They refuse a descriptor that does not name every key
+a spend may need, such as `addr()`, `raw()` (inside `sh()` or `wsh()`
+too), `rawpkh()` and a `tr()` with a `rawnode()` or a `rawleaf()`, and a
+call past the library's bounds on the paths and on the work, its refusal
+stating the bound.
+
+`descriptors.compiler.compile_policy` compiles a spending policy in
+sipa/miniscript's language, such as `or(pk(A),and(pk(B),older(144)))`
+with a KEY expression for each key, to the P2WSH miniscript sipa's
+compiler answers (issue #357).
+
+This breaks the API. `BIP32KeyOrigin.der_path` is a tuple, where
+v2026.11.14 held a list (issue #378): it compares unequal to a list, a
+list does not concatenate with it, and it cannot be changed in place.
+Act on it: compare it with a tuple, concatenate a tuple to it, and build
+a new origin where one held a changed path.
+
+This breaks the API. `pickle.loads` runs the build's checks on a
+`Descriptor`, a `Miniscript` node, a `KeyExpression`, a `MultiA`, a
+`RawLeaf`, a `RawNode` and a `BIP32KeyOrigin`, and refuses what the
+build refuses, with its refusal (issue #363). A pickle v2026.11.14
+wrote of a key with an origin is refused, as
+`invalid der_path type: list`; one with no origin loads. Act on it:
+pickle such a descriptor again with this release, from its text, which
+`parse` reads. `copy.copy` runs the checks too. A `KeyExpression`
+refuses an origin that is no `BIP32KeyOrigin`, as
+`invalid origin type: str`, or one its `assert_valid` refuses, where
+v2026.11.14 built it.
+
+This breaks the API. `RawLeaf(b"")` and a `RawNode` whose hash is not
+32 bytes raise `BTClibValueError` when built, with `parse`'s message:
+`Leaf Script is not hex`, `Rawnode hash is not hex` or
+`256 bits digest expected` (issue #331). v2026.11.14 built them, and a
+`tr()` holding one wrote a text `parse` refuses. `RawLeaf(b"", 0xc1)`
+raises `Leaf Script is not hex`, where it raised
+`Leaf Version is invalid`, and a version past one byte raises
+`Leaf Version is too large`. `AddrDescriptor("")` and
+`AddrDescriptor("x")` raise `parse`'s refusal of the address, where
+v2026.11.14 built `addr()` and `addr(x)` (issue #332). Act on it: build
+these from the values `parse` reads.
+
+This breaks the API. A refusal the package writes prints no value it
+refuses, and its text changes (issue #390). An int it refuses reads
+`an int of N bits`, or `a negative int of N bits`: an index, a depth, a
+threshold, a lock time, a number of keys. A position or a count is
+written in decimal, as `at position 5` or `21 given`. A value of another
+type is named by its type, and by its length where it has one, as
+`a str of length 1`. A name is quoted up to 16 characters, and named by
+its length past them, as `a value of 40 characters`. A caller's type
+whose name is past 16 characters reads
+`a type whose name has 24 characters`. A key, an xkey, a script, a
+hash160, a prefix octet, a version, a fingerprint or a miniscript is not
+printed. A refusal the package relays, as `key 0: ...`, writes its own
+text for the one it caught, without its numbers, and
+`invalid key expression` for a text it does not pair. For example, where
+v2026.11.14 read:
+
+- `invalid k in k-of-n multi: 3`, it reads
+  `invalid k in k-of-n multi: an int of 2 bits`;
+- `invalid descriptor character: '\x01'`, it reads
+  `invalid descriptor character at position 5`;
+- `key 0: not a testnet key: version 0x0488b21e`, it reads
+  `key 0: not a testnet key: version`;
+- the miniscript, then `is not sane: it repeats a public key`, it
+  reads `a sub-expression is not sane: it repeats a public key`;
+- `key 0: invalid public key prefix: 0x05`, it reads
+  `key 0: invalid public key prefix for 33 bytes` (issue #342).
+
+`miniscript.from_script` refuses a tapscript `pk_h()` key that
+`key_hashes` supplies by the length the caller gave, as
+`not a tapscript public key: 31 bytes`, where v2026.11.14 named one byte
+more, or a `0x02` prefix (issue #385). Where a caller's type or text
+raises while the package writes its refusal, the package's refusal
+leaves in place of the caller's exception. A refusal btclib or Python
+writes still names a caller's class as the class names itself, as
+btclib-org/btclib#3128 reports of btclib's. Act on it: a caller
+matching a refusal's text matches the new one, or catches
+`BTClibValueError` and `BTClibTypeError` alone.
+
+A bytes subclass is read by the bytes it holds, not by its truth or its
+`len()`: as a public key, which v2026.11.14 refused as no key where the
+subclass answers `False` (issue #345), and in `infer_descriptor`'s
+provider, `rawpkh()` and `raw()` (issue #339) (issue #346). `sh()`
+wraps a class deriving from `RawDescriptor` before `MultiDescriptor` as
+the `raw()` it writes, where v2026.11.14 refused it for the size of its
+`multi()` script (issue #337).
+
 ## v2026.11.14
 
 This release needs btclib 2026.11.10, ecc 2026.11.8 and base58-bech32
