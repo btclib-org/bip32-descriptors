@@ -106,3 +106,33 @@ def test_a_subexpression_of_another_context_is_refused_in_any_position() -> None
     with pytest.raises(BTClibValueError, match=err_msg) as e:
         Miniscript("thresh", TAPSCRIPT, (one, one, Miniscript("1")), threshold=1)
     assert_secret_free(e.value, [P2WSH])
+
+
+# ISS btclib-org/bip32-descriptors#141: a field of the wrong type is a
+# BTClibTypeError naming that field and the type alone, not the builtin
+# complaint its first read leaves behind
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("fragment", []),
+        ("fragment", 5),
+        ("threshold", "1"),
+        ("threshold", 1.0),
+        ("keys", 5),
+        ("data", "ab" * 32),
+    ],
+    ids=[
+        "fragment-list",
+        "fragment-int",
+        "threshold-text",
+        "threshold-float",
+        "keys-int",
+        "data-text",
+    ],
+)
+def test_a_field_of_another_type_is_refused_when_built(field: str, value: Any) -> None:
+    """Each field is refused by its own type, before anything reads it."""
+    older = parse_miniscript("older(1)", P2WSH)
+    err_msg = f"^invalid {field} type: {type(value).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        replace(older, **{field: value})

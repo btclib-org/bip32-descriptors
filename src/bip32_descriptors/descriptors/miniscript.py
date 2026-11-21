@@ -1176,6 +1176,9 @@ class Miniscript:
             err_msg = "unknown spend context"
             err_msg += f"; it must be one of {sorted((P2WSH, TAPSCRIPT))}"
             raise BTClibValueError(err_msg)
+        assert_type(self.fragment, str, "fragment")
+        assert_type(self.keys, tuple, "keys")
+        assert_type(self.data, bytes, "data")
         fragment = self.fragment
         if fragment == "thresh":
             if not self.subs:
@@ -1232,6 +1235,7 @@ class Miniscript:
 
     def _assert_number(self) -> None:
         """Refuse a lock time or a threshold outside its bounds."""
+        assert_type(self.threshold, int, "threshold")
         fragment = self.fragment
         threshold = self.threshold
         if fragment in {"older", "after"}:
