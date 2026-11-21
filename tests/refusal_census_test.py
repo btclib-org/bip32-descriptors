@@ -1803,12 +1803,12 @@ class _Census:
     def _built_by(self, receiver: ast.expr, module: _Module, meta: str) -> bool:
         """Return whether a class a method is called on is built by a metaclass.
 
-        The metaclass derives from `type`, as `_derives` reads that, and
+        The metaclass derives from `type`, as `_derived` reads that, and
         the class, named or the one a `@classmethod` is handed first, is
         built by it, as `_metaclass_is` reads that. Called through the
         metaclass itself, a method is handed nothing first.
         """
-        if not self._derives(meta, "type", frozenset()):
+        if meta not in self._derived("type"):
             return False
         method = self._receiver_of(receiver, module)
         name = (
@@ -1818,19 +1818,6 @@ class _Census:
         )
         return name is not None and self._metaclass_is(name, meta, frozenset())
 
-    def _derives(self, name: str, base: str, seen: frozenset[str]) -> bool:
-        """Return whether a class is a base or derives from it, by their names.
-
-        Through the bases of each class of the package of that name.
-        """
-        if name == base:
-            return True
-        return name not in seen and any(
-            self._derives(_base_name(each), base, seen | {name})
-            for class_def in self.class_defs.get(name, [])
-            for each in class_def.bases
-        )
-
     def _metaclass_is(self, name: str, meta: str, seen: frozenset[str]) -> bool:
         """Return whether each class of the package of a name has a metaclass.
 
@@ -1838,12 +1825,13 @@ class _Census:
         from it, or one of its bases is a class of the package that has it.
         """
         class_defs = self.class_defs.get(name, [])
+        deriving = self._derived(meta)
         return (
             name not in seen
             and bool(class_defs)
             and all(
                 any(
-                    self._derives(_base_name(k.value), meta, frozenset())
+                    _base_name(k.value) in deriving
                     for k in class_def.keywords
                     if k.arg == "metaclass"
                 )
