@@ -2197,9 +2197,11 @@ def test_derive_from_account_range_reads_its_indexes_once() -> None:
     seed = "bfc4cbaad0ff131aa97fa30a48d09ae7df914bcc083af1e07793cd0a7c61a03f65d622848209ad3366a419f4718a80ec9037df107d8d12c19b83202de00a40ad"
     mxpub = xpub_from_xprv(derive(rootxprv_from_seed(seed), "m / 44 h / 0 h"))
 
+    # the generator is the input under test, not one to simplify away
+    generator = (i for i in [0, 1])  # sourcery skip: simplify-generator
     for name, indexes in (
         ("list_iterator", iter([0, 1])),
-        ("generator", (i for i in [0, 1])),
+        ("generator", generator),
     ):
         err_msg = rf"^invalid address_indexes type: {name}$"
         with pytest.raises(BTClibTypeError, match=err_msg):
