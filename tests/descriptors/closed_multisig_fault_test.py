@@ -184,3 +184,36 @@ def test_a_bracket_after_a_multisig_key_echoes_no_key() -> None:
     with pytest.raises(BTClibValueError, match=message) as e:
         parse(f"wsh(multi(1,{_WIF})({_WIF}))")
     assert_secret_free(e.value, [_WIF])
+
+
+@pytest.mark.parametrize(
+    "descriptor,name",
+    [
+        # Core: Multi: expected ',', got ')'
+        (f"wsh(multi(1)(,{_KEY}))", "multi"),
+        (f"wsh(sortedmulti(1)(,{_KEY}))", "sortedmulti"),
+        (f"tr({_X_ONLY},multi_a(1)(,{_X_ONLY}))", "multi_a"),
+        (f"tr({_X_ONLY},sortedmulti_a(1)(,{_X_ONLY}))", "sortedmulti_a"),
+    ],
+)
+def test_a_bracket_right_after_a_multisig_threshold_is_the_multisig_fault(
+    descriptor: str, name: str
+) -> None:
+    """Core reads the threshold, then expects the "," before the first key."""
+    message = rf"^{name}\(\): expected ',' after the threshold, got a closing bracket$"
+    with pytest.raises(BTClibValueError, match=message):
+        parse(descriptor)
+
+
+def test_a_multisig_threshold_is_read_before_the_bracket_after_it() -> None:
+    """Core: Multi threshold is not valid, whatever follows it."""
+    with pytest.raises(BTClibValueError, match=r"^invalid multi\(\) threshold: "):
+        parse(f"wsh(multi(4294967296)(,{_KEY}))")
+
+
+def test_a_bracket_after_a_multisig_threshold_echoes_no_key() -> None:
+    """The refusal leaves out the text, which holds a private key."""
+    message = r"^multi\(\): expected ',' after the threshold, got a closing bracket$"
+    with pytest.raises(BTClibValueError, match=message) as e:
+        parse(f"wsh(multi(1)(,{_WIF}))")
+    assert_secret_free(e.value, [_WIF])
