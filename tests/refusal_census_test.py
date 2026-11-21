@@ -102,10 +102,11 @@ first what it is called on, or nothing where it is called through a class
 of the package or through a `@classmethod`'s own class, but for a method
 of a class a `metaclass=` keyword may name: called on a class whose
 `metaclass=` keyword, or a base's of the package, names that class or
-one deriving from it, it takes the class it is called on first. A
-`@classmethod` takes its class first however it is called, and a
-`@staticmethod` takes nothing. Its decorator says which, not the name of
-its first parameter; a decorator that is not provably one of those or of
+one deriving from it, and that does not derive from that class itself,
+it takes the class it is called on first. A `@classmethod` takes its
+class first however it is called, and a `@staticmethod` takes nothing.
+Its decorator says which, not the name of its first parameter; a
+decorator that is not provably one of those or of
 `_KEEPING_DECORATORS`, taken from its home as `_decorator_name` reads
 that, may hand it anything, anywhere. So the census does not trace a
 parameter of a public function, of a lambda or of a method with such a
@@ -1806,11 +1807,14 @@ class _Census:
         The class that defines the method is one a `metaclass=` keyword
         may name, and the class the method is called on, as `_class_names`
         reads it, has a `metaclass=` keyword naming it, as `_metaclass_is`
-        reads that. Called through that class itself, a method is handed
-        nothing first.
+        reads that. A class that is that class, or derives from it, as
+        `_derived` reads that, finds the method among its own attributes
+        first and takes it as a plain function: called through it, a method
+        is handed nothing first.
         """
+        deriving = self._derived(meta)
         return any(
-            self._metaclass_is(name, meta, frozenset())
+            name not in deriving and self._metaclass_is(name, meta, frozenset())
             for name in self._class_names(receiver, module)
         )
 
@@ -5412,6 +5416,20 @@ _SHAPES = {
             "class _Meta(type):\n    def _make(cls, key):\n        return cls(key)\n"
             "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
             "def f(key):\n    raise _Meta._make(Refused, key)"
+        ),
+    ),
+    "a metaclass's method called on a class deriving from the metaclass": (
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls('a')\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "class X(_Meta, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise X._make(Refused, key)"
+        ),
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls(key)\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "class X(_Meta, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise X._make(Refused, key)"
         ),
     ),
     "a metaclass's method called on a class in a cycle of bases": (
