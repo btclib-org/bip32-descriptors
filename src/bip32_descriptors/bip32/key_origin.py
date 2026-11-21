@@ -223,12 +223,18 @@ def _is_point(pub_key: bytes) -> bool:
 
 
 def assert_valid_hd_key_paths(hd_key_paths: Mapping[bytes, BIP32KeyOrigin]) -> None:
-    """Raise an exception if the dataclass element is not valid."""
+    """Raise an exception if the dataclass element is not valid.
+
+    Each key is sized, and one of 33 or 65 bytes read as a point, by the
+    bytes it holds, which no subclass's `__len__` answers.
+    """
     if len(hd_key_paths.values()) > len(
         {der_path.serialize() for der_path in hd_key_paths.values()}
     ):
         raise BTClibValueError("Duplicated key origin values in hd_key_paths")
-    for pub_key, key_origin in hd_key_paths.items():
+    for key, key_origin in hd_key_paths.items():
+        assert_type(key, bytes, "public key")
+        pub_key = bytes.__getitem__(key, slice(None))
         if len(pub_key) not in {78, 33, 65}:
             err_msg = f"invalid public key length: {_size(pub_key)}"
             raise BTClibValueError(err_msg)
