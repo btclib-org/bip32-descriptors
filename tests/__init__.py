@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from typing_extensions import override
 
 import bip32_descriptors
 
@@ -62,6 +63,28 @@ NOT_STRIPPED = (
     "\N{NEXT LINE}",
     "\N{INFORMATION SEPARATOR FOUR}",
 )
+
+
+class _SaysLength(bytes):
+    """Bytes whose length says `length`, whatever they hold."""
+
+    length = 0
+
+    @override
+    def __len__(self) -> int:
+        return self.length
+
+
+def says_length(octets: bytes, length: int) -> bytes:
+    """Return `octets` as bytes whose length says `length`.
+
+    A caller's `bytes` subclass answers `len()` as it likes. The package
+    reads such a key or such data by the bytes it holds (issue
+    btclib-org/bip32-descriptors#355).
+    """
+    lying = _SaysLength(octets)
+    lying.length = length
+    return lying
 
 
 def module_names() -> list[str]:

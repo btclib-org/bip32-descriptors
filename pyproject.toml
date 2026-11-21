@@ -136,6 +136,9 @@ test = [
 ]
 lint = [
     { include-group = "bindings" },
+    # what mypy reads .github/scripts/check_link_destinations.py against,
+    # at the version the link hooks of .pre-commit-config.yaml install
+    "markdown-it-py>=4.3.0",
     "mypy>=2.3.1",
     "pre-commit>=4.6.2",
     "ruff>=0.16.7",
@@ -256,7 +259,10 @@ package = ["src/bip32_descriptors"]
 # as the .github check-sdist's own default ignore list already covers:
 # ClusterFuzzLite's own build configuration and the atheris harnesses it
 # builds are CI-only, read by fuzz.yml and by nothing a package installed
-# from the sdist runs
+# from the sdist runs.
+#
+# changelog/ is git-only too: its entries are what a release assembles
+# into the history files the sdist carries
 git-only = [
     ".bestpractices.json",
     ".claude/",
@@ -265,6 +271,7 @@ git-only = [
     ".prettierignore",
     ".vscode/",
     "COPYRIGHT",
+    "changelog/",
     "fuzz/",
 ]
 
@@ -362,10 +369,17 @@ nd = "nd"
 intoto = "intoto"
 
 [tool.typos.type.verbatim]
-# the files that quote a word rather than use it: a changelog entry quotes
-# the misspelling it is about, and .pre-commit-config.yaml the ones the
-# two spell checkers found
-extend-glob = ["CHANGELOG.md", "RELEASE_NOTES.md", ".pre-commit-config.yaml"]
+# the files that quote a word rather than use it: a changelog entry, in
+# either history file or as a file under changelog/next/, quotes the
+# misspelling it is about, and .pre-commit-config.yaml the ones the two
+# spell checkers found. typos matches a glob against the file's name, so
+# the entries are named by their own pattern
+extend-glob = [
+    "CHANGELOG.md",
+    "RELEASE_NOTES.md",
+    "pr[0-9]*.md",
+    ".pre-commit-config.yaml",
+]
 extend-ignore-re = ['`[^`]*`']
 
 [tool.coverage.run]
@@ -378,7 +392,13 @@ source = ["bip32_descriptors", "tests", ".github/scripts"]
 # BTCLIB_INTEGRATION or BTCLIB_QA_ASSETS:
 # their bodies would be uncovered lines of tests/ at every ordinary run,
 # which is the ratchet reporting the switch rather than a defect
-omit = ["*/site-packages/*", "tests/integration/*"]
+omit = [
+    "*/site-packages/*",
+    "tests/integration/*",
+    # a copy section 14 of the standard compares, tested where its
+    # canonical copy is (section 8 of the standard)
+    ".github/scripts/check_link_destinations.py",
+]
 # statement coverage alone calls a half-tested `if` fully covered
 branch = true
 
@@ -567,6 +587,10 @@ ignore = [
 ".github/scripts/check_vendored_vectors.py" = ["T201"]
 # and the descriptor comparison, whose output is the disagreements it found
 ".github/scripts/compare_descriptors.py" = ["T201"]
+# a copy section 14 of the standard keeps byte for byte: what it prints
+# is its report, and its `noqa` is for a rule this tree ignores, which
+# RUF100 would report as unused
+".github/scripts/check_link_destinations.py" = ["RUF100", "T201"]
 # the D rules are not here: a public test function states what it
 # verifies under the same docstring gate as the library
 "tests/**" = [

@@ -25,7 +25,7 @@ from btclib.alias import Octets
 from btclib.exceptions import BTClibTypeError, BTClibValueError
 from btclib.utils import assert_type, is_integer
 
-from bip32_descriptors._refusal import _quoted, _size, _type_name
+from bip32_descriptors._refusal import _exact_int, _quoted, _size, _type_name
 
 __all__ = [
     "HARDENED_OFFSET",
@@ -174,11 +174,13 @@ def str_from_index_int(i: int, hardening: str = _HARDENING) -> str:
     if hardening not in _BIP380_HARDENINGS:
         raise BTClibValueError(f"invalid hardening symbol: {_quoted(hardening)}")
     _assert_valid_index(i)
-    # int() of an int, because a subclass of int may define a str() that
-    # is not the number -- its *name*, "Sighash.ALL" where a path step
-    # wants "1". Accepting a deliberate integer subclass, which is what
-    # `is_integer` is for, means answering with the number it is
-    index = int(i)  # sourcery skip: remove-unnecessary-cast
+    # `_exact_int` of an int, because a subclass of int may define a
+    # `str()` that is not the number -- its *name*, "Sighash.ALL" where
+    # a path step wants "1" -- and `int()` would call its `__int__`,
+    # which can disagree with the value it holds. Accepting a deliberate
+    # integer subclass, which is what `is_integer` is for, means
+    # answering with the number it is
+    index = _exact_int(i)
     if index < HARDENED_OFFSET:
         return str(index)
     return str(index - HARDENED_OFFSET) + hardening
