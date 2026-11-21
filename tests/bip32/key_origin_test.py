@@ -10,7 +10,7 @@ from typing import cast
 
 import pytest
 from btclib.alias import Octets
-from btclib.exceptions import BTClibValueError
+from btclib.exceptions import BTClibTypeError, BTClibValueError
 from ecc.curves import secp256k1
 from ecc.curves.sec_point import bytes_from_point
 
@@ -240,6 +240,14 @@ def test_assert_valid_hd_key_paths_checks_every_entry() -> None:
     hd_key_paths = {_G33: good, bad_pub_key: good2}
     with pytest.raises(BTClibValueError, match="invalid public key length: "):
         assert_valid_hd_key_paths(hd_key_paths)
+
+
+def test_assert_valid_hd_key_paths_refuses_an_origin_of_another_type() -> None:
+    """A value is a `BIP32KeyOrigin`, not its text, and no text is echoed."""
+    err_msg = "^invalid key origin type: str$"
+    with pytest.raises(BTClibTypeError, match=err_msg) as e:
+        assert_valid_hd_key_paths({_G33: "m/0"})  # type: ignore[dict-item]
+    assert "m/0" not in str(e.value)
 
 
 def test_dataclasses_json_dict_key_origin(json_golden: JsonGolden) -> None:

@@ -14,6 +14,7 @@ from io import BytesIO
 from btclib.alias import Octets
 from btclib.exceptions import BTClibValueError
 from btclib.utils import (
+    assert_type,
     bytes_from_octets,
     fields_from_json_object,
     list_from_json_array,
@@ -188,6 +189,8 @@ def _is_point(pub_key: bytes) -> bool:
 
 def assert_valid_hd_key_paths(hd_key_paths: Mapping[bytes, BIP32KeyOrigin]) -> None:
     """Raise an exception if the dataclass element is not valid."""
+    for key_origin in hd_key_paths.values():
+        assert_type(key_origin, BIP32KeyOrigin, "key origin")
     if len(hd_key_paths.values()) > len(
         {der_path.serialize() for der_path in hd_key_paths.values()}
     ):
