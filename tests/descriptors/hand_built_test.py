@@ -432,6 +432,16 @@ def test_a_miniscript_that_is_no_script_is_refused_when_built(
         MiniscriptDescriptor(node)
 
 
+@pytest.mark.parametrize("key", ["abc", 5, None])
+def test_a_miniscript_key_of_another_type_is_refused(key: Any) -> None:
+    """Each key of a well-typed tuple is a KEY expression, never its text."""
+    err_msg = f"^invalid key type: {type(key).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        miniscript.Miniscript("pk_k", miniscript.P2WSH, keys=(key,))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        miniscript.Miniscript("multi", miniscript.P2WSH, keys=(_KEY, key), threshold=1)
+
+
 def test_a_sane_miniscript_built_by_hand_parses_back() -> None:
     """The control: the issue's leaf with two keys, and its p2wsh twin."""
     leaf = miniscript.parse(f"and_v(v:pk({_X2}),pk({_X}))", miniscript.TAPSCRIPT)

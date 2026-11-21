@@ -1211,6 +1211,8 @@ class Miniscript:
         group does not make (BIP327).
         """
         fragment = self.fragment
+        for key in self.keys:
+            assert_type(key, KeyExpression, "key")
         keys = len(self.keys)
         if fragment in {"multi", "multi_a"} and (fragment == "multi_a") != (
             self.context == TAPSCRIPT
