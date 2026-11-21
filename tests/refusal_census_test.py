@@ -185,6 +185,7 @@ text shows: one made at run time, through `globals()`, `setattr` or the
 from __future__ import annotations
 
 import ast
+import builtins
 import io
 import itertools
 import re
@@ -981,12 +982,13 @@ class _Census:
         binds the name, also what `_global_bindings` finds for the name: so
         none where nothing binds it. A parameter, a comprehension's target
         and a name a scope around it declares `global` or `nonlocal` are
-        unknown, and so is a builtin a class body may read, unless `runs`
-        asks only what the read may run: a builtin runs nothing of the
-        package.
+        unknown, and so is a builtin a class body may read or that only
+        `_global_bindings` finds bound, unless `runs` asks only what the
+        read may run: a builtin runs nothing of the package.
         """
         if self._binder(name, module) == (None, []):
-            return list(self._global_bindings(module.tree).get(name.id, []))
+            found = list(self._global_bindings(module.tree).get(name.id, []))
+            return None if found and not runs and hasattr(builtins, name.id) else found
         scope = self._local_scope(name, module)
         if scope is None:
             return None
@@ -5263,6 +5265,17 @@ _SHAPES = {
             "class _E(Exception):\n    pass\ndef g():\n    global _E\n"
             "    _E = OSError\ndef f(key):\n    try:\n        pass\n"
             "    except _E:\n        raise"
+        ),
+    ),
+    "a builtin class caught, which a function declaring it global binds": (
+        (
+            "def g():\n    global _E\n    class _E(Exception):\n        pass\n"
+            "def f(key):\n    try:\n        pass\n    except _E:\n        raise"
+        ),
+        (
+            "def g():\n    global OSError\n    class OSError(Exception):\n"
+            "        pass\ndef f(key):\n    try:\n        pass\n"
+            "    except OSError:\n        raise"
         ),
     ),
     "a class caught in a class body, which another function declares global": (
