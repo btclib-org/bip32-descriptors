@@ -85,7 +85,7 @@ def test_an_unknown_context_is_refused_without_its_text(context: str) -> None:
 
 @pytest.mark.parametrize("context", [_WIF, _RANDOM_HEX])
 def test_parse_refuses_unknown_context_without_its_text(context: str) -> None:
-    """An unknown context given to parse() is refused without echoing secrets."""
+    """An unknown context given to parse() is refused, its text left out."""
     err_msg = r"^unknown spend context; it must be one of \['P2WSH', 'tapscript'\]$"
     with pytest.raises(BTClibValueError, match=err_msg) as e:
         parse_miniscript("1", context)
