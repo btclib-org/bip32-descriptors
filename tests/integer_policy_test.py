@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 from btclib.exceptions import BTClibTypeError
+from typing_extensions import override
 
 from bip32_descriptors.bip32 import BIP32KeyData
 from bip32_descriptors.bip32.bip32 import (
@@ -195,3 +196,23 @@ def test_an_int_subclass_that_is_not_a_bool_is_still_an_integer() -> None:
     assert indexes_from_der_path(Index.ONE) == [1]
     assert indexes_from_der_path([Index.ONE]) == [1]
     assert str_from_index_int(Index.ONE) == "1"
+
+
+def test_an_index_is_written_by_the_value_it_holds() -> None:
+    """A path step is the number the index holds, not what `__int__` answers.
+
+    `int()` would call the subclass's own `__int__`. An int of value 0
+    whose `__int__` answers 5 would then be written `5` by
+    `str_from_index_int` and `m/5` by `str_from_der_path`, while
+    `indexes_from_der_path` answers `[0]` for the same object.
+    """
+
+    class Five(int):
+        @override
+        def __int__(self) -> int:
+            return 5
+
+    assert int(Five(0)) == 5
+    assert str_from_index_int(Five(0)) == "0"
+    assert str_from_der_path([Five(0)]) == "m/0"
+    assert indexes_from_der_path([Five(0)]) == [0]

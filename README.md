@@ -141,9 +141,9 @@ what it intends to do, and what it deliberately does not, is its
 - Documentation: <https://bip32-descriptors.readthedocs.io/>
 - Source: <https://github.com/btclib-org/bip32-descriptors>
 - Releases: <https://github.com/btclib-org/bip32-descriptors/releases>
-- [CHANGELOG.md](https://github.com/btclib-org/bip32-descriptors/blob/main/CHANGELOG.md),
-  and [RELEASE_NOTES.md](https://github.com/btclib-org/bip32-descriptors/blob/main/RELEASE_NOTES.md)
-  for what a release asks a user to act on
+- [CHANGELOG.md](https://github.com/btclib-org/bip32-descriptors/blob/main/CHANGELOG.md)
+  and [RELEASE_NOTES.md](https://github.com/btclib-org/bip32-descriptors/blob/main/RELEASE_NOTES.md),
+  which hold the same section for each release
 
 ## Status
 
