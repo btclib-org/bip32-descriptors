@@ -802,10 +802,12 @@ gh api repos/btclib-org/bip32-descriptors/actions/organization-secrets \
 The third call reads the organization secrets the repository can see.
 
 **Switches this repository does not set.** A switch is a variable that
-the jobs of a `btclib-org/.github` workflow called here guard on:
-`reusable-claude-review.yml`, which `claude-review.yml` calls, guards
-on `vars.CLAUDE_REVIEW_ENABLED`, and `reusable-claude-implement.yml`,
-which `claude-implement.yml` calls, on `vars.CLAUDE_IMPLEMENT_ENABLED`.
+jobs of a `btclib-org/.github` workflow called here guard on. The review
+and the mention jobs `claude-review.yml` calls are guarded by
+`vars.CLAUDE_REVIEW_ENABLED`; the job that clears a new head's reactions
+runs whatever it says, for the reason `reusable-claude-review.yml`'s
+header gives. `reusable-claude-implement.yml`, which
+`claude-implement.yml` calls, guards on `vars.CLAUDE_IMPLEMENT_ENABLED`.
 A variable set here would take precedence over one of the same name on
 the organization, so the repository's own store is read too:
 

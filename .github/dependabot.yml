@@ -6,8 +6,10 @@
 # block of .pre-commit-config.yaml, already rewrites rev: for every repo:
 # but local and meta, so a second bot on the same pin would only compete
 # with it. A hook whose repo: is local is one autoupdate does not reach:
-# typos moves by a hand edit of its additional_dependencies, and pyroma
-# by the uv ecosystem below, uv.lock being where its version is pinned.
+# typos moves by a hand edit of its additional_dependencies, pyroma by
+# the uv ecosystem below, uv.lock being where its version is pinned, and
+# the link hooks' markdown-it-py with the standard's ports, which take the
+# version of its test group (section 4 of the organization's standard).
 #
 # The cargo lock of .github/interop/miniscript-compare is left out of version
 # updates too, on purpose: its rev is the fixed revision of rust-miniscript
