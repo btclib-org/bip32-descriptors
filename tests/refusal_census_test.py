@@ -96,23 +96,24 @@ trace is a finding. It traces
 
 A name called is the `def` of the scope that binds it, or the one of the
 module of the package it is imported from. A function or a class that
-declares a name `global` binds it in the module too, for a name called as
-for a class an `except` names. An attribute called is every
-method of that name in the package, and what it is called on is traced
-too, but for a method's own object or class and `super()`. A method takes
-first what it is called on, or nothing where it is called through a class
-of the package or through a `@classmethod`'s own class. A `@classmethod`
-takes its class first however it is called, and a `@staticmethod` takes
-nothing. Its decorator says which, not the name of its first parameter;
-a decorator that is not provably one of those or of
-`_KEEPING_DECORATORS`, taken from its home as `_decorator_name` reads
-that, may hand it anything, anywhere. So the census does not trace a
-parameter of a public function, of a lambda or of a method with such a
-decorator, a method's own object or class, a function read as a value
-rather than called, the exception an `except` binds, or what
-`_PROCESS_INPUT` names. Each of these holds what a caller, a server or
-another program handed over, and reaches a refusal only through `_code`,
-`_message_text`, `_position` or `_quoted`, or not at all.
+declares a name `global` binds it in the module too: for a name called,
+for a class an `except` names, and for a module an attribute is read off.
+An attribute called is every method of that name in the package, and what
+it is called on is traced too, but for a method's own object or class and
+`super()`. A method takes first what it is called on, or nothing where it
+is called through a class of the package or through a `@classmethod`'s
+own class. A `@classmethod` takes its class first however it is called,
+and a `@staticmethod` takes nothing. Its decorator says which, not the
+name of its first parameter; a decorator that is not provably one of
+those or of `_KEEPING_DECORATORS`, taken from its home as
+`_decorator_name` reads that, may hand it anything, anywhere. So the
+census does not trace a parameter of a public function, of a lambda or of
+a method with such a decorator, a method's own object or class, a
+function read as a value rather than called, the exception an `except`
+binds, or what `_PROCESS_INPUT` names. Each of these holds what a caller,
+a server or another program handed over, and reaches a refusal only
+through `_code`, `_message_text`, `_position` or `_quoted`, or not at
+all.
 
 What a refusal still raises that the census does not trace is in `KEPT`,
 an exception one function raises by name, each entry with its reason. An
@@ -975,16 +976,17 @@ class _Census:
     ) -> list[ast.AST] | None:
         """Return the nodes binding a name where it is read, None where unknown.
 
-        The nodes of the scopes `_read_from` finds that `_rebinds` reads,
-        and none where nothing binds the name. Where the module is one of
-        them, also what `_global_bindings` finds there. A parameter, a
-        comprehension's target and a name a scope around it declares
-        `global` or `nonlocal` are unknown, and so is a builtin a class body
-        may read, unless `runs` asks only what the read may run: a builtin
-        runs nothing of the package.
+        The nodes of the scopes `_read_from` finds that `_rebinds` reads.
+        Where the module is one of them, or where no scope around the read
+        binds the name, also what `_global_bindings` finds for the name: so
+        none where nothing binds it. A parameter, a comprehension's target
+        and a name a scope around it declares `global` or `nonlocal` are
+        unknown, and so is a builtin a class body may read, unless `runs`
+        asks only what the read may run: a builtin runs nothing of the
+        package.
         """
         if self._binder(name, module) == (None, []):
-            return []
+            return list(self._global_bindings(module.tree).get(name.id, []))
         scope = self._local_scope(name, module)
         if scope is None:
             return None
@@ -3870,6 +3872,16 @@ _SHAPES = {
             "    except OSError:\n        _h()"
         ),
     ),
+    "a call of a function only a function declaring it global binds": (
+        (
+            "def g(action):\n    global _h\n    def _h():\n        return 1\n"
+            "def f(key):\n    try:\n        pass\n    except OSError:\n        _h()"
+        ),
+        (
+            "def g(action):\n    global _h\n    _h = action\ndef f(key):\n"
+            "    try:\n        pass\n    except OSError:\n        _h()"
+        ),
+    ),
     "a method called on another object": (
         (
             "class C:\n    def _g(self):\n        return 1\n"
@@ -5251,6 +5263,34 @@ _SHAPES = {
             "class _E(Exception):\n    pass\ndef g():\n    global _E\n"
             "    _E = OSError\ndef f(key):\n    try:\n        pass\n"
             "    except _E:\n        raise"
+        ),
+    ),
+    "a class caught in a class body, which another function declares global": (
+        (
+            "class _E(Exception):\n    pass\ndef g():\n    global _E\n"
+            "    class _E(Exception):\n        pass\ndef f(key):\n    class C:\n"
+            "        try:\n            pass\n        except _E:\n            raise\n"
+            "        _E = 1"
+        ),
+        (
+            "class _E(Exception):\n    pass\ndef g():\n    global _E\n"
+            "    _E = OSError\ndef f(key):\n    class C:\n        try:\n"
+            "            pass\n        except _E:\n            raise\n        _E = 1"
+        ),
+    ),
+    "a class caught in a class body that may bind it, declared global elsewhere": (
+        (
+            "class _E(Exception):\n    pass\ndef g():\n    global _E\n"
+            "    class _E(Exception):\n        pass\ndef f(key):\n    class C:\n"
+            "        if key:\n            class _E(Exception):\n"
+            "                pass\n        try:\n            pass\n"
+            "        except _E:\n            raise"
+        ),
+        (
+            "class _E(Exception):\n    pass\ndef g():\n    global _E\n"
+            "    _E = OSError\ndef f(key):\n    class C:\n        if key:\n"
+            "            class _E(Exception):\n                pass\n"
+            "        try:\n            pass\n        except _E:\n            raise"
         ),
     ),
     "a class caught off a package a dotted import binds": (
