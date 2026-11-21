@@ -144,6 +144,9 @@ def _assert_valid_index(i: int) -> None:
     """
     if not is_integer(i):
         raise BTClibTypeError(f"invalid derivation index type: {_type_name(i)}")
+
+    i = _exact_int(i)
+
     if not 0 <= i <= 0xFFFFFFFF:
         raise BTClibValueError("invalid index: not in 0..2**32-1")
 
@@ -342,5 +345,7 @@ def str_from_der_path(
 def bytes_from_der_path(der_path: DerPath) -> bytes:
     """Return the path as bytes: each index in 4 bytes, little-endian."""
     indexes = indexes_from_der_path(der_path)
-    result = [i.to_bytes(4, byteorder="little", signed=False) for i in indexes]
+    result = [
+        _exact_int(i).to_bytes(4, byteorder="little", signed=False) for i in indexes
+    ]
     return b"".join(result)

@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import Enum, IntEnum
-from typing import Any
+from typing import Any, Literal, SupportsIndex
 
 import pytest
-from btclib.exceptions import BTClibTypeError
+from btclib.exceptions import BTClibTypeError, BTClibValueError
 from typing_extensions import override
 
 from bip32_descriptors.bip32 import BIP32KeyData
@@ -30,6 +30,7 @@ from bip32_descriptors.bip32.bip32 import (
     xpub_from_xprv,
 )
 from bip32_descriptors.bip32.der_path import (
+    _assert_valid_index,
     bytes_from_der_path,
     indexes_from_der_path,
     str_from_der_path,
@@ -216,3 +217,44 @@ def test_an_index_is_written_by_the_value_it_holds() -> None:
     assert str_from_index_int(Five(0)) == "0"
     assert str_from_der_path([Five(0)]) == "m/0"
     assert indexes_from_der_path([Five(0)]) == [0]
+
+def test_der_path_subclass_comparisons() -> None:
+    """A subclass that lies in its comparisons is refused.
+
+    Its to_bytes output is ignored.
+    """
+
+    class LyingInt(int):
+        @override
+        def __ge__(self, other: object) -> bool:
+            return True
+
+        @override
+        def __le__(self, other: object) -> bool:
+            return True
+
+        @override
+        def to_bytes(
+            self,
+            length: SupportsIndex = 1,
+            byteorder: Literal["little", "big"] = "big",
+            *,
+            signed: bool = False
+        ) -> bytes:
+            return (5).to_bytes(length, byteorder=byteorder, signed=signed)
+
+    too_big = LyingInt(2**40)
+    assert too_big >= 0
+    assert too_big <= 0xFFFFFFFF
+
+    with pytest.raises(BTClibValueError):
+        _assert_valid_index(too_big)
+
+    too_small = LyingInt(-1)
+    with pytest.raises(BTClibValueError):
+        _assert_valid_index(too_small)
+
+    fake_bytes = LyingInt(0)
+    assert fake_bytes.to_bytes(1, "big") == b"\x05"
+
+    assert bytes_from_der_path([fake_bytes]) == b"\x00\x00\x00\x00"
