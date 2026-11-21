@@ -6483,7 +6483,91 @@ _SHAPES: dict[str, tuple[str | dict[str, str], str | dict[str, str]]] = {
         },
         {
             "errs.py": "Refused = ValueError",
-            "m.py": _PASSED.format("import errs", "errs.Refused"),
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module that assigns an alias of what a call answers": (
+        {
+            "errs.py": (
+                "def _pick():\n    return ValueError\nAlias = _pick()\nRefused = Alias"
+            ),
+            "m.py": _PASSED.format("from errs import Refused", "str"),
+        },
+        {
+            "errs.py": (
+                "def _pick():\n    return ValueError\nAlias = _pick()\nRefused = Alias"
+            ),
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module that imports it under another name": (
+        {
+            "errs.py": "from x import Base as Refused",
+            "x.py": "def _pick():\n    return ValueError\nBase = _pick()",
+            "m.py": _PASSED.format("from errs import Refused", "str"),
+        },
+        {
+            "errs.py": "from x import Base as Refused",
+            "x.py": "def _pick():\n    return ValueError\nBase = _pick()",
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class a function imports into the module it declares global": (
+        {
+            "errs.py": _PICKED,
+            "m.py": (
+                "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+                "    global Refused\n    from errs import Refused\n"
+                "    raise _make(key, str)"
+            ),
+        },
+        {
+            "errs.py": _PICKED,
+            "m.py": (
+                "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+                "    global Refused\n    from errs import Refused\n"
+                "    raise _make(key, Refused)"
+            ),
+        },
+    ),
+    # a relative import, which names `pkg/errs.py` from `pkg/`, is not
+    # followed, so it is not read as the root `errs.py`
+    "class a relative import binds, beside a root module that assigns one": (
+        {
+            "errs.py": "Refused = ValueError",
+            "pkg/errs.py": "Refused = str",
+            "pkg/m.py": _PASSED.format("from .errs import Refused", "Refused"),
+        },
+        {
+            "errs.py": "Refused = ValueError",
+            "pkg/errs.py": "Refused = str",
+            "pkg/m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class a relative import binds, beside a root module that assigns a call": (
+        {
+            "errs.py": _PICKED,
+            "pkg/errs.py": "Refused = str",
+            "pkg/m.py": _PASSED.format("from .errs import Refused", "Refused"),
+        },
+        {
+            "errs.py": _PICKED,
+            "pkg/errs.py": "Refused = str",
+            "pkg/m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module whose relative import binds it": (
+        {
+            "errs.py": _PICKED,
+            "pkg/errs.py": "Refused = str",
+            "pkg/a.py": "from .errs import Refused",
+            "m.py": _PASSED.format("from pkg.a import Refused", "Refused"),
+        },
+        {
+            "errs.py": _PICKED,
+            "pkg/errs.py": "Refused = str",
+            "pkg/a.py": "from errs import Refused",
+            "m.py": _PASSED.format("from pkg.a import Refused", "Refused"),
         },
     ),
 }
