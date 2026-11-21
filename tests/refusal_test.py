@@ -2101,8 +2101,8 @@ def _forged_origin(**fields: object) -> Callable[[], object]:
             "invalid chain_code length: 10 bytes instead of 32",
         ),
         (
-            lambda: KeyExpression(pub_key=_lying(bytes, 33)(b"\x05" * 10)),
-            "invalid public key prefix for 10 bytes",
+            lambda: KeyExpression(pub_key=_lying(bytes)(b"\x05" * 33)),
+            "invalid public key prefix for 33 bytes",
         ),
         (
             lambda: _ManyScripts(b"\x51").script_pub_key(),
