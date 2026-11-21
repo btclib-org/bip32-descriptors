@@ -121,6 +121,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -129,6 +130,47 @@ from pathlib import Path
 # a partial executable path relying on PATH's own search order rather
 # than naming what actually runs
 _GH = shutil.which("gh") or "gh"
+
+# gh's stderr for a server error. A secondary rate limit is not retried:
+# GitHub asks to wait as long as its retry-after header says, which gh's
+# stderr does not carry, or at least a minute.
+_TRANSIENT = re.compile(r"HTTP 5\d\d")
+_ATTEMPTS = 3
+
+
+def _gh_bytes(*args: str) -> bytes:
+    """Return the stdout of a `gh` call, printing gh's stderr where it fails.
+
+    A call failing with a server error is made `_ATTEMPTS` times at most,
+    waiting longer before each retry; the last error, or any other, is
+    raised carrying gh's stderr as text.
+
+    Without this, a failed call reached the log as nothing but
+    `CalledProcessError: Command [...] returned non-zero exit status 1`,
+    which says neither what gh answered nor whether trying again could
+    help (btclib-org/bip32-descriptors#441).
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return subprocess.run(  # noqa: S603
+                [_GH, *args], capture_output=True, check=True
+            ).stdout
+        except subprocess.CalledProcessError as error:
+            stderr = error.stderr.decode("utf-8", "replace")
+            print(f"gh {' '.join(args)} failed: {stderr.strip()}", file=sys.stderr)
+            if attempt == _ATTEMPTS or not _TRANSIENT.search(stderr):
+                raise subprocess.CalledProcessError(
+                    error.returncode, error.cmd, error.output, stderr
+                ) from error
+            time.sleep(5 * attempt)
+
+
+def _gh_output(*args: str) -> str:
+    """Return the stdout of a `gh` call as text, as `_gh_bytes` makes it."""
+    return _gh_bytes(*args).decode("utf-8")
+
 
 # a ledger entry's own ### heading, so a drift report -- and the
 # skipped-entry list -- can name the entry rather than only its upstream
@@ -332,7 +374,6 @@ def _latest_commit(
     matches it without this function naming the branch.
     """
     args = [
-        _GH,
         "api",
         "--method",
         "GET",
@@ -344,13 +385,7 @@ def _latest_commit(
     ]
     if ref is not None:
         args.extend(("-f", f"sha={ref}"))
-    result = subprocess.run(  # noqa: S603
-        args,
-        capture_output=True,
-        check=True,
-        encoding="utf-8",
-    )
-    commits = json.loads(result.stdout)
+    commits = json.loads(_gh_output(*args))
     if not commits:
         return None
     commit = commits[0]
@@ -413,21 +448,16 @@ def _derived(repo: str, path: str, commit: str, pattern: str) -> bytes:
     regular file included.
     """
     compiled = re.compile(pattern.encode())
-    result = subprocess.run(  # noqa: S603
-        [
-            _GH,
+    tree = json.loads(
+        _gh_output(
             "api",
             "--method",
             "GET",
             f"repos/{repo}/git/trees/{commit}",
             "-f",
             "recursive=1",
-        ],
-        capture_output=True,
-        check=True,
-        encoding="utf-8",
+        )
     )
-    tree = json.loads(result.stdout)
     # mode 120000 is a symlink's, left out as the ledger says of `pattern`
     blobs = {
         item["path"]: item["sha"]
@@ -437,11 +467,7 @@ def _derived(repo: str, path: str, commit: str, pattern: str) -> bytes:
         and _under(item["path"], path)
     }
     # no encoding: the tarball is bytes
-    archive: bytes = subprocess.run(  # noqa: S603
-        [_GH, "api", "--method", "GET", f"repos/{repo}/tarball/{commit}"],
-        capture_output=True,
-        check=True,
-    ).stdout
+    archive = _gh_bytes("api", "--method", "GET", f"repos/{repo}/tarball/{commit}")
     files: dict[str, bytes] = {}
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         for member in tar:
@@ -607,16 +633,12 @@ def _upstream_blob(repo: str, path: str, commit: str) -> str | None:
     """
     directory, _, name = path.rpartition("/")
     tree = f"{commit}:{directory}" if directory else commit
-    result = subprocess.run(  # noqa: S603
-        [_GH, "api", "--method", "GET", f"repos/{repo}/git/trees/{tree}"],
-        capture_output=True,
-        check=True,
-        encoding="utf-8",
-    )
     sha: str | None = next(
         (
             item["sha"]
-            for item in json.loads(result.stdout)["tree"]
+            for item in json.loads(
+                _gh_output("api", "--method", "GET", f"repos/{repo}/git/trees/{tree}")
+            )["tree"]
             if item["path"] == name
         ),
         None,
@@ -706,9 +728,8 @@ def _issue_body(ledger_path: Path, drifted: list[Drift], skipped: list[str]) -> 
 
 
 def _open_issue_number(title: str) -> str | None:
-    result = subprocess.run(  # noqa: S603
-        [
-            _GH,
+    issues = json.loads(
+        _gh_output(
             "issue",
             "list",
             "--state",
@@ -717,12 +738,8 @@ def _open_issue_number(title: str) -> str | None:
             f'"{title}" in:title',
             "--json",
             "number",
-        ],
-        capture_output=True,
-        check=True,
-        encoding="utf-8",
+        )
     )
-    issues = json.loads(result.stdout)
     return str(issues[0]["number"]) if issues else None
 
 
