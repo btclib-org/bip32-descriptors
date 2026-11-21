@@ -218,6 +218,7 @@ def test_an_index_is_written_by_the_value_it_holds() -> None:
     assert str_from_der_path([Five(0)]) == "m/0"
     assert indexes_from_der_path([Five(0)]) == [0]
 
+
 def test_der_path_subclass_comparisons() -> None:
     """A subclass that lies in its comparisons is refused.
 
@@ -239,7 +240,7 @@ def test_der_path_subclass_comparisons() -> None:
             length: SupportsIndex = 1,
             byteorder: Literal["little", "big"] = "big",
             *,
-            signed: bool = False
+            signed: bool = False,
         ) -> bytes:
             return (5).to_bytes(length, byteorder=byteorder, signed=signed)
 
