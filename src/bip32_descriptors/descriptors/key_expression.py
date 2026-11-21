@@ -291,8 +291,13 @@ def _wifs_filed_in(wifs: MutableMapping[str, str]) -> Iterator[None]:
 
 
 def _pub_key_text(key: KeyExpression) -> str:
-    """Return the hex `KeyExpression.__str__` writes for a fixed key."""
-    pub_key = b"" if key.pub_key is None else key.pub_key
+    """Return the hex `KeyExpression.__str__` writes for a fixed key.
+
+    The hex of the bytes `pub_key` holds, through none of its methods.
+    """
+    pub_key = (
+        b"" if key.pub_key is None else bytes.__getitem__(key.pub_key, slice(None))
+    )
     return (pub_key[1:] if key.x_only else pub_key).hex()
 
 
@@ -1056,7 +1061,8 @@ def _assert_pub_key(key: KeyExpression) -> None:
     size = bytes.__len__(pub_key)
     if size not in {33, 65}:
         raise BTClibValueError(f"invalid public key length in bytes: {_size(pub_key)}")
-    prefix = pub_key[0]
+    # the octet the key holds, whatever a subclass's indexing answers
+    prefix = bytes.__getitem__(pub_key, 0)
     if (size == 33 and prefix not in {2, 3}) or (size == 65 and prefix != 4):
         # 06 and 07 are the hybrid encoding, which nothing in bitcoin
         # produces and Bitcoin Core refuses in a descriptor too; the size
