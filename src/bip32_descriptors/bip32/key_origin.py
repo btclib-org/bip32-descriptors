@@ -228,6 +228,9 @@ def assert_valid_hd_key_paths(hd_key_paths: Mapping[bytes, BIP32KeyOrigin]) -> N
     Each key is sized, and one of 33 or 65 bytes read as a point, by the
     bytes it holds, which no subclass's `__len__` answers.
     """
+    # the duplicate check reads each value as an origin
+    for key_origin in hd_key_paths.values():
+        assert_type(key_origin, BIP32KeyOrigin, "key origin")
     if len(hd_key_paths.values()) > len(
         {der_path.serialize() for der_path in hd_key_paths.values()}
     ):
