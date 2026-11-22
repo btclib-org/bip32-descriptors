@@ -104,7 +104,11 @@ An attribute called is every method of that name in the package, and what
 it is called on is traced too, but for a method's own object or class and
 `super()`. A method takes first what it is called on, or nothing where it
 is called through a class of the package or through a `@classmethod`'s
-own class. A `@classmethod` takes its class first however it is called,
+own class, but for a method of a class a `metaclass=` keyword may name:
+called on a class whose `metaclass=` keyword, or a base's of the
+package, names that class or one deriving from it, and that does not
+derive from that class itself, it takes the class it is called on
+first. A `@classmethod` takes its class first however it is called,
 and a `@staticmethod` takes nothing. Its decorator says which, not the
 name of its first parameter; a decorator that is not provably one of
 those or of `_KEEPING_DECORATORS`, taken from its home as
@@ -1479,11 +1483,11 @@ class _Census:
         unpacks what it passes, or where the function is a method with
         another decorator, as `_other_decorator` reads that. A method's own
         object is what each call is called on, or its first argument where
-        it is called through a class; a `@classmethod`'s own class is what
-        each call is called through, and None where it is called on an
-        object, whose class the census does not name. A parameter of a
-        public function or of a lambda, or of a function read as a value,
-        has its default alone.
+        it is called through a class, as `_handed` reads that; a
+        `@classmethod`'s own class is what each call is called through, and
+        None where it is called on an object, whose class the census does
+        not name. A parameter of a public function or of a lambda, or of a
+        function read as a value, has its default alone.
         """
         arg = next(arg for arg in _arguments(func) if arg.arg == name)
         func_args: ast.arguments = func.args  # type: ignore[attr-defined]
@@ -1911,7 +1915,100 @@ class _Census:
             return 0
         if _decorated(func, "classmethod", module):
             return 1
-        return 0 if self._through_class(call.func.value, caller) else 1
+        receiver = call.func.value
+        if not self._through_class(receiver, caller):
+            return 1
+        owner = cast("ast.ClassDef", module.parents[func])
+        return 1 if self._built_by(receiver, caller, owner.name) else 0
+
+    def _built_by(self, receiver: ast.expr, module: _Module, meta: str) -> bool:
+        """Return whether a class a method is called on is built by its class.
+
+        The class that defines the method is one a `metaclass=` keyword
+        may name, and the class the method is called on, as `_class_names`
+        reads it, has a `metaclass=` keyword naming it, as `_metaclass_is`
+        reads that. A class that is that class, or derives from it, as
+        `_derived` reads that, finds the method among its own attributes
+        first and takes it as a plain function: called through it, a method
+        is handed nothing first.
+        """
+        deriving = self._derived(meta)
+        return any(
+            name not in deriving and self._metaclass_is(name, meta, frozenset())
+            for name in self._class_names(receiver, module)
+        )
+
+    def _class_names(self, receiver: ast.expr, module: _Module) -> set[str]:
+        """Return the names of the classes of the package a receiver may be.
+
+        The class a `@classmethod` is handed first, or each class `_own`
+        reads the receiver as, which `_through_class` has found to be a
+        class of the package: a name bound where it is read, or an
+        attribute of a module of the package, through each import of the
+        package that binds it, by the name its `class` statement gives it.
+        """
+        method = self._receiver_of(receiver, module)
+        if method is not None:
+            return {cast("ast.ClassDef", module.parents[method]).name}
+        if isinstance(receiver, ast.Attribute):
+            source = self._module_bound(cast("ast.Name", receiver.value), module)
+            return self._named(cast("_Module", source), receiver.attr)
+        name = cast("ast.Name", receiver)
+        return {
+            each
+            for binding in self._rebindings(name, module) or []
+            for each in self._binds_class(binding, name.id)
+        }
+
+    def _named(self, module: _Module, name: str) -> set[str]:
+        """Return the names of the classes a module binds to a name.
+
+        Each binding of the name there is a class of the package, as
+        `_defines` reads that.
+        """
+        return {
+            each
+            for binding in self._scope_nodes(module.tree)
+            if _rebinds(binding, name)
+            for each in self._binds_class(binding, name)
+        }
+
+    def _binds_class(self, binding: ast.AST, name: str) -> set[str]:
+        """Return the names of the classes of the package a binding binds.
+
+        The binding is one `_is_class` reads as a class of the package: a
+        `class` statement, which binds its own, or an import of a name from
+        a module of the package, which binds those that module binds to it.
+        """
+        if isinstance(binding, ast.ClassDef):
+            return {binding.name}
+        imported = cast("ast.ImportFrom", binding)
+        source_name = next(
+            a.name for a in imported.names if (a.asname or a.name) == name
+        )
+        source = self._module_of(imported.module or "")
+        return self._named(cast("_Module", source), source_name)
+
+    def _metaclass_is(self, name: str, meta: str, seen: frozenset[str]) -> bool:
+        """Return whether a class of the package of a name has a metaclass.
+
+        Any class of that name: its `metaclass=` keyword names the
+        metaclass or a class deriving from it, as `_derived` reads that, or
+        one of its bases is a class of the package that has it.
+        """
+        deriving = self._derived(meta)
+        return name not in seen and any(
+            any(
+                _base_name(k.value) in deriving
+                for k in class_def.keywords
+                if k.arg == "metaclass"
+            )
+            or any(
+                self._metaclass_is(_base_name(each), meta, seen | {name})
+                for each in class_def.bases
+            )
+            for class_def in self.class_defs.get(name, [])
+        )
 
     def _through_class(self, receiver: ast.expr, module: _Module) -> bool:
         """Return whether what a method is called on is a class, not an object.
@@ -3248,6 +3345,12 @@ def test_measured_hides_its_own_entry_alone() -> None:
     assert census.measured_used == {("m.py", "f", "_position(key)")}
 
 
+# a metaclass, `_make` building a class from what it is handed, the
+# classes it builds, and a call of `_make` on one of them
+_ON_META = (
+    "{}    def _make(cls, key):\n        return cls({})\n{}"
+    "def f(key):\n    raise Refused._make(key)"
+)
 # a method called through its class, what `_make` hands `kind` first, a
 # statement before the call, and one after the class
 _THROUGH = (
@@ -5360,6 +5463,140 @@ _SHAPES: dict[str, tuple[str | dict[str, str], str | dict[str, str]]] = {
             "        class _D(metaclass=(self := key)):\n            pass\n"
         ),
     ),
+    "a metaclass's method called on a class it builds": (
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls('a')\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise Refused._make(key)"
+        ),
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls(key)\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise Refused._make(key)"
+        ),
+    ),
+    "a method of a metaclass deriving from one outside the package": (
+        _ON_META.format(
+            "from abc import ABCMeta\nclass _Meta(ABCMeta):\n",
+            "'a'",
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n",
+        ),
+        _ON_META.format(
+            "from abc import ABCMeta\nclass _Meta(ABCMeta):\n",
+            "key",
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n",
+        ),
+    ),
+    "a method of a plain class a class keyword names as its metaclass": (
+        (
+            "class _C:\n    def __init__(self, name, bases, ns):\n        pass\n"
+            "    def _make(self, key):\n        return ValueError('a')\n"
+            "class Refused(metaclass=_C):\n    pass\n"
+            "def f(key):\n    raise Refused._make(key)"
+        ),
+        (
+            "class _C:\n    def __init__(self, name, bases, ns):\n        pass\n"
+            "    def _make(self, key):\n        return ValueError(key)\n"
+            "class Refused(metaclass=_C):\n    pass\n"
+            "def f(key):\n    raise Refused._make(key)"
+        ),
+    ),
+    "a metaclass's method called on a name one of two classes binds": (
+        _ON_META.format(
+            "class _Meta(type):\n",
+            "'a'",
+            "if FLAG:\n    class Refused(ValueError, metaclass=_Meta):\n"
+            "        pass\nelse:\n    class Refused:\n        pass\n",
+        ),
+        _ON_META.format(
+            "class _Meta(type):\n",
+            "key",
+            "if FLAG:\n    class Refused(ValueError, metaclass=_Meta):\n"
+            "        pass\nelse:\n    class Refused:\n        pass\n",
+        ),
+    ),
+    "a metaclass's method called on a class whose base it builds": (
+        _ON_META.format(
+            "class _Meta(type):\n",
+            "'a'",
+            "class _Base(metaclass=_Meta):\n    pass\n"
+            "class Refused(_Base, ValueError):\n    pass\n",
+        ),
+        _ON_META.format(
+            "class _Meta(type):\n",
+            "key",
+            "class _Base(metaclass=_Meta):\n    pass\n"
+            "class Refused(_Base, ValueError):\n    pass\n",
+        ),
+    ),
+    "a metaclass's method called on a class a class deriving from it builds": (
+        _ON_META.format(
+            "class _Meta(type):\n",
+            "'a'",
+            "class _Mid(_Meta):\n    pass\nclass _Sub(_Mid):\n    pass\n"
+            "class Refused(ValueError, metaclass=_Sub):\n    pass\n",
+        ),
+        _ON_META.format(
+            "class _Meta(type):\n",
+            "key",
+            "class _Mid(_Meta):\n    pass\nclass _Sub(_Mid):\n    pass\n"
+            "class Refused(ValueError, metaclass=_Sub):\n    pass\n",
+        ),
+    ),
+    "a metaclass's method called on the class a class method is handed": (
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls('a')\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    @classmethod\n"
+            "    def build(cls, key):\n        return cls._make(key)\n"
+            "def f(key):\n    raise Refused.build(key)"
+        ),
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls(key)\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    @classmethod\n"
+            "    def build(cls, key):\n        return cls._make(key)\n"
+            "def f(key):\n    raise Refused.build(key)"
+        ),
+    ),
+    "a metaclass's method called through the metaclass itself": (
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls('a')\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise _Meta._make(Refused, key)"
+        ),
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls(key)\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise _Meta._make(Refused, key)"
+        ),
+    ),
+    "a metaclass's method called on a class deriving from the metaclass": (
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls('a')\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "class X(_Meta, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise X._make(Refused, key)"
+        ),
+        (
+            "class _Meta(type):\n    def _make(cls, key):\n        return cls(key)\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n"
+            "class X(_Meta, metaclass=_Meta):\n    pass\n"
+            "def f(key):\n    raise X._make(Refused, key)"
+        ),
+    ),
+    "a metaclass's method called on a class in a cycle of bases": (
+        _ON_META.format(
+            "class _Meta(type):\n",
+            "'a'",
+            "class Refused(_Loop):\n    pass\nclass _Loop(Refused):\n    pass\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n",
+        ),
+        _ON_META.format(
+            "class _Meta(type):\n",
+            "key",
+            "class Refused(_Loop):\n    pass\nclass _Loop(Refused):\n    pass\n"
+            "class Refused(ValueError, metaclass=_Meta):\n    pass\n",
+        ),
+    ),
     "an exception raised by name, an attribute of it set": (
         "def f(key):\n    e = ValueError('a')\n    raise e",
         "def f(key):\n    e = ValueError('a')\n    e.args = (key,)\n    raise e",
@@ -6765,3 +7002,35 @@ def test_census_builds_no_exception_through_an_import_cycle() -> None:
         ),
     }
     assert not _census(sources).findings()
+
+
+_META = (
+    "class _Meta(type):\n    def _make(cls, key):\n        return ValueError({})\n"
+    "class Refused(ValueError, metaclass=_Meta):\n    pass"
+)
+
+
+@pytest.mark.parametrize(
+    "others, imports, receiver",
+    [
+        ({}, "from meta import Refused as R", "R"),
+        ({}, "import meta", "meta.Refused"),
+        ({"api.py": "from meta import Refused as R"}, "from api import R", "R"),
+        ({"api.py": "from meta import Refused as R"}, "import api", "api.R"),
+    ],
+)
+def test_census_knows_a_metaclass_by_the_import_of_its_class(
+    others: dict[str, str], imports: str, receiver: str
+) -> None:
+    """A class a metaclass builds is handed first under any name it is bound to.
+
+    `meta` is the module that defines both, and `api` one that imports
+    the class from it.
+    """
+    for built, found in (("'a'", False), ("key", True)):
+        sources = {
+            "meta.py": _META.format(built),
+            **others,
+            "m.py": f"{imports}\ndef f(key):\n    raise {receiver}._make(key)",
+        }
+        assert bool(_census(sources).findings()) is found
