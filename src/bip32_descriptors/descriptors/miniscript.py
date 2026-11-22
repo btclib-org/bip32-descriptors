@@ -1292,6 +1292,8 @@ class Miniscript:
         fragment = self.fragment
         # each node writes its keys in its own context, so a subexpression
         # of the other one would put keys of the wrong size in the script
+        for sub in self.subs:
+            assert_type(sub, Miniscript, "subexpression")
         if any(sub.context != self.context for sub in self.subs):
             err_msg = f"a subexpression of {_label(fragment, _NAMES)} is not in"
             err_msg += f" {_label(self.context, _CONTEXTS)}"

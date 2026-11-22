@@ -255,3 +255,16 @@ def test_a_spending_path_sizes_a_digest_by_its_bytes(length: int) -> None:
     assert path == SpendingPath(hashes=(("sha256", digest),))
     with pytest.raises(BTClibValueError, match="takes 32 bytes of data$"):
         SpendingPath(hashes=(("sha256", says_length(digest[1:], 32)),))
+
+
+# ISS btclib-org/bip32-descriptors#123: a subexpression is a Miniscript,
+# so anything else leaves as a BTClibTypeError and not as the builtin
+# complaint `__post_init__`'s own reads leave behind
+@pytest.mark.parametrize("sub", [5, "x", ()])
+def test_a_subexpression_that_is_no_miniscript_is_refused(sub: Any) -> None:
+    """Each subexpression, not only its count, is checked when built."""
+    err_msg = f"^invalid subexpression type: {type(sub).__name__}$"
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        Miniscript("v:", TAPSCRIPT, (sub,))
+    with pytest.raises(BTClibTypeError, match=err_msg):
+        Miniscript("thresh", TAPSCRIPT, (Miniscript("1", TAPSCRIPT), sub), threshold=1)
