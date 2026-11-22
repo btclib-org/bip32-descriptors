@@ -106,7 +106,9 @@ class FakeGh:
                 for name, sha in blobs.items()
             ]
             listing = {"tree": items, "truncated": self.truncated}
-            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(listing))
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=json.dumps(listing).encode()
+            )
         if argv[1] == "api":
             repo = argv[4].removeprefix("repos/").removesuffix("/commits")
             path = argv[6].removeprefix("path=")
@@ -114,19 +116,23 @@ class FakeGh:
             # None is what the api answers for a path the branch walked
             # never held: an empty list, which is a 200 and not an error
             if answer is None:
-                return subprocess.CompletedProcess(argv, 0, stdout="[]")
+                return subprocess.CompletedProcess(argv, 0, stdout=b"[]")
             sha, date = answer
             commit = {
                 "sha": sha,
                 "commit": {"committer": {"date": f"{date}T00:00:00Z"}},
             }
-            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps([commit]))
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=json.dumps([commit]).encode()
+            )
         if argv[2] == "list":
             issues = (
                 [{"number": self.open_issue}] if self.open_issue is not None else []
             )
-            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(issues))
-        return subprocess.CompletedProcess(argv, 0, stdout="")
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=json.dumps(issues).encode()
+            )
+        return subprocess.CompletedProcess(argv, 0, stdout=b"")
 
 
 @pytest.fixture
@@ -1312,7 +1318,7 @@ def test_a_failed_upstream_call_is_a_mismatch_and_the_issue_is_still_dealt_with(
         argv: list[str], **kwargs: object
     ) -> subprocess.CompletedProcess[str | bytes]:
         if "/git/trees/" in argv[4]:
-            raise subprocess.CalledProcessError(1, argv, stderr="HTTP 404\n")
+            raise subprocess.CalledProcessError(1, argv, stderr=b"HTTP 404\n")
         return real_run(argv, **kwargs)
 
     monkeypatch.setattr(checker.subprocess, "run", failing)
@@ -1707,3 +1713,110 @@ def test_main_prints_a_derived_file_as_derived_or_as_differing(
         f" {_TIP_SHA} (2026-02-01): derived only: `lib_three`, `lib_two`"
     ) in out
     assert "DERIVED" not in out
+
+
+def test_a_failed_gh_call_prints_gh_s_own_stderr(
+    checker: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`CalledProcessError` alone says neither what gh answered nor why."""
+
+    def failing(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        raise subprocess.CalledProcessError(
+            1, argv, stderr=b"gh: Not Found (HTTP 404)\n"
+        )
+
+    monkeypatch.setattr(checker.subprocess, "run", failing)
+    with pytest.raises(subprocess.CalledProcessError):
+        checker._latest_commit("btclib-org/btclib", "tests/f.json")
+    assert "gh: Not Found (HTTP 404)" in capsys.readouterr().err
+
+
+def test_a_failure_that_is_not_a_server_error_is_not_retried(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 4xx is the same answer however many times it is asked."""
+    calls: list[list[str]] = []
+
+    def failing(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        calls.append(list(argv))
+        raise subprocess.CalledProcessError(1, argv, stderr=b"HTTP 404\n")
+
+    monkeypatch.setattr(checker.subprocess, "run", failing)
+    with pytest.raises(subprocess.CalledProcessError):
+        checker._latest_commit("btclib-org/btclib", "tests/f.json")
+    assert len(calls) == 1
+
+
+def test_a_server_error_is_retried_and_the_answer_used(
+    checker: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Two 502s and a 200 answer the sha, gh's stderr printed on the way."""
+    answers = (
+        subprocess.CalledProcessError(
+            1, ["gh"], stderr=b"gh: Server Error (HTTP 502)\n"
+        ),
+        subprocess.CalledProcessError(
+            1, ["gh"], stderr=b"gh: Server Error (HTTP 503)\n"
+        ),
+        subprocess.CompletedProcess(
+            ["gh"],
+            0,
+            stdout=json.dumps(
+                [
+                    {
+                        "sha": "cafe1234",
+                        "commit": {"committer": {"date": "2026-08-01T00:00:00Z"}},
+                    }
+                ]
+            ).encode(),
+        ),
+    )
+
+    def answering(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        answer = answers[len(calls)]
+        calls.append(list(argv))
+        if isinstance(answer, subprocess.CalledProcessError):
+            raise subprocess.CalledProcessError(1, argv, stderr=answer.stderr)
+        return answer
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(checker.subprocess, "run", answering)
+    monkeypatch.setattr(checker.time, "sleep", lambda _seconds: None)
+    assert checker._latest_commit("btclib-org/btclib", "tests/f.json") == (
+        "cafe1234",
+        "2026-08-01",
+    )
+    err = capsys.readouterr().err
+    assert "HTTP 502" in err
+    assert "HTTP 503" in err
+    assert len(calls) == 3
+
+
+def test_a_server_error_past_the_last_attempt_is_raised(
+    checker: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_ATTEMPTS` tries, and the last failure is the one raised."""
+    calls: list[list[str]] = []
+
+    def failing(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        calls.append(list(argv))
+        raise subprocess.CalledProcessError(1, argv, stderr=b"HTTP 500\n")
+
+    monkeypatch.setattr(checker.subprocess, "run", failing)
+    monkeypatch.setattr(checker.time, "sleep", lambda _seconds: None)
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        checker._latest_commit("btclib-org/btclib", "tests/f.json")
+    assert raised.value.stderr == "HTTP 500\n"
+    assert len(calls) == checker._ATTEMPTS
