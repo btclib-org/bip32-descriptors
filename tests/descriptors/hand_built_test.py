@@ -234,6 +234,10 @@ A `pub_key` that is a `bytes` subclass whose truth is False builds and
 is written, with its WIF or without, as its plain bytes are. Issue
 btclib-org/bip32-descriptors#345.
 
+A `pub_key` that is a `bytes` subclass whose items and slices answer
+other bytes is checked for its x-only prefix, and written, as its plain
+bytes are. Issue btclib-org/bip32-descriptors#457.
+
 An unpickled object, in the cases below, is a copy `pickle.loads`
 restored and `object.__setattr__` then changed, since `pickle.loads`
 asks what it restores, as CONTRIBUTING.md's *The public surface* says.
@@ -4291,6 +4295,38 @@ def test_a_false_pub_key_is_a_key_by_its_bytes(text: str, name: str) -> None:
     assert built == parsed
     assert str(built) == str(parsed)
     assert private_string(built, None, None, wifs) == text.format(wif)
+
+
+# the odd key of 2's x coordinate, which `_OtherIndexed` answers items of
+_OTHER_ODD = b"\x03" + PrvKeyData(2).pub.sec[1:]
+
+
+class _OtherIndexed(bytes):
+    """Bytes whose items and slices are `_OTHER_ODD`'s, whatever they hold."""
+
+    @override
+    def __getitem__(self, key: Any) -> Any:
+        return _OTHER_ODD[key]
+
+
+def test_a_pub_key_is_read_by_its_bytes_not_its_indexing() -> None:
+    """Checked and written as its plain bytes are, whatever its items say.
+
+    Its prefix answers 0x03 and its x coordinate another key's, so the
+    x-only key of the even prefix it holds builds, and `str` writes the x
+    coordinate it holds. Issue btclib-org/bip32-descriptors#457.
+    """
+    held = PrvKeyData(1).pub.sec
+    assert held[0] == 2
+    pub_key = _OtherIndexed(held)
+    assert pub_key[0] == 3
+    assert pub_key[1:] != held[1:]
+    key = KeyExpression(pub_key=pub_key, x_only=True)
+    assert key == KeyExpression(pub_key=held, x_only=True)
+    assert key.sec() == held
+    assert str(key) == held[1:].hex()
+    # the control: the same bytes, where the key is not x-only
+    assert str(KeyExpression(pub_key=pub_key)) == held.hex()
 
 
 @pytest.mark.parametrize("wrap", [None, WshDescriptor, ShDescriptor, _sh_wsh])

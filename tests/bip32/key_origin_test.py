@@ -298,6 +298,18 @@ def test_assert_valid_hd_key_paths_checks_every_entry() -> None:
         assert_valid_hd_key_paths(hd_key_paths)
 
 
+def test_assert_valid_hd_key_paths_checks_the_origin_type() -> None:
+    """A value not a BIP32KeyOrigin is refused by its type, named alone.
+
+    The check runs before the duplicate check reads the values, and on
+    every value, so a second entry of another type is refused too.
+    """
+    good = BIP32KeyOrigin("deadbeef", [0])
+    for hd_key_paths in ({_G33: "m/0"}, {_G33: good, _G65: "m/0"}):
+        with pytest.raises(BTClibTypeError, match="^invalid key origin type: str$"):
+            assert_valid_hd_key_paths(hd_key_paths)  # type: ignore[arg-type]
+
+
 def test_assert_valid_hd_key_paths_takes_a_large_map() -> None:
     """A map of distinct origins is valid however many entries it holds.
 

@@ -9,6 +9,7 @@ import hmac
 import re
 import string
 import sys
+from collections.abc import Iterator
 from dataclasses import FrozenInstanceError, fields, replace
 from enum import Enum, IntEnum
 from hashlib import shake_256
@@ -2166,6 +2167,60 @@ def test_derive_from_account_range_checks_the_value_not_its_comparisons() -> Non
         derive_from_account_range(account, 0, [0, _ComparesAsZero(0xFFFF + 1)])
     with pytest.raises(BTClibValueError, match=err_msg):
         derive_from_account_range_(account, 0, [0, _ComparesAsZero(0xFFFF + 1)])
+
+
+class _ChangingIndexes(list[int]):
+    """A list whose second iteration answers other indexes than its first."""
+
+    def __init__(self, first: list[int], then: list[int]) -> None:
+        super().__init__(first)
+        self._then = then
+        self._iterated = False
+
+    @override
+    def __iter__(self) -> Iterator[int]:
+        if self._iterated:
+            return iter(self._then)
+        self._iterated = True
+        return super().__iter__()
+
+
+def test_derive_from_account_range_reads_its_indexes_once() -> None:
+    """The indexes checked are the indexes derived, and only a sequence is read.
+
+    An iterator is used up by a first pass over it, so the checks would
+    leave the derivation nothing and the answer would be `[]` for valid
+    indexes: it is the type the signature does not declare, and refused.
+    A sequence answering differently on a second pass would be checked on
+    one set of indexes and derived on another, past `max_index`.
+    """
+    seed = "bfc4cbaad0ff131aa97fa30a48d09ae7df914bcc083af1e07793cd0a7c61a03f65d622848209ad3366a419f4718a80ec9037df107d8d12c19b83202de00a40ad"
+    mxpub = xpub_from_xprv(derive(rootxprv_from_seed(seed), "m / 44 h / 0 h"))
+
+    # the generator is the input under test, not one to simplify away
+    generator = (i for i in [0, 1])  # sourcery skip: simplify-generator
+    for name, indexes in (
+        ("list_iterator", iter([0, 1])),
+        ("generator", generator),
+    ):
+        err_msg = rf"^invalid address_indexes type: {name}$"
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            derive_from_account_range_(mxpub, 0, indexes)  # type: ignore[arg-type]
+        with pytest.raises(BTClibTypeError, match=err_msg):
+            derive_from_account_range(mxpub, 0, indexes)  # type: ignore[arg-type]
+
+    # read once, the sequence derives the index it was checked on, and a
+    # second read answering past `max_index` shows there was one to miss
+    changing = _ChangingIndexes([0], [5])
+    assert derive_from_account_range_(mxpub, 0, changing, max_index=0) == [
+        derive_from_account_(mxpub, 0, 0)
+    ]
+    assert list(changing) == [5]
+    changing = _ChangingIndexes([0], [5])
+    assert derive_from_account_range(mxpub, 0, changing, max_index=0) == [
+        derive_from_account(mxpub, 0, 0)
+    ]
+    assert list(changing) == [5]
 
 
 def test_fingerprint_is_the_children_parent_fingerprint() -> None:
