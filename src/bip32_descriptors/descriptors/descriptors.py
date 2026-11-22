@@ -3742,6 +3742,7 @@ def _parse_multi_a(name: str, text: str, prv_keys: MutableMapping[str, str]) -> 
     args = _split_unpaired_arguments(text)
     threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
+        _assert_comma_after_threshold(name, text, args)
         raise BTClibValueError(_multi_no_keys(name))
     keys, lengths = _read_multipath_keys(
         args[1:],
@@ -4036,6 +4037,7 @@ def _parse_multi(
     args = _split_unpaired_arguments(text)
     threshold = _read_multi_threshold(name, args[0])
     if len(args) < 2:
+        _assert_comma_after_threshold(name, text, args)
         raise BTClibValueError(_multi_no_keys(name))
     keys, lengths = _read_multipath_keys(
         args[1:],
@@ -4059,6 +4061,25 @@ def _parse_multi(
 def _multi_no_keys(name: str) -> str:
     """Return `parse`'s refusal of a multisig function with no key."""
     return f"{_label(name, _NAMES)}() takes a threshold and at least one key"
+
+
+def _assert_comma_after_threshold(name: str, text: str, args: list[str]) -> None:
+    """Refuse a multisig whose threshold is a closing bracket away from a key.
+
+    Bitcoin Core reads the threshold and then expects a "," before the
+    first key, so the bracket that closes the multisig right after the
+    threshold is named: ``Multi: expected ',', got ')'``. The refusal
+    leaves the text out, since it can hold a private key.
+
+    Only the split's own first argument is looked at, so a multisig whose
+    keys are there is not this fault. Both callers read the threshold
+    before this, which is Core's own order: one it cannot read is named
+    first.
+    """
+    if not text[len(args[0]) :].startswith(")"):
+        return
+    err_msg = f"{name}(): expected ',' after the threshold, got a closing bracket"
+    raise BTClibValueError(err_msg)
 
 
 def _read_multi_threshold(name: str, text: str) -> int:
