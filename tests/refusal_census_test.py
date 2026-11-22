@@ -22,14 +22,16 @@ It reads as an exception the package builds each call of a name ending in
 `Error` or `Exception`, or of a name a `class` statement, an assignment or
 an import binds to such a class or to a class of the package that may be
 an exception: one deriving, through classes of the package, from a base
-that is neither one of them nor one of `_PLAIN_BASES`. A parameter of the
-name, of any kind, binds it to what a caller passes: a call of it is a
-site, whose arguments are traced, where its default or what a call of the
-package passes there, read as for a parameter below, a method's own object
-or class included, is such a class, or where the census cannot read what a
-call passes there: a call that unpacks its arguments, a `@classmethod`
-called on an object, or a method with another decorator, as below. What
-it builds is taken for an exception only where every one of them is.
+that is neither one of them nor one of `_PLAIN_BASES`. An absolute import
+from a module of the package binds a name to what that module binds it
+to, read the same way. A parameter of the name, of any kind, binds it to
+what a caller passes: a call of it is a site, whose arguments are traced,
+where its default or what a call of the package passes there, read as for
+a parameter below, a method's own object or class included, is such a
+class, or where the census cannot read what a call passes there: a call
+that unpacks its arguments, a `@classmethod` called on an object, or a
+method with another decorator, as below. What it builds is taken for an
+exception only where every one of them is.
 
 A call of a parameter is a site too where a caller the census does not
 see may fill the parameter, or where a call passes a value it cannot
@@ -40,7 +42,7 @@ from outside the package, which may be a metaclass such as `type`, and a
 `@classmethod`'s own class is the class that defines it or one deriving
 from it. The second is a value such as what a call, an `await` or a
 `yield` answers, an attribute, an item of a container it cannot read
-whole, or a local alias of one of them.
+whole, or an alias of one of them, local or imported.
 
 It reads the exception of each `raise` too, but not what a function of
 the package returns, nor the exception an `except` around the `raise`
@@ -670,6 +672,19 @@ def _rebinds(node: ast.AST, name: str) -> bool:
     ) and (getattr(node, "name", None) == name)
 
 
+def _assigns(node: ast.AST, name: str) -> ast.expr | None:
+    """Return the value an assignment gives a name as one of its targets.
+
+    None where the node is no assignment of a value, or assigns the name
+    only inside a target that unpacks.
+    """
+    if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+        return None
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    named = any(isinstance(t, ast.Name) and t.id == name for t in targets)
+    return node.value if named else None
+
+
 def _declares(node: ast.AST, name: str) -> bool:
     """Return whether a node declares a name `global` or `nonlocal`."""
     return isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names
@@ -1146,15 +1161,16 @@ class _Census:
         A name ending in `Error` or `Exception`, or a name a `class`
         statement, an assignment or an import binds to such a name or to an
         exception class of the package, as `_exception_classes` finds them,
-        in the scopes it is read from, as `_read_from` finds them, or in a
-        scope that declares it `global` or `nonlocal`. Short of that, a
-        parameter of the name, of any kind, binds it to what a caller
-        passes, which the outer scopes do not say: it is one where its
-        default and what every call of the package passes there are, as
-        `_passed` reads them. With `maybe` it may be one, and its arguments
-        are traced: where any of them is, or where the census cannot say
-        what a call passes, as `_parameter_builds` reads that. Otherwise it
-        is not taken for one.
+        or an absolute import from a module of the package binds to what
+        that module binds it to, read the same way, in the scopes it is read
+        from, as `_read_from` finds them, or in a scope that declares it
+        `global` or `nonlocal`. Short of that, a parameter of the name, of
+        any kind, binds it to what a caller passes, which the outer scopes
+        do not say: it is one where its default and what every call of the
+        package passes there are, as `_passed` reads them. With `maybe` it
+        may be one, and its arguments are traced: where any of them is, or
+        where the census cannot say what a call passes, as
+        `_parameter_builds` reads that. Otherwise it is not taken for one.
         """
         name = _called_name(func) or ""
         if name.endswith(("Error", "Exception")):
@@ -1279,15 +1295,17 @@ class _Census:
     ) -> bool:
         """Return whether a value passed may be an exception class unseen.
 
-        One `_builds_exception` does not take for one, but which may be: what
-        a call, an `await`, a `yield` or a `yield from` answers; an
+        One `_builds_exception` does not take for one, but which may be:
+        what a call, an `await`, a `yield` or a `yield from` answers; an
         attribute, which an assignment the census does not follow may fill;
         an item of a container that may be, as `_items` reads it; a branch
         of an `if` expression, an operand of `and` or `or`, or the value of
-        an `:=`, that may be; and a name a scope binds to a value that may
-        be, or binds other than by assigning a value, a `def`, a `class` or
-        an import. A literal, a lambda and a builtin are not, nor is any
-        other expression.
+        an `:=`, that may be; a name a scope binds to a value that may be,
+        or binds other than by assigning a value, a `def`, a `class` or an
+        import; and a name an absolute import from a module of the package
+        binds, where what that module binds the name imported to may be, as
+        `_exported` reads it. A literal, a lambda and a builtin are not, nor
+        is any other expression.
         """
         if (id(value), "") in seen:
             return False
@@ -1304,6 +1322,12 @@ class _Census:
             parts = self._items(value.value, module)
         elif isinstance(value, ast.Name):
             parts = self._assigned(value, module)
+            if any(
+                self._builds_exception(part, source, seen, maybe=True)
+                or self._unclassified(part, source, seen)
+                for source, part in self._imported_values(value, module, seen)
+            ):
+                return True
         else:
             return False
         return any(
@@ -1311,6 +1335,63 @@ class _Census:
             or self._unclassified(part, module, seen)
             for part in parts
         )
+
+    def _imported_values(
+        self, name: ast.Name, module: _Module, seen: frozenset[tuple[int, str]]
+    ) -> list[tuple[_Module, ast.expr]]:
+        """Return each value an import binds a name to where it is read.
+
+        By each absolute import from a module of the package that binds the
+        name in the scopes `_assigned` reads, as `_exported` reads what that
+        module binds the name imported to.
+        """
+        scope, declared = self._binder(name, module)
+        if scope is None or isinstance(scope, _COMPREHENSIONS):
+            return []
+        scopes = [*self._read_from(scope, name, module)[0], *declared]
+        return [
+            found
+            for each in scopes
+            for node in self._scope_nodes(each)
+            if isinstance(node, ast.ImportFrom) and node.level == 0
+            for alias in node.names
+            if (alias.asname or alias.name) == name.id
+            for found in self._exported(node.module or "", alias.name, seen)
+        ]
+
+    def _exported(
+        self, dotted: str, name: str, seen: frozenset[tuple[int, str]]
+    ) -> list[tuple[_Module, ast.expr]]:
+        """Return each value a module of the package binds a name to.
+
+        Each binding of the name in the module's own scope, read as
+        `_assigned` reads one, and an absolute import from a module of the
+        package by what that module binds the name imported to. `seen`
+        holds each module and name already followed, so that a cycle binds
+        the name to nothing; a module of another package binds it to
+        nothing the census reads.
+        """
+        source = self._module_of(dotted)
+        if source is None or (id(source.tree), name) in seen:
+            return []
+        seen |= {(id(source.tree), name)}
+        found: list[tuple[_Module, ast.expr]] = []
+        for node in self._scope_nodes(source.tree):
+            if not _rebinds(node, name):
+                continue
+            if isinstance(node, ast.ImportFrom) and node.level == 0:
+                found.extend(
+                    each
+                    for alias in node.names
+                    if (alias.asname or alias.name) == name
+                    for each in self._exported(node.module or "", alias.name, seen)
+                )
+            elif (assigned := _assigns(node, name)) is not None:
+                found.append((source, assigned))
+            elif not isinstance(node, _DECLARED):
+                unknown = ast.Name(id=name, ctx=ast.Load())
+                found.append((source, ast.Call(func=unknown, args=[], keywords=[])))
+        return found
 
     def _items(self, container: ast.expr, module: _Module) -> list[ast.expr]:
         """Return the items of a container where each binding writes them out.
@@ -1370,18 +1451,12 @@ class _Census:
         for node in (n for each in scopes for n in self._scope_nodes(each)):
             if not _rebinds(node, name.id) or isinstance(node, _DECLARED):
                 continue
-            if isinstance(node, (ast.Assign, ast.AnnAssign)) and (
-                node.value is not None
-                and any(
-                    isinstance(t, ast.Name) and t.id == name.id
-                    for t in (
-                        node.targets if isinstance(node, ast.Assign) else [node.target]
-                    )
-                )
-            ):
-                found.append(node.value)
-            else:
-                found.append(ast.Call(func=name, args=[], keywords=[]))
+            assigned = _assigns(node, name.id)
+            found.append(
+                ast.Call(func=name, args=[], keywords=[])
+                if assigned is None
+                else assigned
+            )
         return found
 
     def _passed(
@@ -1442,15 +1517,33 @@ class _Census:
                     found.append((caller, call.args[position]))
         return found
 
-    def _binds_exception(self, binding: ast.AST, name: str) -> bool:
-        """Return whether a binding binds a name to an exception class."""
+    def _binds_exception(
+        self,
+        binding: ast.AST,
+        name: str,
+        seen: frozenset[tuple[str, str]] = frozenset(),
+    ) -> bool:
+        """Return whether a binding binds a name to an exception class.
+
+        An absolute import from a module of the package binds it to what any
+        binding of that module binds the name imported to; `seen` holds each
+        module and name already followed, so that a cycle binds it to none.
+        """
         classes = self._exception_classes()
         if isinstance(binding, ast.ClassDef):
             return binding.name == name and name in classes
         if isinstance(binding, (ast.Import, ast.ImportFrom)):
             return any(
                 (a.asname or a.name) == name
-                and (_names_exception(a.name) or a.name in classes)
+                and (
+                    _names_exception(a.name)
+                    or a.name in classes
+                    or (
+                        isinstance(binding, ast.ImportFrom)
+                        and binding.level == 0
+                        and self._exports_exception(binding, a.name, seen)
+                    )
+                )
                 for a in binding.names
             )
         if isinstance(binding, (ast.Assign, ast.AnnAssign)) and _rebinds(binding, name):
@@ -1459,6 +1552,23 @@ class _Census:
                 _names_exception(source) or source in classes
             )
         return False
+
+    def _exports_exception(
+        self, binding: ast.ImportFrom, name: str, seen: frozenset[tuple[str, str]]
+    ) -> bool:
+        """Return whether the module imported from binds a name to an exception.
+
+        The module is one of the package, and each of its bindings is read
+        as `_binds_exception` reads it.
+        """
+        source = self._module_of(binding.module or "")
+        if source is None or (source.name, name) in seen:
+            return False
+        seen |= {(source.name, name)}
+        return any(
+            self._binds_exception(node, name, seen)
+            for node in self._scope_nodes(source.tree)
+        )
 
     def _exception_classes(self) -> set[str]:
         """Return each class of the package that may be an exception, by name.
@@ -3147,10 +3257,19 @@ _ON_SELF = (
     "    def f(self, key):\n{}        raise ValueError(self._text())"
 )
 
-# one module per shape the docstring claims, each refusing `key`, a public
-# function's parameter, or a value made from it: the census traces the
-# first of each pair and flags the second
-_SHAPES = {
+# a module that hands what it imports, or another value, to a function
+# that builds what it is handed
+_PASSED = (
+    "{}\ndef _make(key, kind):\n    return kind(key)\n"
+    "def f(key):\n    raise _make(key, {})"
+)
+_PICKED = "def _pick():\n    return ValueError\nRefused = _pick()"
+
+# one module per shape the docstring claims, or the modules by name where
+# the shape takes more than one, each refusing `key`, a public function's
+# parameter, or a value made from it: the census traces the first of each
+# pair and flags the second
+_SHAPES: dict[str, tuple[str | dict[str, str], str | dict[str, str]]] = {
     "literal": (
         "def f(key):\n    raise ValueError('a literal')",
         "def f(key):\n    raise ValueError(key)",
@@ -6286,14 +6405,182 @@ _SHAPES = {
             "    raise ValueError(x)\ndef f(key):\n    _g(key)"
         ),
     ),
+    "class imported from a module that assigns it": (
+        {
+            "errs.py": "Refused = ValueError",
+            "m.py": _PASSED.format("from errs import Refused", "str"),
+        },
+        {
+            "errs.py": "Refused = ValueError",
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module that assigns what a call answers": (
+        {"errs.py": _PICKED, "m.py": _PASSED.format("from errs import Refused", "str")},
+        {
+            "errs.py": _PICKED,
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module that assigns an alias of it": (
+        {
+            "errs.py": "Alias = ValueError\nRefused = Alias",
+            "m.py": _PASSED.format("from errs import Refused", "str"),
+        },
+        {
+            "errs.py": "Alias = ValueError\nRefused = Alias",
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module that assigns an item holding it": (
+        {
+            "errs.py": "KINDS = (ValueError,)\nRefused = KINDS[0]",
+            "m.py": _PASSED.format("from errs import Refused", "str"),
+        },
+        {
+            "errs.py": "KINDS = (ValueError,)\nRefused = KINDS[0]",
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module that binds it by unpacking": (
+        {
+            "errs.py": "Refused, Other = ValueError, str",
+            "m.py": _PASSED.format("from errs import Refused", "str"),
+        },
+        {
+            "errs.py": "Refused, Other = ValueError, str",
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported under another name through a module that imports it": (
+        {
+            "a.py": "from errs import Refused",
+            "errs.py": _PICKED,
+            "m.py": _PASSED.format("from a import Refused as R", "str"),
+        },
+        {
+            "a.py": "from errs import Refused",
+            "errs.py": _PICKED,
+            "m.py": _PASSED.format("from a import Refused as R", "R"),
+        },
+    ),
+    "class built under another name through a module that imports it": (
+        {
+            "a.py": "from errs import Refused",
+            "errs.py": "Refused = str",
+            "m.py": "from a import Refused as R\ndef f(key):\n    return R(key)",
+        },
+        {
+            "a.py": "from errs import Refused",
+            "errs.py": "Refused = ValueError",
+            "m.py": "from a import Refused as R\ndef f(key):\n    return R(key)",
+        },
+    ),
+    "module passed where a class it binds is": (
+        {
+            "errs.py": "Refused = ValueError",
+            "m.py": _PASSED.format("import errs", "errs"),
+        },
+        {
+            "errs.py": "Refused = ValueError",
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module that assigns an alias of what a call answers": (
+        {
+            "errs.py": (
+                "def _pick():\n    return ValueError\nAlias = _pick()\nRefused = Alias"
+            ),
+            "m.py": _PASSED.format("from errs import Refused", "str"),
+        },
+        {
+            "errs.py": (
+                "def _pick():\n    return ValueError\nAlias = _pick()\nRefused = Alias"
+            ),
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module that imports it under another name": (
+        {
+            "errs.py": "from x import Base as Refused",
+            "x.py": "def _pick():\n    return ValueError\nBase = _pick()",
+            "m.py": _PASSED.format("from errs import Refused", "str"),
+        },
+        {
+            "errs.py": "from x import Base as Refused",
+            "x.py": "def _pick():\n    return ValueError\nBase = _pick()",
+            "m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class a function imports into the module it declares global": (
+        {
+            "errs.py": _PICKED,
+            "m.py": (
+                "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+                "    global Refused\n    from errs import Refused\n"
+                "    raise _make(key, str)"
+            ),
+        },
+        {
+            "errs.py": _PICKED,
+            "m.py": (
+                "def _make(key, kind):\n    return kind(key)\ndef f(key):\n"
+                "    global Refused\n    from errs import Refused\n"
+                "    raise _make(key, Refused)"
+            ),
+        },
+    ),
+    # a relative import, which names `pkg/errs.py` from `pkg/`, is not
+    # followed, so it is not read as the root `errs.py`
+    "class a relative import binds, beside a root module that assigns one": (
+        {
+            "errs.py": "Refused = ValueError",
+            "pkg/errs.py": "Refused = str",
+            "pkg/m.py": _PASSED.format("from .errs import Refused", "Refused"),
+        },
+        {
+            "errs.py": "Refused = ValueError",
+            "pkg/errs.py": "Refused = str",
+            "pkg/m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class a relative import binds, beside a root module that assigns a call": (
+        {
+            "errs.py": _PICKED,
+            "pkg/errs.py": "Refused = str",
+            "pkg/m.py": _PASSED.format("from .errs import Refused", "Refused"),
+        },
+        {
+            "errs.py": _PICKED,
+            "pkg/errs.py": "Refused = str",
+            "pkg/m.py": _PASSED.format("from errs import Refused", "Refused"),
+        },
+    ),
+    "class imported from a module whose relative import binds it": (
+        {
+            "errs.py": _PICKED,
+            "pkg/errs.py": "Refused = str",
+            "pkg/a.py": "from .errs import Refused",
+            "m.py": _PASSED.format("from pkg.a import Refused", "Refused"),
+        },
+        {
+            "errs.py": _PICKED,
+            "pkg/errs.py": "Refused = str",
+            "pkg/a.py": "from errs import Refused",
+            "m.py": _PASSED.format("from pkg.a import Refused", "Refused"),
+        },
+    ),
 }
 
 
 @pytest.mark.parametrize("traced, flagged", _SHAPES.values(), ids=_SHAPES)
-def test_census_controls(traced: str, flagged: str) -> None:
-    """The census traces one module of a shape and flags the other."""
-    assert not _census({"m.py": traced}).findings()
-    assert _census({"m.py": flagged}).findings()
+def test_census_controls(
+    traced: str | dict[str, str], flagged: str | dict[str, str]
+) -> None:
+    """The census traces the first of a shape's pair and flags the second."""
+    for sources, flags in [(traced, False), (flagged, True)]:
+        modules = sources if isinstance(sources, dict) else {"m.py": sources}
+        assert bool(_census(modules).findings()) is flags
 
 
 @pytest.mark.parametrize(
@@ -6382,3 +6669,16 @@ def test_census_finds_no_class_in_an_import_cycle() -> None:
         "m.py": f"from a import FetchError\n{_RELAY.format('FetchError')}",
     }
     assert _census(sources).findings()
+
+
+def test_census_builds_no_exception_through_an_import_cycle() -> None:
+    """A name two modules import from each other builds no exception."""
+    sources = {
+        "a.py": "from b import Refused",
+        "b.py": "from a import Refused",
+        "m.py": (
+            "from a import Refused\ndef _make(key, kind):\n"
+            "    return kind(key)\ndef f(key):\n    raise _make(key, Refused)"
+        ),
+    }
+    assert not _census(sources).findings()
