@@ -31,6 +31,7 @@ from bip32_descriptors.bip32 import rootxprv_from_seed, xpub_from_xprv
 from bip32_descriptors.descriptors import (
     KeyExpression,
     Quorum,
+    RawTrDescriptor,
     SpendContext,
     SpendingPath,
     TrDescriptor,
@@ -985,6 +986,49 @@ def test_a_key_path_nobody_can_sign_is_left_out(internal_key: str) -> None:
     """BIP341's H, of either parity, and an extended key of it, as Liana's."""
     descriptor = parse(f"tr({internal_key},pk({B[2:]}))")
     assert shapes(descriptor.spending_paths) == [(((1, "B"),), None, None, (), 0)]
+
+
+# H's x coordinate behind an even prefix, which `_NumsIndexed` answers
+# items of
+_NUMS_SEC = b"\x02" + bytes.fromhex(NUMS)
+
+
+class _NumsIndexed(bytes):
+    """Bytes whose items and slices are `_NUMS_SEC`'s, whatever they hold."""
+
+    @override
+    def __getitem__(self, key: Any) -> Any:
+        return _NUMS_SEC[key]
+
+
+class _RaisingIndexed(bytes):
+    """Bytes whose items and slices raise."""
+
+    @override
+    def __getitem__(self, key: Any) -> Any:
+        raise RuntimeError
+
+
+@pytest.mark.parametrize("indexed", [_NumsIndexed, _RaisingIndexed])
+def test_a_key_is_judged_unspendable_by_its_bytes(indexed: type[bytes]) -> None:
+    """Not by its slicing, so a key whose [1:33] answers H's x is spent.
+
+    Issue btclib-org/bip32-descriptors#464.
+    """
+    held = bytes.fromhex(A)
+    pub_key = indexed(held)
+    if indexed is _NumsIndexed:
+        assert pub_key[1:33] == bytes.fromhex(NUMS)
+    else:
+        with pytest.raises(RuntimeError):
+            _ = pub_key[1:33]
+    key = KeyExpression(pub_key=pub_key, x_only=True)
+    plain = KeyExpression(pub_key=held, x_only=True)
+    for descriptor in (TrDescriptor(key), RawTrDescriptor(key)):
+        paths = descriptor.spending_paths
+        assert shapes(paths) == [(((1, "A"),), None, None, (), None)]
+    assert TrDescriptor(key).spending_paths == TrDescriptor(plain).spending_paths
+    assert RawTrDescriptor(key).spending_paths == RawTrDescriptor(plain).spending_paths
 
 
 def test_a_musig_key_path_is_one_key() -> None:

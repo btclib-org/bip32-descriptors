@@ -822,7 +822,8 @@ def _is_unspendable(key: KeyExpression) -> bool:
     if key.pub_key is not None:
         # asked again, for a forged key
         assert_type(key.pub_key, bytes, "pub_key")
-        return key.pub_key[1:33] == _UNSPENDABLE_X
+        # by the bytes it holds, not its own slicing (issue #464)
+        return _plain(key.pub_key)[1:33] == _UNSPENDABLE_X
     if not key.xkey:
         return False
     assert_type(key.xkey, str, "xkey")
