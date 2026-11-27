@@ -30,6 +30,7 @@ from bip32_descriptors.bip32.bip32 import (
     xpub_from_xprv,
 )
 from bip32_descriptors.bip32.der_path import (
+    HARDENED_OFFSET,
     _assert_valid_index,
     bytes_from_der_path,
     indexes_from_der_path,
@@ -220,9 +221,10 @@ def test_an_index_is_written_by_the_value_it_holds() -> None:
 
 
 def test_der_path_subclass_comparisons() -> None:
-    """A subclass that lies in its comparisons is refused.
+    """A subclass lying in its comparisons and `to_bytes` is read by its value.
 
-    Its to_bytes output is ignored.
+    One out of range is refused, and one in range is packed as the value
+    it holds.
     """
 
     class LyingInt(int):
@@ -244,9 +246,14 @@ def test_der_path_subclass_comparisons() -> None:
         ) -> bytes:
             return (5).to_bytes(length, byteorder=byteorder, signed=signed)
 
+        @override
+        def __int__(self) -> int:
+            return 5
+
     too_big = LyingInt(2**40)
     assert too_big >= 0
     assert too_big <= 0xFFFFFFFF
+    assert int(too_big) == 5
 
     with pytest.raises(BTClibValueError):
         _assert_valid_index(too_big)
@@ -255,7 +262,48 @@ def test_der_path_subclass_comparisons() -> None:
     with pytest.raises(BTClibValueError):
         _assert_valid_index(too_small)
 
+    out_of_range = r"^invalid index: not in 0\.\.2\*\*32-1$"
+    with pytest.raises(BTClibValueError, match=out_of_range):
+        bytes_from_der_path([too_big])
+    with pytest.raises(BTClibValueError, match=out_of_range):
+        str_from_der_path([too_small])
+
     fake_bytes = LyingInt(0)
     assert fake_bytes.to_bytes(1, "big") == b"\x05"
 
     assert bytes_from_der_path([fake_bytes]) == b"\x00\x00\x00\x00"
+    assert type(indexes_from_der_path([LyingInt(5)])[0]) is int
+
+
+def test_derive_reads_an_index_by_its_value() -> None:
+    """An index whose orderings all answer False derives as the value it holds.
+
+    Read through its own `>=`, a hardened index would derive as an
+    unhardened one, and from an xpub as a public derivation.
+    """
+
+    class GeFalse(int):
+        @override
+        def __ge__(self, other: object) -> bool:
+            return False
+
+        @override
+        def __le__(self, other: object) -> bool:
+            return False
+
+        @override
+        def __gt__(self, other: object) -> bool:
+            return False
+
+        @override
+        def __lt__(self, other: object) -> bool:
+            return False
+
+    lie = GeFalse(HARDENED_OFFSET)
+    orderings = (lie >= 0, lie <= HARDENED_OFFSET, lie > 0, lie < HARDENED_OFFSET + 1)
+    assert orderings == (False, False, False, False)
+    xprv = rootxprv_from_seed("00" * 32)
+    assert derive(xprv, [lie]) == derive(xprv, "m/0h")
+    err_msg = "^invalid hardened derivation from public key$"
+    with pytest.raises(BTClibValueError, match=err_msg):
+        derive(_XPUB, [lie])

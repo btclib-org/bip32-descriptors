@@ -281,7 +281,7 @@ def _indexes_from_der_path(
     """Return the indexes of every DerPath spelling that is not a string."""
     if isinstance(der_path, int):
         _assert_valid_index(der_path)
-        return [der_path]
+        return [_exact_int(der_path)]
 
     # a buffer means packed octets everywhere else this tree reads Octets,
     # so a bytearray or a memoryview -- a caller's slice out of a larger
@@ -306,7 +306,9 @@ def _indexes_from_der_path(
     indexes = list(der_path)
     for index in indexes:
         _assert_valid_index(index)
-    return indexes
+    # the values checked, so that no reader of the list, `_derive` among
+    # them, compares or packs an index through a subclass's own methods
+    return [_exact_int(index) for index in indexes]
 
 
 def _str_from_der_path(der_path: DerPath, hardening: str) -> str:
