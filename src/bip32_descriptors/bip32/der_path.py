@@ -144,6 +144,9 @@ def _assert_valid_index(i: int) -> None:
     """
     if not is_integer(i):
         raise BTClibTypeError(f"invalid derivation index type: {_type_name(i)}")
+
+    i = _exact_int(i)
+
     if not 0 <= i <= 0xFFFFFFFF:
         raise BTClibValueError("invalid index: not in 0..2**32-1")
 
@@ -278,7 +281,7 @@ def _indexes_from_der_path(
     """Return the indexes of every DerPath spelling that is not a string."""
     if isinstance(der_path, int):
         _assert_valid_index(der_path)
-        return [der_path]
+        return [_exact_int(der_path)]
 
     # a buffer means packed octets everywhere else this tree reads Octets,
     # so a bytearray or a memoryview -- a caller's slice out of a larger
@@ -303,7 +306,9 @@ def _indexes_from_der_path(
     indexes = list(der_path)
     for index in indexes:
         _assert_valid_index(index)
-    return indexes
+    # the values checked, so that no reader of the list, `_derive` among
+    # them, compares or packs an index through a subclass's own methods
+    return [_exact_int(index) for index in indexes]
 
 
 def _str_from_der_path(der_path: DerPath, hardening: str) -> str:
@@ -342,5 +347,7 @@ def str_from_der_path(
 def bytes_from_der_path(der_path: DerPath) -> bytes:
     """Return the path as bytes: each index in 4 bytes, little-endian."""
     indexes = indexes_from_der_path(der_path)
-    result = [i.to_bytes(4, byteorder="little", signed=False) for i in indexes]
+    result = [
+        _exact_int(i).to_bytes(4, byteorder="little", signed=False) for i in indexes
+    ]
     return b"".join(result)
